@@ -235,6 +235,13 @@ function safeNum(value) {
   return isNaN(n) || !isFinite(n) ? 0 : n;
 }
 
+// Eén gedeelde plek voor de kosten-koper-berekening (overdrachtsbelasting + overige
+// kosten koper), zodat de standaardflow en de overbruggingsflow nooit uit elkaar kunnen
+// lopen als deze percentages ooit wijzigen.
+function getKostenKoperCosts(price) {
+  return safeNum(price) * (TRANSFER_TAX_RATE + OTHER_PURCHASE_COSTS_RATE);
+}
+
 const currencyFormatter = new Intl.NumberFormat('nl-NL', {
   style: 'currency',
   currency: 'EUR',
@@ -274,7 +281,26 @@ function Slider({ id, label, icon, value, min, max, step, onChange, formatValue,
   );
 }
 
-function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hint }) {
+function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hint, min = 0, max }) {
+  // Klemt de waarde binnen [min, max] zodra er een geldig getal staat, zodat onzinnige
+  // invoer (negatieve leeftijden, absurd hoge waarden) niet in de berekening terechtkomt.
+  const handleChange = (e) => {
+    const raw = e.target.value;
+    if (raw === '') {
+      onChange(raw);
+      return;
+    }
+    const num = parseFloat(raw);
+    if (isNaN(num)) {
+      onChange(raw);
+      return;
+    }
+    let clamped = num;
+    if (min !== undefined && clamped < min) clamped = min;
+    if (max !== undefined && clamped > max) clamped = max;
+    onChange(String(clamped));
+  };
+
   return (
     <div className="space-y-1.5">
       <label htmlFor={id} className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
@@ -286,8 +312,10 @@ function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hi
           id={id}
           type="number"
           inputMode="numeric"
+          min={min}
+          max={max}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={handleChange}
           placeholder={placeholder}
           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
         />
@@ -355,6 +383,71 @@ function CurrencyField({ id, label, icon, value, onChange, placeholder, hint }) 
   );
 }
 
+
+// Officiële kleuren van het Nederlandse energielabel (RVO), van rood (G) naar diepgroen
+// (A++++), gebruikt voor de labelchips in plaats van platte tekst.
+const ENERGY_LABEL_COLORS = {
+  G: '#D32F2F',
+  F: '#F4511E',
+  E: '#FB8C00',
+  D: '#FDD835',
+  C: '#C0CA33',
+  B: '#7CB342',
+  A: '#43A047',
+  'A+': '#2E7D32',
+  'A++': '#1B5E20',
+  'A+++': '#0D4A1B',
+  'A++++': '#063513',
+};
+
+const ENERGY_LABEL_TEXT_ON_LIGHT = new Set(['D', 'C']);
+
+function EnergyLabelChip({ label, size = 'md' }) {
+  const bg = ENERGY_LABEL_COLORS[label] || '#94a3b8';
+  const textColor = ENERGY_LABEL_TEXT_ON_LIGHT.has(label) ? '#3f3a00' : '#ffffff';
+  const sizeClasses = size === 'sm' ? 'h-7 min-w-[2.25rem] px-2 text-xs' : 'h-9 min-w-[3rem] px-3 text-sm';
+  return (
+    <span
+      className={`inline-flex items-center justify-center rounded-l-md font-bold shadow-sm ${sizeClasses}`}
+      style={{
+        backgroundColor: bg,
+        color: textColor,
+        clipPath: 'polygon(0 0, 75% 0, 100% 50%, 75% 100%, 0 100%)',
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function EnergyLabelPicker({ id, label, icon, value, onChange }) {
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+        {icon}
+        {label}
+      </label>
+      <div id={id} role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
+        {ENERGY_LABELS.map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            role="radio"
+            aria-checked={value === opt}
+            onClick={() => onChange(opt)}
+            className={`rounded-l-md transition-all duration-150 ${
+              value === opt
+                ? 'scale-110 ring-2 ring-offset-1 ring-blue-500'
+                : 'opacity-50 hover:opacity-90'
+            }`}
+          >
+            <EnergyLabelChip label={opt} size="sm" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function SelectField({ id, label, icon, value, onChange, options }) {
   return (
@@ -990,8 +1083,7 @@ export default function MortgageCalculator() {
     // B11: kosten koper nu consistent gebaseerd op de daadwerkelijke aanschafprijs (net
     // als verderop bij de financieringsgat-berekening), in plaats van op de maximale
     // hypotheek zoals voorheen.
-    const kostenKoperRate = TRANSFER_TAX_RATE + OTHER_PURCHASE_COSTS_RATE;
-    const ownMoney = (priceNum > 0 ? priceNum : maxMortgage) * kostenKoperRate;
+    const ownMoney = getKostenKoperCosts(priceNum > 0 ? priceNum : maxMortgage);
 
     const isOverIndebted = debtDeduction > capacityBeforeDebt;
     const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
@@ -1402,7 +1494,7 @@ export default function MortgageCalculator() {
     // beleggingen zijn, anders dan overwaarde, wél direct beschikbaar en mogen daarom ook
     // tijdens de overbruggingsperiode worden ingezet om de nieuwe hypotheek te verlagen. Dit
     // is expliciet schakelbaar voor een behoudender toets.
-    const kostenKoper = price * (TRANSFER_TAX_RATE + OTHER_PURCHASE_COSTS_RATE);
+    const kostenKoper = getKostenKoperCosts(price);
     const ownCapitalUsed = includeOwnCapitalInDoubleTest ? calc.totalOwnCapital : 0;
     const newMortgageAmount = Math.max(0, price + kostenKoper - ownCapitalUsed);
 
@@ -1480,6 +1572,16 @@ export default function MortgageCalculator() {
     ? combinedGapCalc.withinCapacity
     : calc.incomeBasedMax >= safeNum(purchasePrice);
 
+  // Stappen voor de voortgangsbalk. Schulden heeft geen eigen verplicht veld (0 is een
+  // geldig antwoord), dus die stap wordt als "bereikt" beschouwd zodra Inkomen is ingevuld
+  // in plaats van hem altijd als voltooid te tonen.
+  const incomeStepDone = calc.combinedIncome > 0;
+  const debtsStepDone = incomeStepDone;
+  const propertyStepDone = safeNum(purchasePrice) > 0;
+  const progressSteps = [incomeStepDone, debtsStepDone, propertyStepDone, overallAffordable];
+  const progressPercentage =
+    (progressSteps.filter(Boolean).length / progressSteps.length) * 100;
+
   const scrollToSection = (id) => {
     const el = document.getElementById(id);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1508,7 +1610,9 @@ export default function MortgageCalculator() {
               onClick={() => scrollToSection('sectie-schulden')}
               className="flex items-center gap-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:text-blue-600"
             >
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+              <CheckCircle2
+                className={`h-3.5 w-3.5 ${debtsStepDone ? 'text-emerald-500' : 'text-slate-300'}`}
+              />
               Schulden
             </button>
             <span className="hidden h-px w-6 bg-slate-200 sm:block" />
@@ -1541,6 +1645,22 @@ export default function MortgageCalculator() {
               )}
               {overallAffordable ? 'Haalbaar' : 'Nog niet haalbaar'}
             </button>
+          </div>
+          <div className="mx-auto mt-2 h-1 w-full max-w-6xl overflow-hidden rounded-full bg-slate-100">
+            <motion.div
+              className={`h-full rounded-full ${
+                calc.isOverIndebted
+                  ? 'bg-red-500'
+                  : progressPercentage < 100
+                  ? 'bg-blue-500'
+                  : overallAffordable
+                  ? 'bg-emerald-500'
+                  : 'bg-amber-500'
+              }`}
+              initial={false}
+              animate={{ width: `${progressPercentage}%` }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+            />
           </div>
         </div>
 
@@ -1638,6 +1758,8 @@ export default function MortgageCalculator() {
                     onChange={setAge1}
                     placeholder="35"
                     suffix="jaar"
+                    min={18}
+                    max={100}
                   />
                 </PartnerSubCard>
                 <PartnerSubCard label="Partner 2">
@@ -1671,9 +1793,27 @@ export default function MortgageCalculator() {
                     onChange={setAge2}
                     placeholder="34"
                     suffix="jaar"
+                    min={18}
+                    max={100}
                   />
                 </PartnerSubCard>
               </div>
+              <AnimatePresence>
+                {calc.combinedIncome === 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.2 }}
+                    className="mt-4"
+                  >
+                    <StatusBadge status="warning">
+                      Vul het bruto jaarinkomen van minimaal één van de partners in om een
+                      berekening te zien.
+                    </StatusBadge>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </SectionCard>
 
             <SectionCard id="sectie-schulden" title="Schulden" icon={<CreditCard className="h-4 w-4" />}>
@@ -1765,18 +1905,53 @@ export default function MortgageCalculator() {
                 <h2 className="text-base font-semibold">Resultaat</h2>
               </div>
 
+              <div
+                className={`mb-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
+                  calc.isOverIndebted
+                    ? 'bg-red-500/20 text-red-50'
+                    : calc.cappedByPropertyValue
+                    ? 'bg-amber-500/20 text-amber-50'
+                    : 'bg-emerald-500/20 text-emerald-50'
+                }`}
+              >
+                {calc.isOverIndebted ? (
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                ) : calc.cappedByPropertyValue ? (
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                ) : (
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                )}
+                {calc.isOverIndebted
+                  ? 'Schulden hoger dan leencapaciteit'
+                  : calc.cappedByPropertyValue
+                  ? 'Begrensd door aanschafprijs'
+                  : 'Haalbaar op basis van inkomen'}
+              </div>
+
               <div className="space-y-1">
                 <p className="text-sm text-blue-100">Maximale hypotheek</p>
                 <p className="text-4xl font-bold tracking-tight sm:text-5xl">
                   {formatEuro(calc.maxMortgage)}
                 </p>
-                {calc.cappedByPropertyValue && (
-                  <p className="text-xs text-blue-100">
-                    Uw leencapaciteit o.b.v. inkomen is {formatEuro(calc.incomeBasedMax)}, hoger
-                    dan de aanschafprijs. Een hypotheek kan nooit boven de aanschafprijs uitkomen.
-                  </p>
-                )}
               </div>
+
+              <AnimatePresence>
+                {calc.cappedByPropertyValue && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                    transition={{ duration: 0.25, ease: 'easeOut' }}
+                    className="mt-4 flex items-start gap-2 rounded-xl border border-amber-300/30 bg-amber-500/20 p-3"
+                  >
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-200" />
+                    <p className="text-xs text-amber-50">
+                      Uw leencapaciteit o.b.v. inkomen is {formatEuro(calc.incomeBasedMax)}, hoger
+                      dan de aanschafprijs. Een hypotheek kan nooit boven de aanschafprijs uitkomen.
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="mt-4 flex items-center justify-between rounded-xl bg-white/10 px-4 py-3">
                 <span className="text-sm text-blue-100">
@@ -1906,13 +2081,12 @@ export default function MortgageCalculator() {
                     </motion.div>
                   )}
                 </AnimatePresence>
-                <SelectField
+                <EnergyLabelPicker
                   id="energyLabel"
                   label="Energielabel beoogde woning"
                   icon={<Leaf className="h-3.5 w-3.5 text-slate-400" />}
                   value={energyLabel}
                   onChange={setEnergyLabel}
-                  options={ENERGY_LABELS}
                 />
               </div>
             </SectionCard>
@@ -2030,13 +2204,12 @@ export default function MortgageCalculator() {
                     </p>
                   )}
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                    <SelectField
+                    <EnergyLabelPicker
                       id="currentEnergyLabel"
                       label="Huidig energielabel woning"
                       icon={<Leaf className="h-3.5 w-3.5 text-slate-400" />}
                       value={currentEnergyLabel}
                       onChange={setCurrentEnergyLabel}
-                      options={ENERGY_LABELS}
                     />
                     <CurrencyField
                       id="originalDebt"
