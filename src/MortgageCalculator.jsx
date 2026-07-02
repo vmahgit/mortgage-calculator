@@ -22,6 +22,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
+import { getIncomeBasedMortgage } from './nibud2026';
 
 const ENERGY_LABELS = ['G', 'F', 'E', 'D', 'C', 'B', 'A', 'A+', 'A++', 'A+++', 'A++++'];
 
@@ -38,33 +39,9 @@ function getEnergyBonus(label) {
   return 0;
 }
 
-// Benadering van het inkomensafhankelijke verloop van de Nibud financieringslastpercentages
-// 2026. De officiële tabel wordt gepubliceerd als los Excel-document met stappen van
-// €1.000 en aparte varianten voor box 1/box 3 en AOW/niet-AOW, en is niet 1-op-1 over te
-// nemen zonder toegang tot dat document. Deze functie is daarom nadrukkelijk een
-// benadering: fijnmaziger dan een vlakke factor, met twee ankerpunten op de daadwerkelijke
-// 2026 belastingschijfgrenzen (€38.883 en €78.426), maar geen kopie van de exacte tabel.
-// Raadpleeg voor een bindend advies altijd de officiële Nibud-rekentool of een adviseur.
-function getIncomeFactorMultiplier(combinedIncome) {
-  if (combinedIncome < 15000) return 0.75;
-  if (combinedIncome < 25000) return 0.83;
-  if (combinedIncome < 38883) return 0.9;
-  if (combinedIncome < 55000) return 0.95;
-  if (combinedIncome < 70000) return 0.97;
-  if (combinedIncome < 78426) return 1.0;
-  if (combinedIncome < 100000) return 1.03;
-  if (combinedIncome < 150000) return 1.05;
-  return 1.07;
-}
-
-function getLoanFactor(rate, combinedIncome) {
-  if (rate <= 3.5) {
-    return 4.7 * getIncomeFactorMultiplier(combinedIncome);
-  }
-  const steps = (rate - 3.5) / 0.5;
-  const factor = 4.7 - steps * 0.1;
-  return Math.max(4.1, factor) * getIncomeFactorMultiplier(combinedIncome);
-}
+// De maximale hypotheek op basis van inkomen loopt sinds deze versie via de echte
+// Nibud-woonquote-systematiek 2026 (zie nibud2026.js), in plaats van via een handmatig
+// getunede leenfactor.
 
 const AFLOSVORMEN = ['Annuïteit', 'Lineair', 'Aflossingsvrij'];
 const TERM_MONTHS = 360;
@@ -1086,26 +1063,30 @@ export default function MortgageCalculator() {
     const testRate = getTestRate(rate, fixedRatePeriod);
     const toetsrenteApplies = testRate !== safeNum(rate);
 
-    const factor = getLoanFactor(testRate, combinedIncome);
-    const baseCapacity = combinedIncome * factor;
     const energyBonus = getEnergyBonus(energyLabel);
 
     // A3: schulden worden eerst omgerekend naar een maandlast (2% van het schuldbedrag
     // voor overige schulden). Studieschuld wordt sinds 2024 berekend op basis van de
     // werkelijke DUO-terugbetaalregeling (rente en aflostermijn van het gekozen stelsel),
-    // toegepast op de restschuld. Die maandlast wordt vervolgens gekapitaliseerd tegen de
-    // toetsrente, in plaats van een vaste 5x/1x multiplier.
+    // toegepast op de restschuld.
     const otherDebtMonthly = (safeNum(debt1) + safeNum(debt2)) * OTHER_DEBT_MONTHLY_WEIGHT;
     const studyDebtMonthly = getStudyDebtMonthlyBurden(
       safeNum(studyDebt1) + safeNum(studyDebt2),
       studyDebtRegime
     );
-    const capitalizationFactor = getCapitalizationFactor(testRate);
-    const debtDeduction = (otherDebtMonthly + studyDebtMonthly) * capitalizationFactor;
+    const monthlyDebt = otherDebtMonthly + studyDebtMonthly;
 
-    const capacityBeforeDebt = baseCapacity + energyBonus;
-    const rawMax = capacityBeforeDebt - debtDeduction;
-    const incomeBasedMax = Math.max(0, rawMax);
+    // A1-A3: echte Nibud-woonquote-systematiek 2026. De woonquote bij (toetsinkomen,
+    // toetsrente) bepaalt de maximale bruto woonlast; de maandlast van bestaande schulden
+    // gaat daar direct vanaf; het restant wordt gekapitaliseerd tegen de toetsrente.
+    const nibud = getIncomeBasedMortgage(combinedIncome, testRate, monthlyDebt);
+    const woonquote = nibud.woonquote;
+
+    // Ter weergave: hoeveel maximale hypotheek er wegvalt door de schulden (de
+    // gekapitaliseerde waarde van de schuldmaandlast tegen de toetsrente).
+    const debtDeduction = monthlyDebt * nibud.annuityFactor;
+
+    const incomeBasedMax = Math.max(0, nibud.maxLoan + energyBonus);
 
     // B10: een hypotheek kan nooit hoger zijn dan de aanschafprijs van de woning
     // (maximale LTV van 100%), ongeacht hoeveel de leencapaciteit op inkomen toelaat.
@@ -1118,7 +1099,7 @@ export default function MortgageCalculator() {
     // hypotheek zoals voorheen.
     const ownMoney = getKostenKoperCosts(priceNum > 0 ? priceNum : maxMortgage);
 
-    const isOverIndebted = debtDeduction > capacityBeforeDebt;
+    const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly;
     const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
     const showPensionWarning = safeNum(age1) >= 57 || safeNum(age2) >= 57;
     const totalOwnCapital = safeNum(ownCapital1) + safeNum(ownCapital2);
@@ -1128,18 +1109,18 @@ export default function MortgageCalculator() {
     // de daadwerkelijke rente, zonder de generieke toetsrentecorrectie hierboven (die is
     // gebaseerd op één algemene rentevastperiode-aanname). Bij het toetsen van de
     // aanvullende leningdelen wordt per leningdeel opnieuw en preciezer getoetst.
-    const actualRateFactor = getLoanFactor(safeNum(rate), combinedIncome);
-    const actualRateCapitalizationFactor = getCapitalizationFactor(safeNum(rate));
-    const actualRateDebtDeduction =
-      (otherDebtMonthly + studyDebtMonthly) * actualRateCapitalizationFactor;
-    const incomeBasedMaxAtActualRate = Math.max(
-      0,
-      combinedIncome * actualRateFactor + energyBonus - actualRateDebtDeduction
-    );
+    const nibudAtActualRate = getIncomeBasedMortgage(combinedIncome, safeNum(rate), monthlyDebt);
+    const incomeBasedMaxAtActualRate = Math.max(0, nibudAtActualRate.maxLoan + energyBonus);
+
+    // Effectieve leenfactor puur ter illustratie (maximale hypotheek gedeeld door inkomen);
+    // de daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor.
+    const effectiveFactor = combinedIncome > 0 ? incomeBasedMax / combinedIncome : 0;
 
     return {
       combinedIncome,
-      factor,
+      woonquote,
+      effectiveFactor,
+      maxWoonlastMonthly: nibud.maxWoonlastMonthly,
       energyBonus,
       debtDeduction,
       incomeBasedMax,
@@ -2010,9 +1991,19 @@ export default function MortgageCalculator() {
                   <p className="text-sm font-medium">{formatEuro(calc.combinedIncome)}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-blue-100">Toegepaste leenfactor</p>
+                  <p className="text-sm text-blue-100">Woonquote (Nibud 2026)</p>
                   <p className="text-sm font-medium">
-                    {calc.factor.toFixed(1).replace('.', ',')}x
+                    {(calc.woonquote * 100).toFixed(1).replace('.', ',')}%
+                  </p>
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-blue-100">Max. bruto woonlast p/m</p>
+                  <p className="text-sm font-medium">{formatEuro(calc.maxWoonlastMonthly)}</p>
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-blue-100">Effectieve leenfactor</p>
+                  <p className="text-sm font-medium">
+                    {calc.effectiveFactor.toFixed(1).replace('.', ',')}x
                   </p>
                 </div>
                 {calc.debtDeduction > 0 && (
