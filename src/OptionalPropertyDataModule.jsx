@@ -38,6 +38,7 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [showAllWoz, setShowAllWoz] = useState(false);
 
   const handleSearch = async () => {
     if (!addressInput.trim()) return;
@@ -45,6 +46,7 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel }
     setLoading(true);
     setError(null);
     setResult(null);
+    setShowAllWoz(false);
     try {
       const data = await getCompleteHousingData(addressInput.trim());
       setResult(data);
@@ -63,7 +65,11 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel }
   };
 
   const mostRecentWoz = result?.woz?.waarden?.[0] ?? null;
-  const olderWozValues = result?.woz?.waarden?.slice(1) ?? [];
+  const allOlderWozValues = result?.woz?.waarden?.slice(1) ?? [];
+  // Net als wozwaardeloket.nl zelf: standaard maar 3 peildatums tonen (de meest recente
+  // plus de 2 daaronder), met een "Alles weergeven"-link voor de rest.
+  const olderWozValues = showAllWoz ? allOlderWozValues : allOlderWozValues.slice(0, 2);
+  const hasMoreWozValues = allOlderWozValues.length > 2;
 
   return (
     <div className="mt-8 overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 shadow-sm">
@@ -149,7 +155,18 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel }
 
               {result && (
                 <div className="space-y-4">
-                  <p className="text-sm font-medium text-slate-700">{result.address.weergavenaam}</p>
+                  <div>
+                    <p className="text-sm font-medium text-slate-700">{result.address.weergavenaam}</p>
+                    {(result.woz?.wozobjectnummer || result.bag?.gebruiksdoel) && (
+                      <p className="text-xs text-slate-400">
+                        {result.woz?.wozobjectnummer && (
+                          <>WOZ-identificatie: {result.woz.wozobjectnummer}</>
+                        )}
+                        {result.woz?.wozobjectnummer && result.bag?.gebruiksdoel && ' · '}
+                        {result.bag?.gebruiksdoel && <>Gebruiksdoel: {result.bag.gebruiksdoel}</>}
+                      </p>
+                    )}
+                  </div>
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     <div className="rounded-xl border border-slate-100 bg-white p-3">
@@ -195,7 +212,7 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel }
                           </span>
                         </div>
                         {olderWozValues.length > 0 && (
-                          <ul className="max-h-40 space-y-1 overflow-y-auto pr-1 text-xs text-slate-500">
+                          <ul className="space-y-1 text-xs text-slate-500">
                             {olderWozValues.map((w) => (
                               <li key={w.peildatum} className="flex items-center justify-between">
                                 <span>{formatDateNL(w.peildatum)}</span>
@@ -205,6 +222,15 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel }
                               </li>
                             ))}
                           </ul>
+                        )}
+                        {hasMoreWozValues && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllWoz((prev) => !prev)}
+                            className="text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline"
+                          >
+                            {showAllWoz ? '‹ Minder weergeven' : `› Alles weergeven (${allOlderWozValues.length + 1} peildatums)`}
+                          </button>
                         )}
                         {onUseValue && (
                           <button

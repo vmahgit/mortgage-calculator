@@ -128,6 +128,10 @@ async function findWozHistorie(postcode, huisnummer, huisletter, huisnummertoevo
   }
   return {
     wozobjectnummer: match.wozobjectnummer,
+    // Het WOZ-object zelf bevat ook een grondoppervlakte (zoals te zien op
+    // wozwaardeloket.nl onder "WOZ-gegevens"), los van de kadastrale perceelgrootte uit
+    // stap B. Handige fallback wanneer een adres geen 1-op-1 gekoppeld perceel heeft.
+    grondoppervlakte: wozData?.wozObject?.grondoppervlakte ?? null,
     waarden,
   };
 }
@@ -144,13 +148,20 @@ export async function getCompleteHousingData(addressString) {
     findWozHistorie(address.postcode, address.huisnummer, address.huisletter, address.huisnummertoevoeging),
   ]);
 
+  const woz = wozResult.status === 'fulfilled' ? wozResult.value : null;
+  // Voorkeur voor de kadastrale perceelgrootte (stap B); als die er niet is (bijv. geen
+  // gekoppeld perceel bij een appartementsrecht), val terug op de grondoppervlakte die het
+  // WOZ-object zelf meelevert.
+  const grondoppervlakte =
+    (perceelResult.status === 'fulfilled' ? perceelResult.value : null) ?? woz?.grondoppervlakte ?? null;
+
   return {
     address,
-    grondoppervlakte: perceelResult.status === 'fulfilled' ? perceelResult.value : null,
+    grondoppervlakte,
     grondoppervlakteError: perceelResult.status === 'rejected' ? perceelResult.reason.message : null,
     bag: bagResult.status === 'fulfilled' ? bagResult.value : null,
     bagError: bagResult.status === 'rejected' ? bagResult.reason.message : null,
-    woz: wozResult.status === 'fulfilled' ? wozResult.value : null,
+    woz,
     wozError: wozResult.status === 'rejected' ? wozResult.reason.message : null,
   };
 }
