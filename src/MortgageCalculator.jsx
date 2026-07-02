@@ -21,6 +21,7 @@ import {
   TrendingUp,
   CheckCircle2,
 } from 'lucide-react';
+import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 
 const ENERGY_LABELS = ['G', 'F', 'E', 'D', 'C', 'B', 'A', 'A+', 'A++', 'A+++', 'A++++'];
 
@@ -2092,6 +2093,15 @@ export default function MortgageCalculator() {
             </SectionCard>
           </div>
         </div>
+
+        <OptionalPropertyDataModule
+          onUseValue={hasExistingHome ? setMarketValue : setPurchasePrice}
+          useValueLabel={
+            hasExistingHome
+              ? "'Huidige marktwaarde woning'"
+              : "'Aanschafprijs beoogde woning' (als richtprijs)"
+          }
+        />
 
         {hasExistingHome && (
         <div className="mt-8 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-xl">
