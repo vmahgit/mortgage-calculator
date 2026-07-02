@@ -3279,6 +3279,11 @@ export default function MortgageCalculator() {
           }
           purchasePrice={safeNum(purchasePrice)}
         />
+
+        <p className="mt-6 text-center text-[11px] text-slate-300">
+          v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'}
+          {typeof __GIT_COMMIT__ !== 'undefined' && __GIT_COMMIT__ !== 'dev' ? ` · ${__GIT_COMMIT__}` : ''}
+        </p>
       </div>
     </div>
   );
