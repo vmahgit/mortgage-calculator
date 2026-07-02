@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { motion, AnimatePresence, animate } from 'framer-motion';
 import {
   Euro,
   User,
@@ -251,6 +251,38 @@ const currencyFormatter = new Intl.NumberFormat('nl-NL', {
 
 function formatEuro(amount) {
   return currencyFormatter.format(safeNum(amount));
+}
+
+// Vloeiend omhoog/omlaag tellend eurobedrag: animeert van de vorige waarde naar de nieuwe
+// zodra het resultaat verandert, in plaats van hard te verspringen. Respecteert de
+// systeeminstelling "verminderde beweging" door dan direct de eindwaarde te tonen.
+function AnimatedEuro({ value, className }) {
+  const [display, setDisplay] = useState(() => safeNum(value));
+  const prev = useRef(safeNum(value));
+
+  useEffect(() => {
+    const target = safeNum(value);
+    const prefersReduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (prefersReduced) {
+      prev.current = target;
+      setDisplay(target);
+      return;
+    }
+
+    const controls = animate(prev.current, target, {
+      duration: 0.8,
+      ease: [0.16, 1, 0.3, 1],
+      onUpdate: (v) => setDisplay(v),
+    });
+    prev.current = target;
+    return () => controls.stop();
+  }, [value]);
+
+  return <span className={className}>{formatEuro(display)}</span>;
 }
 
 function formatRate(rate) {
@@ -1589,7 +1621,7 @@ export default function MortgageCalculator() {
   };
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-blue-50 via-slate-50 to-white px-4 py-10 sm:px-6 lg:px-10">
+    <div className="w-full px-4 py-10 sm:px-6 lg:px-10">
       <div className="mx-auto max-w-6xl">
         <div className="sticky top-0 z-40 -mx-4 mb-6 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-4 gap-y-2 sm:justify-between">
@@ -1666,8 +1698,8 @@ export default function MortgageCalculator() {
         </div>
 
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Hypotheekcalculator 2026</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="text-2xl font-bold text-white sm:text-3xl">Hypotheekcalculator 2026</h1>
+          <p className="mt-1 text-sm text-slate-300">
             Indicatieve berekening op basis van de Nibud-systematiek 2026. Geen rechten kunnen aan
             deze uitkomst worden ontleend.
           </p>
@@ -1931,9 +1963,10 @@ export default function MortgageCalculator() {
 
               <div className="space-y-1">
                 <p className="text-sm text-blue-100">Maximale hypotheek</p>
-                <p className="text-4xl font-bold tracking-tight sm:text-5xl">
-                  {formatEuro(calc.maxMortgage)}
-                </p>
+                <AnimatedEuro
+                  value={calc.maxMortgage}
+                  className="block text-4xl font-bold tracking-tight sm:text-5xl"
+                />
               </div>
 
               <AnimatePresence>

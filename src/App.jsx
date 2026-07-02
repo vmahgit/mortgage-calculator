@@ -1,7 +1,7 @@
-import MortgageCalculator from './MortgageCalculator'
+import LandingPage from './LandingPage'
 
 function App() {
-  return <MortgageCalculator />
+  return <LandingPage />
 }
 
 export default App
