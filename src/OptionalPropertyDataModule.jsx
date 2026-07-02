@@ -32,7 +32,7 @@ function formatDateNL(dateStr) {
 // gebruiker expliciet op de knop klikt, wordt een waarde overgenomen in de calculator (via
 // de onUseValue-callback). De state hier (adresinvoer, laadstatus, resultaat) is bewust
 // volledig lokaal en losstaand van de calculator-state in MortgageCalculator.
-export default function OptionalPropertyDataModule({ onUseValue, useValueLabel }) {
+export default function OptionalPropertyDataModule({ onUseValue, useValueLabel, purchasePrice }) {
   const [expanded, setExpanded] = useState(false);
   const [addressInput, setAddressInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -70,6 +70,14 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel }
   // plus de 2 daaronder), met een "Alles weergeven"-link voor de rest.
   const olderWozValues = showAllWoz ? allOlderWozValues : allOlderWozValues.slice(0, 2);
   const hasMoreWozValues = allOlderWozValues.length > 2;
+
+  // Prijs per vierkante meter wordt normaliter berekend op de gebruiksoppervlakte (het
+  // woonoppervlak), niet de perceelgrootte.
+  const gebruiksoppervlakte = result?.bag?.gebruiksoppervlakte || null;
+  const pricePerM2Woz =
+    mostRecentWoz && gebruiksoppervlakte ? mostRecentWoz.vastgesteldeWaarde / gebruiksoppervlakte : null;
+  const pricePerM2Purchase =
+    purchasePrice && gebruiksoppervlakte ? purchasePrice / gebruiksoppervlakte : null;
 
   return (
     <div className="mt-8 overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 shadow-sm">
@@ -247,6 +255,35 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel }
                         {result.wozError ?? 'Geen WOZ-waarden gevonden voor dit adres.'}
                       </p>
                     )}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl border border-slate-100 bg-white p-3">
+                      <span className="text-xs font-medium text-slate-400">
+                        m²-prijs o.b.v. meest actuele WOZ-waarde
+                      </span>
+                      <p className="text-lg font-semibold text-slate-800">
+                        {pricePerM2Woz ? `${formatEuro(pricePerM2Woz)} / m²` : '—'}
+                      </p>
+                      {!pricePerM2Woz && (
+                        <p className="text-xs text-slate-400">
+                          {mostRecentWoz ? 'Gebruiksoppervlakte niet beschikbaar' : 'Geen WOZ-waarde beschikbaar'}
+                        </p>
+                      )}
+                    </div>
+                    <div className="rounded-xl border border-slate-100 bg-white p-3">
+                      <span className="text-xs font-medium text-slate-400">
+                        m²-prijs o.b.v. aanschafprijs beoogde woning
+                      </span>
+                      <p className="text-lg font-semibold text-slate-800">
+                        {pricePerM2Purchase ? `${formatEuro(pricePerM2Purchase)} / m²` : '—'}
+                      </p>
+                      {!pricePerM2Purchase && (
+                        <p className="text-xs text-slate-400">
+                          {purchasePrice ? 'Gebruiksoppervlakte niet beschikbaar' : 'Geen aanschafprijs ingevuld'}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

@@ -40,6 +40,7 @@ async function findAddress(addressString) {
     weergavenaam: doc.weergavenaam,
     postcode: doc.postcode,
     huisnummer: doc.huisnummer,
+    straatnaam: doc.straatnaam,
     // Huisletter/-toevoeging zijn nodig om bij appartementen/bovenwoningen het juiste
     // WOZ-object te matchen: meerdere adressen kunnen dezelfde postcode+huisnummer delen.
     huisletter: doc.huisletter ?? null,
@@ -84,8 +85,18 @@ async function findBagKenmerken(adresseerbaarobjectId) {
   };
 }
 
-async function suggestWoz(query) {
+async function suggestWozByQuery(query) {
   const url = `${WOZ_API_BASE}/suggest?q=${encodeURIComponent(query)}`;
+  const data = await fetchJson(url);
+  return data?.docs ?? [];
+}
+
+// De vrije-tekstzoeker (?q=) van wozwaardeloket blijkt niet elke straat/gemeente
+// betrouwbaar te indexeren (bijv. Ligtelijnweg in Loenen aan de Vecht gaf niets terug,
+// terwijl het WOZ-object gewoon bestaat). De straatnaam-zoeker (?straat=) matcht wél
+// consistent tegen de officiële BAG-straatnaam, dus die is de primaire strategie.
+async function suggestWozByStraat(straatnaam) {
+  const url = `${WOZ_API_BASE}/suggest?straat=${encodeURIComponent(straatnaam)}`;
   const data = await fetchJson(url);
   return data?.docs ?? [];
 }
@@ -94,13 +105,16 @@ async function suggestWoz(query) {
 // kunnen door meerdere WOZ-objecten gedeeld worden (bijv. bovenwoningen, appartementen),
 // dus wordt zo mogelijk ook op huisletter/-toevoeging gematcht in plaats van simpelweg het
 // eerste zoekresultaat te nemen.
-async function findWozHistorie(postcode, huisnummer, huisletter, huisnummertoevoeging) {
-  const huisnummerLang = `${huisnummer}${huisletter ?? ''}${huisnummertoevoeging ?? ''}`;
-  // Eerste poging: exacte combinatie zoals wozwaardeloket.nl zelf voorstelt.
-  let docs = await suggestWoz(`${postcode} ${huisnummerLang}`);
-  // Fallback: sommige objecten staan alleen op het kale huisnummer geïndexeerd.
+async function findWozHistorie(postcode, huisnummer, huisletter, huisnummertoevoeging, straatnaam) {
+  let docs = straatnaam ? await suggestWozByStraat(straatnaam) : [];
+  // Fallback op de vrije-tekstzoeker als de straatnaam-zoeker niets oplevert (of geen
+  // straatnaam bekend is).
   if (docs.length === 0) {
-    docs = await suggestWoz(`${postcode} ${huisnummer}`);
+    const huisnummerLang = `${huisnummer}${huisletter ?? ''}${huisnummertoevoeging ?? ''}`;
+    docs = await suggestWozByQuery(`${postcode} ${huisnummerLang}`);
+  }
+  if (docs.length === 0) {
+    docs = await suggestWozByQuery(`${postcode} ${huisnummer}`);
   }
   if (docs.length === 0) {
     throw new Error('Geen WOZ-object gevonden voor dit adres.');
@@ -145,7 +159,13 @@ export async function getCompleteHousingData(addressString) {
   const [perceelResult, bagResult, wozResult] = await Promise.allSettled([
     findPerceelGrootte(address.perceelAanduiding),
     findBagKenmerken(address.adresseerbaarobjectId),
-    findWozHistorie(address.postcode, address.huisnummer, address.huisletter, address.huisnummertoevoeging),
+    findWozHistorie(
+      address.postcode,
+      address.huisnummer,
+      address.huisletter,
+      address.huisnummertoevoeging,
+      address.straatnaam
+    ),
   ]);
 
   const woz = wozResult.status === 'fulfilled' ? wozResult.value : null;

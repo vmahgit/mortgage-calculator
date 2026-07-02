@@ -3277,6 +3277,7 @@ export default function MortgageCalculator() {
               ? "'Huidige marktwaarde woning'"
               : "'Aanschafprijs beoogde woning' (als richtprijs)"
           }
+          purchasePrice={safeNum(purchasePrice)}
         />
       </div>
     </div>
