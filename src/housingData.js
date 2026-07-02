@@ -40,6 +40,10 @@ async function findAddress(addressString) {
     weergavenaam: doc.weergavenaam,
     postcode: doc.postcode,
     huisnummer: doc.huisnummer,
+    // Huisletter/-toevoeging zijn nodig om bij appartementen/bovenwoningen het juiste
+    // WOZ-object te matchen: meerdere adressen kunnen dezelfde postcode+huisnummer delen.
+    huisletter: doc.huisletter ?? null,
+    huisnummertoevoeging: doc.huisnummertoevoeging ?? null,
     adresseerbaarobjectId,
     perceelAanduiding: doc.gekoppeld_perceel?.[0] ?? null,
   };
@@ -80,23 +84,48 @@ async function findBagKenmerken(adresseerbaarobjectId) {
   };
 }
 
-// Stap D: historische WOZ-waarden via de publieke wozwaardeloket-API.
-async function findWozHistorie(postcode, huisnummer) {
-  const query = `${postcode} ${huisnummer}`;
-  const suggestUrl = `${WOZ_API_BASE}/suggest?q=${encodeURIComponent(query)}`;
-  const suggestData = await fetchJson(suggestUrl);
-  const docs = suggestData?.docs ?? [];
-  const match =
-    docs.find((d) => d.postcode === postcode && String(d.huisnummer) === String(huisnummer)) ??
-    docs[0];
-  if (!match) {
+async function suggestWoz(query) {
+  const url = `${WOZ_API_BASE}/suggest?q=${encodeURIComponent(query)}`;
+  const data = await fetchJson(url);
+  return data?.docs ?? [];
+}
+
+// Stap D: historische WOZ-waarden via de publieke wozwaardeloket-API. Postcode+huisnummer
+// kunnen door meerdere WOZ-objecten gedeeld worden (bijv. bovenwoningen, appartementen),
+// dus wordt zo mogelijk ook op huisletter/-toevoeging gematcht in plaats van simpelweg het
+// eerste zoekresultaat te nemen.
+async function findWozHistorie(postcode, huisnummer, huisletter, huisnummertoevoeging) {
+  const huisnummerLang = `${huisnummer}${huisletter ?? ''}${huisnummertoevoeging ?? ''}`;
+  // Eerste poging: exacte combinatie zoals wozwaardeloket.nl zelf voorstelt.
+  let docs = await suggestWoz(`${postcode} ${huisnummerLang}`);
+  // Fallback: sommige objecten staan alleen op het kale huisnummer geïndexeerd.
+  if (docs.length === 0) {
+    docs = await suggestWoz(`${postcode} ${huisnummer}`);
+  }
+  if (docs.length === 0) {
     throw new Error('Geen WOZ-object gevonden voor dit adres.');
   }
+
+  const sameHuisnummer = docs.filter(
+    (d) => d.postcode === postcode && String(d.huisnummer) === String(huisnummer)
+  );
+  const candidates = sameHuisnummer.length > 0 ? sameHuisnummer : docs;
+
+  const exactMatch = candidates.find(
+    (d) =>
+      (d.huisletter ?? null) === (huisletter ?? null) &&
+      (d.huisnummertoevoeging ?? null) === (huisnummertoevoeging ?? null)
+  );
+  const match = exactMatch ?? candidates[0];
+
   const wozUrl = `${WOZ_API_BASE}/wozwaarde/wozobjectnummer/${match.wozobjectnummer}`;
   const wozData = await fetchJson(wozUrl);
   const waarden = (wozData?.wozWaarden ?? [])
     .slice()
     .sort((a, b) => new Date(b.peildatum) - new Date(a.peildatum));
+  if (waarden.length === 0) {
+    throw new Error('Geen historische WOZ-waarden beschikbaar voor dit WOZ-object.');
+  }
   return {
     wozobjectnummer: match.wozobjectnummer,
     waarden,
@@ -112,7 +141,7 @@ export async function getCompleteHousingData(addressString) {
   const [perceelResult, bagResult, wozResult] = await Promise.allSettled([
     findPerceelGrootte(address.perceelAanduiding),
     findBagKenmerken(address.adresseerbaarobjectId),
-    findWozHistorie(address.postcode, address.huisnummer),
+    findWozHistorie(address.postcode, address.huisnummer, address.huisletter, address.huisnummertoevoeging),
   ]);
 
   return {

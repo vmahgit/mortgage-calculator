@@ -2094,15 +2094,6 @@ export default function MortgageCalculator() {
           </div>
         </div>
 
-        <OptionalPropertyDataModule
-          onUseValue={hasExistingHome ? setMarketValue : setPurchasePrice}
-          useValueLabel={
-            hasExistingHome
-              ? "'Huidige marktwaarde woning'"
-              : "'Aanschafprijs beoogde woning' (als richtprijs)"
-          }
-        />
-
         {hasExistingHome && (
         <div className="mt-8 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-xl">
           <button
@@ -3278,6 +3269,15 @@ export default function MortgageCalculator() {
           </div>
         </div>
         )}
+
+        <OptionalPropertyDataModule
+          onUseValue={hasExistingHome ? setMarketValue : setPurchasePrice}
+          useValueLabel={
+            hasExistingHome
+              ? "'Huidige marktwaarde woning'"
+              : "'Aanschafprijs beoogde woning' (als richtprijs)"
+          }
+        />
       </div>
     </div>
   );
