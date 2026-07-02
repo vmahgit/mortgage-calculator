@@ -3,10 +3,10 @@ import { motion, useScroll, useTransform } from 'framer-motion';
 import { ChevronDown, Home, Sparkles } from 'lucide-react';
 import MortgageCalculator from './MortgageCalculator';
 
-// Sfeerbeeld: Amsterdams grachtenpand (Unsplash). Losse constante zodat je 'm makkelijk
-// kunt vervangen door een eigen beeld.
+// Sfeerbeeld: luxe moderne vrijstaande villa (Unsplash). Losse constante zodat je 'm
+// makkelijk kunt vervangen door een eigen beeld.
 const HERO_IMAGE =
-  'https://images.unsplash.com/photo-1512470876302-972faa2aa9a4?auto=format&fit=crop&w=2400&q=80';
+  'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=2400&q=80';
 
 // Herbruikbare scroll-reveal wrapper: laat kinderen elegant infaden zodra ze in beeld
 // scrollen. `once` zodat het niet steeds opnieuw animeert bij op-en-neer scrollen.
@@ -45,9 +45,9 @@ function Hero({ onScrollToCalculator }) {
           className="h-full w-full object-cover"
           loading="eager"
         />
-        {/* Gradient-overlay voor leesbaarheid van de tekst, met een vloeiende overgang naar
-            de donkere calculator-sectie onderaan. */}
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/40 via-slate-950/45 to-slate-950" />
+        {/* Gradient-overlay voor leesbaarheid van de witte tekst over de foto, met een
+            vloeiende overgang naar de lichte calculator-sectie onderaan. */}
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-900/55 via-slate-900/40 to-slate-50" />
       </motion.div>
 
       <motion.div
@@ -131,25 +131,25 @@ export default function LandingPage() {
   };
 
   return (
-    <div className="min-h-dvh w-full bg-slate-950">
+    <div className="min-h-dvh w-full bg-gradient-to-b from-slate-50 via-white to-slate-50">
       <Hero onScrollToCalculator={scrollToCalculator} />
 
       <section ref={calculatorRef} className="relative w-full">
         {/* Zachte gloed-accenten in de achtergrond voor diepte */}
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          <div className="absolute -top-40 left-1/4 h-96 w-96 rounded-full bg-amber-500/10 blur-3xl" />
-          <div className="absolute top-1/3 right-0 h-96 w-96 rounded-full bg-blue-500/10 blur-3xl" />
+          <div className="absolute -top-40 left-1/4 h-96 w-96 rounded-full bg-amber-300/20 blur-3xl" />
+          <div className="absolute top-1/3 right-0 h-96 w-96 rounded-full bg-blue-300/20 blur-3xl" />
         </div>
 
         <div className="relative mx-auto max-w-6xl px-4 pt-16 sm:px-6 lg:px-10">
           <Reveal className="text-center">
-            <span className="text-sm font-medium uppercase tracking-widest text-amber-300/80">
+            <span className="text-sm font-medium uppercase tracking-widest text-amber-600">
               De berekening
             </span>
-            <h2 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+            <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
               Wat kunt u lenen?
             </h2>
-            <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-300 sm:text-base">
+            <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-500 sm:text-base">
               Vul uw gegevens in en zie direct uw maximale hypotheek. Alles wordt live
               herberekend — geen knoppen, geen wachten.
             </p>

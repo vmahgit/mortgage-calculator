@@ -1698,8 +1698,8 @@ export default function MortgageCalculator() {
         </div>
 
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-white sm:text-3xl">Hypotheekcalculator 2026</h1>
-          <p className="mt-1 text-sm text-slate-300">
+          <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Hypotheekcalculator 2026</h1>
+          <p className="mt-1 text-sm text-slate-500">
             Indicatieve berekening op basis van de Nibud-systematiek 2026. Geen rechten kunnen aan
             deze uitkomst worden ontleend.
           </p>
@@ -3313,7 +3313,7 @@ export default function MortgageCalculator() {
           purchasePrice={safeNum(purchasePrice)}
         />
 
-        <p className="mt-6 text-center text-[11px] text-slate-300">
+        <p className="mt-6 text-center text-[11px] text-slate-400">
           v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'}
           {typeof __GIT_COMMIT__ !== 'undefined' && __GIT_COMMIT__ !== 'dev' ? ` · ${__GIT_COMMIT__}` : ''}
         </p>
