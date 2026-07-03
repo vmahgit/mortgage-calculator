@@ -3,14 +3,15 @@ import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion'
 import { ChevronDown, Home, Sparkles } from 'lucide-react';
 import MortgageCalculator from './MortgageCalculator';
 
-// Sfeerbeelden: moderne Nederlandse vrijstaande villa's (Unsplash), in de stijl van
-// Loenen aan de Vecht / het Gooi / IJburg. Een reeks i.p.v. één beeld, die op de
+// Sfeerbeelden: moderne, Noord-Europese/Nederlandse vrijstaande villa's (Unsplash) —
+// baksteen/betonarchitectuur met platte daken en grote raampartijen, in plaats van de
+// eerdere witgestucte mediterrane stijl. Een reeks i.p.v. één beeld, die op de
 // achtergrond langzaam doorkruist zodat de hero nooit statisch aanvoelt.
 const HERO_IMAGES = [
-  'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=2400&q=80',
-  'https://images.unsplash.com/photo-1613490493576-7fde63acd811?auto=format&fit=crop&w=2400&q=80',
-  'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=2400&q=80',
-  'https://images.unsplash.com/photo-1613977257363-707ba9348227?auto=format&fit=crop&w=2400&q=80',
+  'https://images.unsplash.com/photo-1696237461860-630be53f179c?auto=format&fit=crop&w=2400&q=80',
+  'https://images.unsplash.com/photo-1696237583261-029171ee31fa?auto=format&fit=crop&w=2400&q=80',
+  'https://images.unsplash.com/photo-1704457030386-1663afc19e3d?auto=format&fit=crop&w=2400&q=80',
+  'https://images.unsplash.com/photo-1721222205941-21b2eee40652?auto=format&fit=crop&w=2400&q=80',
 ];
 
 // Herbruikbare scroll-reveal wrapper: laat kinderen elegant infaden zodra ze in beeld
@@ -115,9 +116,9 @@ function Hero({ onScrollToCalculator }) {
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
           className="text-4xl font-bold leading-tight tracking-tight text-white sm:text-6xl lg:text-7xl"
         >
-          Jouw Nederlandse
+          Hypotheek
           <span className="block bg-gradient-to-r from-amber-200 via-amber-400 to-amber-200 bg-clip-text text-transparent">
-            droomhuis begint hier
+            Calculator
           </span>
         </motion.h1>
 

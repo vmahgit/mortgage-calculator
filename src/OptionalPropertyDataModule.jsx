@@ -27,6 +27,94 @@ function formatDateNL(dateStr) {
   return new Intl.DateTimeFormat('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' }).format(d);
 }
 
+// Lijn-/vlakgrafiek van de absolute WOZ-waarde per peildatum, zodat je in één oogopslag
+// zowel het verloop (cumulatief) als de daadwerkelijke bedragen ziet — i.p.v. losse
+// procentuele staafjes per jaar.
+function WozValueChart({ points }) {
+  const width = 640;
+  const height = 200;
+  const padding = { top: 20, right: 16, bottom: 28, left: 56 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  const years = points.map((p) => new Date(p.peildatum).getFullYear());
+  const minYear = Math.min(...years);
+  const maxYear = Math.max(...years);
+  const values = points.map((p) => p.vastgesteldeWaarde);
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const valueRange = Math.max(1, maxValue - minValue);
+  const yPad = valueRange * 0.2;
+  const yMin = minValue - yPad;
+  const yMax = maxValue + yPad;
+
+  const xScale = (year) =>
+    maxYear === minYear
+      ? padding.left + chartWidth / 2
+      : padding.left + ((year - minYear) / (maxYear - minYear)) * chartWidth;
+  const yScale = (value) =>
+    padding.top + chartHeight - ((value - yMin) / (yMax - yMin)) * chartHeight;
+
+  const linePoints = points.map((p) => [
+    xScale(new Date(p.peildatum).getFullYear()),
+    yScale(p.vastgesteldeWaarde),
+  ]);
+  const baseline = padding.top + chartHeight;
+
+  const areaPath =
+    `M ${linePoints[0][0]},${baseline} ` +
+    linePoints.map(([x, y]) => `L ${x},${y}`).join(' ') +
+    ` L ${linePoints[linePoints.length - 1][0]},${baseline} Z`;
+  const linePath = `M ${linePoints.map(([x, y]) => `${x},${y}`).join(' L ')}`;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-auto w-full">
+      <defs>
+        <linearGradient id="wozAreaGradient" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#6366f1" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {[0, 0.5, 1].map((f, i) => {
+        const y = padding.top + chartHeight * f;
+        const value = yMax - f * (yMax - yMin);
+        return (
+          <g key={i}>
+            <line
+              x1={padding.left}
+              y1={y}
+              x2={width - padding.right}
+              y2={y}
+              stroke="#e2e8f0"
+              strokeWidth="1"
+            />
+            <text x={padding.left - 8} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
+              €{Math.round(value / 1000)}k
+            </text>
+          </g>
+        );
+      })}
+      <path d={areaPath} fill="url(#wozAreaGradient)" />
+      <path d={linePath} fill="none" stroke="#6366f1" strokeWidth="2.5" strokeLinejoin="round" />
+      {points.map((p, i) => (
+        <circle key={p.peildatum} cx={linePoints[i][0]} cy={linePoints[i][1]} r="3.5" fill="#6366f1" />
+      ))}
+      {points.map((p, i) => (
+        <text
+          key={`${p.peildatum}-label`}
+          x={linePoints[i][0]}
+          y={height - 8}
+          textAnchor="middle"
+          fontSize="10"
+          fill="#94a3b8"
+        >
+          {new Date(p.peildatum).getFullYear()}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
 // Losstaand, optioneel hulpmiddel: haalt woninggegevens op via een adres en toont deze,
 // zonder dat het de hoofdberekening van de hypotheekcalculator raakt. Alleen als de
 // gebruiker expliciet op de knop klikt, wordt een waarde overgenomen in de calculator (via
@@ -71,24 +159,21 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel, 
   const olderWozValues = showAllWoz ? allOlderWozValues : allOlderWozValues.slice(0, 2);
   const hasMoreWozValues = allOlderWozValues.length > 2;
 
-  // Procentuele verandering van de WOZ-waarde per jaar, o.b.v. alle beschikbare
-  // peildatums (niet beperkt tot de 3 die standaard zichtbaar zijn in de tabel erboven).
-  const wozYoyChanges = (() => {
+  // Cumulatieve waardeontwikkeling o.b.v. alle beschikbare peildatums (niet beperkt tot
+  // de 3 die standaard zichtbaar zijn in de tabel erboven), inclusief de absolute
+  // WOZ-waarden zelf voor de grafiek.
+  const wozTimeline = (() => {
     const waarden = result?.woz?.waarden;
-    if (!waarden || waarden.length < 2) return [];
-    const sorted = [...waarden].sort((a, b) => new Date(a.peildatum) - new Date(b.peildatum));
-    const changes = [];
-    for (let i = 1; i < sorted.length; i++) {
-      const prev = sorted[i - 1];
-      const curr = sorted[i];
-      if (prev.vastgesteldeWaarde > 0) {
-        const pct = ((curr.vastgesteldeWaarde - prev.vastgesteldeWaarde) / prev.vastgesteldeWaarde) * 100;
-        changes.push({ year: new Date(curr.peildatum).getFullYear(), pct });
-      }
-    }
-    return changes;
+    if (!waarden || waarden.length < 2) return null;
+    const points = [...waarden].sort((a, b) => new Date(a.peildatum) - new Date(b.peildatum));
+    const first = points[0];
+    const last = points[points.length - 1];
+    const cumulativePct =
+      first.vastgesteldeWaarde > 0
+        ? ((last.vastgesteldeWaarde - first.vastgesteldeWaarde) / first.vastgesteldeWaarde) * 100
+        : 0;
+    return { points, first, last, cumulativePct };
   })();
-  const wozMaxAbsPct = Math.max(1, ...wozYoyChanges.map((c) => Math.abs(c.pct)));
 
   // Prijs per vierkante meter wordt normaliter berekend op de gebruiksoppervlakte (het
   // woonoppervlak), niet de perceelgrootte.
@@ -276,47 +361,30 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel, 
                     )}
                   </div>
 
-                  {wozYoyChanges.length > 0 && (
+                  {wozTimeline && (
                     <div className="rounded-xl border border-slate-100 bg-white p-4">
-                      <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        <TrendingUp className="h-3.5 w-3.5" />
-                        Jaarlijkse waardeontwikkeling
+                      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          <TrendingUp className="h-3.5 w-3.5" />
+                          Waardeontwikkeling (cumulatief)
+                        </div>
+                        <span
+                          className={`text-sm font-bold ${
+                            wozTimeline.cumulativePct >= 0 ? 'text-emerald-600' : 'text-red-600'
+                          }`}
+                        >
+                          {wozTimeline.cumulativePct >= 0 ? '+' : ''}
+                          {wozTimeline.cumulativePct.toFixed(1)}% sinds{' '}
+                          {new Date(wozTimeline.first.peildatum).getFullYear()}
+                        </span>
                       </div>
-                      <div className="flex items-end gap-2 overflow-x-auto pb-1">
-                        {wozYoyChanges.map((c) => {
-                          const positive = c.pct >= 0;
-                          const heightPct = Math.max(8, (Math.abs(c.pct) / wozMaxAbsPct) * 100);
-                          return (
-                            <div
-                              key={c.year}
-                              className="flex w-11 flex-shrink-0 flex-col items-center gap-1"
-                            >
-                              <span
-                                className={`text-[10px] font-semibold ${
-                                  positive ? 'text-emerald-600' : 'text-red-600'
-                                }`}
-                              >
-                                {positive ? '+' : ''}
-                                {c.pct.toFixed(1)}%
-                              </span>
-                              <div className="flex h-16 w-full items-end justify-center">
-                                <div
-                                  className={`w-4 rounded-t transition-all duration-500 ${
-                                    positive ? 'bg-emerald-400' : 'bg-red-400'
-                                  }`}
-                                  style={{ height: `${heightPct}%` }}
-                                />
-                              </div>
-                              <span className="text-[10px] text-slate-400">{c.year}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <p className="mt-3 text-xs text-slate-400">
-                        Procentuele verandering van de WOZ-waarde t.o.v. het voorgaande
-                        beschikbare peildatum, o.b.v. alle {wozYoyChanges.length + 1} peildatums
-                        die voor dit adres bekend zijn.
+                      <p className="mb-3 text-xs text-slate-400">
+                        Van {formatEuro(wozTimeline.first.vastgesteldeWaarde)} (
+                        {new Date(wozTimeline.first.peildatum).getFullYear()}) naar{' '}
+                        {formatEuro(wozTimeline.last.vastgesteldeWaarde)} (
+                        {new Date(wozTimeline.last.peildatum).getFullYear()})
                       </p>
+                      <WozValueChart points={wozTimeline.points} />
                     </div>
                   )}
 
