@@ -10,8 +10,8 @@ import MortgageCalculator from './MortgageCalculator';
 const HERO_IMAGES = [
   'https://images.unsplash.com/photo-1696237461860-630be53f179c?auto=format&fit=crop&w=2400&q=80',
   'https://images.unsplash.com/photo-1696237583261-029171ee31fa?auto=format&fit=crop&w=2400&q=80',
-  'https://images.unsplash.com/photo-1704457030386-1663afc19e3d?auto=format&fit=crop&w=2400&q=80',
-  'https://images.unsplash.com/photo-1721222205941-21b2eee40652?auto=format&fit=crop&w=2400&q=80',
+  'https://images.unsplash.com/photo-1686385798052-0e86d41b4a60?auto=format&fit=crop&w=2400&q=80',
+  'https://images.unsplash.com/photo-1549357957-99ab8644c268?auto=format&fit=crop&w=2400&q=80',
 ];
 
 // Herbruikbare scroll-reveal wrapper: laat kinderen elegant infaden zodra ze in beeld

@@ -2082,19 +2082,14 @@ export default function MortgageCalculator() {
               </div>
 
               {hasExistingHome && (
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <div className="rounded-xl bg-white/10 px-4 py-3">
-                    <p className="text-xs text-blue-200">Max. aankoopwaarde</p>
-                    <p className="text-[10px] text-blue-300">incl. overwaarde e.d.</p>
-                    <p className="mt-1 text-lg font-bold">{formatEuro(maxBudgetCalc.maxBudget)}</p>
-                  </div>
-                  <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3">
-                    <p className="text-xs text-amber-100">O.b.v. inkomen alleen</p>
-                    <p className="text-[10px] text-amber-200/80">zonder overwaarde/meeneem</p>
-                    <p className="mt-1 text-lg font-bold text-amber-50">
-                      {formatEuro(calc.maxMortgage)}
+                <div className="mt-4 flex flex-col gap-1 rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  <div>
+                    <p className="text-xs font-medium text-amber-100">O.b.v. inkomen alleen</p>
+                    <p className="text-[11px] text-amber-200/70">
+                      zonder overwaarde of meeneemregeling
                     </p>
                   </div>
+                  <p className="text-lg font-bold text-amber-50">{formatEuro(calc.maxMortgage)}</p>
                 </div>
               )}
 
@@ -2116,7 +2111,7 @@ export default function MortgageCalculator() {
                 )}
               </AnimatePresence>
 
-              <div className="mt-4 flex items-center justify-between rounded-xl bg-white/10 px-4 py-3">
+              <div className="mt-4 flex flex-col gap-1 rounded-xl bg-white/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                 <span className="text-sm text-blue-100">
                   {hasExistingHome
                     ? 'Aanvullende hypotheek voor huidige aanschafprijs'
@@ -2130,7 +2125,7 @@ export default function MortgageCalculator() {
               <div className="my-6 h-px w-full bg-white/15" />
 
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-sm text-blue-100">Geschat eigen geld (kosten koper, 3,5%)</p>
                   <p className="text-lg font-semibold">{formatEuro(calc.ownMoney)}</p>
                 </div>

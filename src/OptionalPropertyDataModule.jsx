@@ -159,6 +159,40 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel, 
   const olderWozValues = showAllWoz ? allOlderWozValues : allOlderWozValues.slice(0, 2);
   const hasMoreWozValues = allOlderWozValues.length > 2;
 
+  // Procentuele stijging/daling per peildatum t.o.v. het eerstvolgende oudere peildatum
+  // (result.woz.waarden staat aflopend gesorteerd, nieuwste eerst). Op basis van de
+  // volledige lijst berekend, zodat dit ook klopt als de tabel is ingeklapt tot 3 rijen.
+  const wozChangesByDate = (() => {
+    const waarden = result?.woz?.waarden;
+    const map = {};
+    if (!waarden) return map;
+    for (let i = 0; i < waarden.length; i++) {
+      const curr = waarden[i];
+      const prev = waarden[i + 1];
+      map[curr.peildatum] =
+        prev && prev.vastgesteldeWaarde > 0
+          ? ((curr.vastgesteldeWaarde - prev.vastgesteldeWaarde) / prev.vastgesteldeWaarde) * 100
+          : null;
+    }
+    return map;
+  })();
+
+  const renderWozChangeBadge = (peildatum) => {
+    const pct = wozChangesByDate[peildatum];
+    if (pct === null || pct === undefined) return null;
+    const positive = pct >= 0;
+    return (
+      <span
+        className={`ml-2 inline-block text-[10px] font-semibold ${
+          positive ? 'text-emerald-600' : 'text-red-600'
+        }`}
+      >
+        {positive ? '+' : ''}
+        {pct.toFixed(1)}%
+      </span>
+    );
+  };
+
   // Cumulatieve waardeontwikkeling o.b.v. alle beschikbare peildatums (niet beperkt tot
   // de 3 die standaard zichtbaar zijn in de tabel erboven), inclusief de absolute
   // WOZ-waarden zelf voor de grafiek.
@@ -321,6 +355,7 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel, 
                           </span>
                           <span className="text-sm font-bold text-emerald-800">
                             {formatEuro(mostRecentWoz.vastgesteldeWaarde)}
+                            {renderWozChangeBadge(mostRecentWoz.peildatum)}
                           </span>
                         </div>
                         {olderWozValues.length > 0 && (
@@ -330,6 +365,7 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel, 
                                 <span>{formatDateNL(w.peildatum)}</span>
                                 <span className="font-medium text-slate-700">
                                   {formatEuro(w.vastgesteldeWaarde)}
+                                  {renderWozChangeBadge(w.peildatum)}
                                 </span>
                               </li>
                             ))}
