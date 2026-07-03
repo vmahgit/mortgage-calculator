@@ -15,13 +15,18 @@ const HERO_IMAGES = [
 
 // Herbruikbare scroll-reveal wrapper: laat kinderen elegant infaden zodra ze in beeld
 // scrollen. `once` zodat het niet steeds opnieuw animeert bij op-en-neer scrollen.
-function Reveal({ children, className = '', delay = 0 }) {
+// `amount` is het aandeel van het element dat zichtbaar moet zijn voor de trigger: voor
+// compacte content is 0.2 (20%) een mooie drempel, maar voor een element dat veel hoger
+// is dan het beeldscherm (zoals de hele calculator) is 20% van de totale hoogte nooit
+// gelijktijdig zichtbaar — dan moet amount laag (of 0) staan, anders blijft het element
+// permanent onzichtbaar (opacity 0) zodra je er direct naartoe scrollt/linkt.
+function Reveal({ children, className = '', delay = 0, amount = 0.2 }) {
   return (
     <motion.div
       className={className}
       initial={{ opacity: 0, y: 32 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.2 }}
+      viewport={{ once: true, amount }}
       transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1], delay }}
     >
       {children}
@@ -196,7 +201,7 @@ export default function LandingPage() {
           </Reveal>
         </div>
 
-        <Reveal delay={0.1}>
+        <Reveal delay={0.1} amount={0}>
           <MortgageCalculator />
         </Reveal>
       </section>
