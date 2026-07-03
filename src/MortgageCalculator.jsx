@@ -973,6 +973,29 @@ function DonutChart({ interestValue, principalValue, centerLabel, centerValue })
   );
 }
 
+// Keuzeknoppen voor het maximaal toegestane percentage aflossingsvrij (30/50/100% van de
+// woningwaarde). Zelfde visuele stijl als de studieschuld-stelsel/verkoopafslag-toggles.
+function AflossingsvrijMaxToggle({ value, onChange }) {
+  return (
+    <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+      {[30, 50, 100].map((pct) => (
+        <button
+          key={pct}
+          type="button"
+          onClick={() => onChange(pct)}
+          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+            value === pct
+              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          {pct}%
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function MortgageCalculator() {
   const [income1, setIncome1] = useState(115000);
   const [income2, setIncome2] = useState(115000);
@@ -1039,6 +1062,11 @@ export default function MortgageCalculator() {
   ]);
   const [additionalViewMode, setAdditionalViewMode] = useState('bruto');
 
+  // Maximaal toegestaan percentage aflossingsvrij (van de woningwaarde). Instelbaar op
+  // 30/50/100%, default 50% — de gangbare bancaire norm. Gedeeld door de doorstromer- en
+  // de starters-toets (die sluiten elkaar uit via hasExistingHome).
+  const [aflossingsvrijMaxPct, setAflossingsvrijMaxPct] = useState(50);
+
   const addAdditionalLoanPart = () => {
     setAdditionalLoanParts((prev) => {
       if (prev.length >= 2) return prev;
@@ -1055,6 +1083,31 @@ export default function MortgageCalculator() {
 
   const updateAdditionalLoanPart = (id, field, value) => {
     setAdditionalLoanParts((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+  };
+
+  // Starters-leningdelen: voor wie nog geen woning heeft. Splitst de benodigde hypotheek in
+  // maximaal 3 delen met eigen aflosvorm, rente en rentevastperiode. Starten vandaag.
+  const [starterLoanParts, setStarterLoanParts] = useState([
+    { id: 1, type: 'Annuïteit', principal: '0', rate: 4.0, originalFixedYears: 10 },
+  ]);
+  const [starterViewMode, setStarterViewMode] = useState('bruto');
+
+  const addStarterLoanPart = () => {
+    setStarterLoanParts((prev) => {
+      if (prev.length >= 3) return prev;
+      return [
+        ...prev,
+        { id: Date.now(), type: 'Annuïteit', principal: '0', rate: 4.0, originalFixedYears: 10 },
+      ];
+    });
+  };
+
+  const removeStarterLoanPart = (id) => {
+    setStarterLoanParts((prev) => (prev.length > 1 ? prev.filter((p) => p.id !== id) : prev));
+  };
+
+  const updateStarterLoanPart = (id, field, value) => {
+    setStarterLoanParts((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
   };
 
   const calc = useMemo(() => {
@@ -1221,6 +1274,10 @@ export default function MortgageCalculator() {
     const saleValueForFinancing = safeNum(marketValue) * (saleDiscountPercentage / 100);
     const overwaarde = safeNum(marketValue) - currentDebtBalance;
     const usableOverwaarde = Math.max(0, saleValueForFinancing - currentDebtBalance);
+    // Onderwaarde: als de (met verkoopafslag gecorrigeerde) verkoopwaarde lager is dan de
+    // restschuld, blijft er na verkoop een restschuld-tekort staan dat moet worden afgelost
+    // en dus meegefinancierd/uit eigen middelen betaald moet worden.
+    const restschuldTekort = Math.max(0, currentDebtBalance - saleValueForFinancing);
 
     return {
       totalGross,
@@ -1243,6 +1300,7 @@ export default function MortgageCalculator() {
       overwaarde,
       usableOverwaarde,
       saleValueForFinancing,
+      restschuldTekort,
     };
   }, [loanParts, startDate, marketValue, saleDiscountPercentage, calc]);
 
@@ -1280,10 +1338,13 @@ export default function MortgageCalculator() {
     const price = safeNum(purchasePrice);
     const portedDebt = currentMortgage.currentDebtBalance;
     const overwaarde = currentMortgage.usableOverwaarde;
+    const restschuldTekort = currentMortgage.restschuldTekort;
     // Meeneemregeling: de bestaande hypotheek gaat mee tegen de oude voorwaarden, en de
     // overwaarde komt daarnaast vrij als cash. Samen dekken deze twee posten een deel van de
-    // aanschafprijs; wat overblijft is het financieringsgat.
-    const gap = price - portedDebt - overwaarde;
+    // aanschafprijs; wat overblijft is het financieringsgat. Bij onderwaarde is er geen
+    // overwaarde maar juist een restschuld-tekort dat na verkoop moet worden afgelost; dat
+    // vergroot het gat (symmetrisch aan hoe overwaarde het gat verkleint).
+    const gap = price - portedDebt - overwaarde + restschuldTekort;
     const ownCapitalApplied = Math.min(calc.totalOwnCapital, Math.max(0, gap));
     const additionalMortgage = Math.max(0, gap - calc.totalOwnCapital);
     const capacityMargin = currentMortgage.extraBorrowCapacity - additionalMortgage;
@@ -1297,6 +1358,7 @@ export default function MortgageCalculator() {
     return {
       portedDebt,
       overwaarde,
+      restschuldTekort,
       gap,
       ownCapitalApplied,
       additionalMortgage,
@@ -1450,8 +1512,8 @@ export default function MortgageCalculator() {
     const newLtv = priceNum > 0 ? (totalDebtAfterMove / priceNum) * 100 : 0;
     const withinLtvCap = priceNum === 0 || totalDebtAfterMove <= priceNum;
 
-    // Bancaire norm: maximaal 50% van de woningwaarde mag aflossingsvrij gefinancierd
-    // worden, over de meegenomen én de nieuwe leningdelen samen.
+    // Bancaire norm: maximaal het ingestelde percentage van de woningwaarde mag
+    // aflossingsvrij gefinancierd worden, over de meegenomen én de nieuwe leningdelen samen.
     const portedAflossingsvrij = loanParts
       .filter((p) => p.type === 'Aflossingsvrij')
       .reduce((sum, p) => sum + safeNum(p.principal), 0);
@@ -1459,7 +1521,7 @@ export default function MortgageCalculator() {
       .filter((p) => p.type === 'Aflossingsvrij')
       .reduce((sum, p) => sum + safeNum(p.principal), 0);
     const totalAflossingsvrij = portedAflossingsvrij + newAflossingsvrij;
-    const maxAflossingsvrij = priceNum * 0.5;
+    const maxAflossingsvrij = priceNum * (aflossingsvrijMaxPct / 100);
     const aflossingsvrijRoomRemaining = Math.max(0, maxAflossingsvrij - portedAflossingsvrij);
     const withinAflossingsvrijCap = totalAflossingsvrij <= maxAflossingsvrij;
 
@@ -1493,7 +1555,16 @@ export default function MortgageCalculator() {
       withinCapacity,
       matchesRequiredAmount,
     };
-  }, [additionalLoanParts, todayIso, calc, currentMortgage, purchasePrice, loanParts, combinedGapCalc]);
+  }, [
+    additionalLoanParts,
+    todayIso,
+    calc,
+    currentMortgage,
+    purchasePrice,
+    loanParts,
+    combinedGapCalc,
+    aflossingsvrijMaxPct,
+  ]);
 
   const autoDistributeAdditionalLoan = () => {
     const needed = Math.max(0, combinedGapCalc.additionalMortgage);
@@ -1521,6 +1592,84 @@ export default function MortgageCalculator() {
     setAdditionalLoanParts(parts);
   };
 
+  // Starters-toets: benodigde hypotheek = aanschafprijs min ingebracht eigen vermogen,
+  // begrensd op de maximale hypotheek o.b.v. inkomen. Kosten koper worden apart uit eigen
+  // middelen betaald en tellen hier niet mee in het hypotheekbedrag.
+  const starterRequiredMortgage = Math.max(
+    0,
+    Math.min(calc.maxMortgage, safeNum(purchasePrice) - calc.totalOwnCapital)
+  );
+
+  const starterLoanCalc = useMemo(() => {
+    const partResults = starterLoanParts.map((part) => calculateLoanPart(part, 0, todayIso));
+
+    const totalPrincipal = starterLoanParts.reduce((sum, p) => sum + safeNum(p.principal), 0);
+    const totalGross = partResults.reduce((sum, p) => sum + p.grossMonthly, 0);
+    const totalInterest = partResults.reduce((sum, p) => sum + p.interestMonthly, 0);
+    const totalAflossing = partResults.reduce((sum, p) => sum + p.principalMonthly, 0);
+    const deductibleInterest = partResults.reduce(
+      (sum, p) => sum + (p.eligibleForHRA ? p.interestMonthly : 0),
+      0
+    );
+    const taxBenefit = deductibleInterest * HRA_RATE;
+    const totalNet = totalGross - taxBenefit;
+    const netInterestComponent = Math.max(0, totalInterest - taxBenefit);
+
+    const priceNum = safeNum(purchasePrice);
+    const totalAflossingsvrij = starterLoanParts
+      .filter((p) => p.type === 'Aflossingsvrij')
+      .reduce((sum, p) => sum + safeNum(p.principal), 0);
+    const maxAflossingsvrij = priceNum * (aflossingsvrijMaxPct / 100);
+    const withinAflossingsvrijCap = totalAflossingsvrij <= maxAflossingsvrij;
+
+    const newLtv = priceNum > 0 ? (totalPrincipal / priceNum) * 100 : 0;
+    const withinLtvCap = priceNum === 0 || totalPrincipal <= priceNum;
+    const matchesRequired = Math.abs(totalPrincipal - starterRequiredMortgage) < 1;
+
+    return {
+      totalPrincipal,
+      totalGross,
+      totalInterest,
+      totalAflossing,
+      taxBenefit,
+      totalNet,
+      netInterestComponent,
+      totalAflossingsvrij,
+      maxAflossingsvrij,
+      withinAflossingsvrijCap,
+      newLtv,
+      withinLtvCap,
+      matchesRequired,
+    };
+  }, [starterLoanParts, todayIso, purchasePrice, aflossingsvrijMaxPct, starterRequiredMortgage]);
+
+  const autoDistributeStarterLoan = () => {
+    const needed = starterRequiredMortgage;
+    const maxAflossingsvrij = safeNum(purchasePrice) * (aflossingsvrijMaxPct / 100);
+    const aflossingsvrijPortion = Math.min(maxAflossingsvrij, needed);
+    const restPortion = needed - aflossingsvrijPortion;
+    const parts = [];
+    if (aflossingsvrijPortion > 0) {
+      parts.push({
+        id: 1,
+        type: 'Aflossingsvrij',
+        principal: String(Math.round(aflossingsvrijPortion)),
+        rate: 4.0,
+        originalFixedYears: 10,
+      });
+    }
+    if (restPortion > 0 || parts.length === 0) {
+      parts.push({
+        id: 2,
+        type: 'Annuïteit',
+        principal: String(Math.round(restPortion)),
+        rate: 4.0,
+        originalFixedYears: 10,
+      });
+    }
+    setStarterLoanParts(parts);
+  };
+
   // Maximaal aankoopbudget: eigen vermogen, overwaarde, de meegenomen hypotheek en de
   // maximale extra bijleenruimte (inkomensgebaseerd, al gecorrigeerd voor renterisico) samen
   // vormen het hoogste bedrag dat voor de beoogde woning neergelegd kan worden.
@@ -1529,7 +1678,14 @@ export default function MortgageCalculator() {
     const overwaarde = currentMortgage.usableOverwaarde;
     const oudeHypotheek = currentMortgage.currentDebtBalance;
     const nieuweHypotheekMax = currentMortgage.extraBorrowCapacity;
-    const maxBudget = eigenVermogen + overwaarde + oudeHypotheek + nieuweHypotheekMax;
+    // Bij onderwaarde moet het restschuld-tekort van het budget af: dat bedrag gaat op aan
+    // het aflossen van de restschuld die na verkoop overblijft.
+    const maxBudget =
+      eigenVermogen +
+      overwaarde +
+      oudeHypotheek +
+      nieuweHypotheekMax -
+      currentMortgage.restschuldTekort;
     const price = safeNum(purchasePrice);
     const remainingRoom = maxBudget - price;
 
@@ -2218,7 +2374,7 @@ export default function MortgageCalculator() {
               />
               <Slider
                 id="rate"
-                label="Hypotheekrente"
+                label="Beoogde hypotheekrente"
                 icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
                 value={rate}
                 min={2.0}
@@ -2265,6 +2421,183 @@ export default function MortgageCalculator() {
             </AnimatePresence>
           </SectionCard>
         </div>
+
+        {!hasExistingHome && (
+          <div className="mt-8">
+            <SectionCard
+              id="sectie-starter-hypotheek"
+              title="Maandlasten & samenstelling hypotheek"
+              icon={<PiggyBank className="h-4 w-4" />}
+            >
+              <p className="text-xs text-slate-500">
+                Splits uw benodigde hypotheek in maximaal 3 leningdelen, elk met een eigen
+                aflosvorm, rente en rentevastperiode, en zie direct uw bruto en netto
+                maandlasten. De benodigde hypotheek is de aanschafprijs minus uw ingebrachte
+                eigen vermogen, begrensd op uw maximale hypotheek o.b.v. inkomen. Kosten koper
+                betaalt u apart uit eigen middelen.
+              </p>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                  <span className="text-xs text-slate-400">Benodigde hypotheek</span>
+                  <p className="text-lg font-bold text-slate-800">
+                    {formatEuro(starterRequiredMortgage)}
+                  </p>
+                  <span className="text-[11px] text-slate-400">
+                    {safeNum(purchasePrice) - calc.totalOwnCapital > calc.maxMortgage
+                      ? `Begrensd op max. hypotheek o.b.v. inkomen (${formatEuro(calc.maxMortgage)})`
+                      : `Aanschafprijs ${formatEuro(purchasePrice)} − eigen vermogen ${formatEuro(calc.totalOwnCapital)}`}
+                  </span>
+                </div>
+                <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                  <span className="text-xs text-slate-400">Ingevuld in leningdelen</span>
+                  <p
+                    className={`text-lg font-bold ${
+                      starterLoanCalc.matchesRequired ? 'text-emerald-600' : 'text-slate-800'
+                    }`}
+                  >
+                    {formatEuro(starterLoanCalc.totalPrincipal)}
+                  </p>
+                  <span className="text-[11px] text-slate-400">
+                    {starterLoanCalc.matchesRequired
+                      ? 'Sluit aan op de benodigde hypotheek'
+                      : `Verschil: ${formatEuro(Math.abs(starterLoanCalc.totalPrincipal - starterRequiredMortgage))}`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-6">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+                      <Building2 className="h-4 w-4" />
+                    </span>
+                    <h3 className="text-sm font-semibold text-slate-700">Leningdelen</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={autoDistributeStarterLoan}
+                    className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-600 transition-all duration-200 hover:bg-indigo-50"
+                  >
+                    Automatisch verdelen
+                  </button>
+                </div>
+
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Leningdelen ({starterLoanParts.length}/3)
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={addStarterLoanPart}
+                    disabled={starterLoanParts.length >= 3}
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Leningdeel toevoegen
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {starterLoanParts.map((part, index) => (
+                    <AdditionalLoanPartCard
+                      key={part.id}
+                      part={part}
+                      index={index}
+                      onChange={(field, value) => updateStarterLoanPart(part.id, field, value)}
+                      onRemove={() => removeStarterLoanPart(part.id)}
+                      canRemove={starterLoanParts.length > 1}
+                    />
+                  ))}
+                </div>
+
+                <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Aflossingsvrij (max. {aflossingsvrijMaxPct}% van de woningwaarde)
+                    </span>
+                    <AflossingsvrijMaxToggle
+                      value={aflossingsvrijMaxPct}
+                      onChange={setAflossingsvrijMaxPct}
+                    />
+                  </div>
+                  <div className="mt-3">
+                    <span className="text-xs text-slate-400">
+                      Totaal aflossingsvrij / maximum {aflossingsvrijMaxPct}%
+                    </span>
+                    <p
+                      className={`text-sm font-semibold ${
+                        starterLoanCalc.withinAflossingsvrijCap ? 'text-slate-800' : 'text-red-600'
+                      }`}
+                    >
+                      {formatEuro(starterLoanCalc.totalAflossingsvrij)} /{' '}
+                      {formatEuro(starterLoanCalc.maxAflossingsvrij)}
+                    </p>
+                  </div>
+                  {!starterLoanCalc.withinAflossingsvrijCap && (
+                    <p className="mt-2 text-xs text-red-600">
+                      Dit overschrijdt de {aflossingsvrijMaxPct}% aflossingsvrij-norm.
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Maandlasten leningdelen
+                    </span>
+                    <div className="inline-flex rounded-lg border border-slate-100 bg-slate-50 p-1">
+                      <button
+                        type="button"
+                        onClick={() => setStarterViewMode('bruto')}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          starterViewMode === 'bruto'
+                            ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        Bruto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStarterViewMode('netto')}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          starterViewMode === 'netto'
+                            ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        Netto
+                      </button>
+                    </div>
+                  </div>
+
+                  {starterViewMode === 'bruto' ? (
+                    <DonutChart
+                      interestValue={starterLoanCalc.totalInterest}
+                      principalValue={starterLoanCalc.totalAflossing}
+                      centerLabel="Bruto per maand"
+                      centerValue={starterLoanCalc.totalGross}
+                    />
+                  ) : (
+                    <DonutChart
+                      interestValue={starterLoanCalc.netInterestComponent}
+                      principalValue={starterLoanCalc.totalAflossing}
+                      centerLabel="Netto per maand"
+                      centerValue={starterLoanCalc.totalNet}
+                    />
+                  )}
+
+                  {starterViewMode === 'netto' && (
+                    <p className="mt-3 text-xs text-slate-400">
+                      Belastingvoordeel HRA (37,56%): {formatEuro(starterLoanCalc.taxBenefit)} per
+                      maand. Eigenwoningforfait is hier niet apart verwerkt.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </SectionCard>
+          </div>
+        )}
 
         {hasExistingHome && (
         <div id="sectie-huidige-woning" className="mt-8 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-xl">
@@ -2598,6 +2931,35 @@ export default function MortgageCalculator() {
                     </div>
 
                     <AnimatePresence>
+                      {currentMortgage.restschuldTekort > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                          transition={{ duration: 0.25, ease: 'easeOut' }}
+                          className="mt-4"
+                        >
+                          <StatusBadge status="warning">
+                            Onderwaarde: de huidige marktwaarde
+                            {saleDiscountPercentage < 100
+                              ? ` (na verkoopafslag ${formatEuro(currentMortgage.saleValueForFinancing)})`
+                              : ''}{' '}
+                            ligt onder de restschuld van{' '}
+                            {formatEuro(currentMortgage.currentDebtBalance)}. Bij verkoop blijft er
+                            een restschuld-tekort van{' '}
+                            <span className="font-semibold">
+                              {formatEuro(currentMortgage.restschuldTekort)}
+                            </span>{' '}
+                            staan dat moet worden afgelost. Dit tekort is meegenomen in het
+                            financieringsgat en de benodigde aanvullende hypotheek hieronder;
+                            in de praktijk verlangen geldverstrekkers vaak dat u dit uit eigen
+                            middelen voldoet.
+                          </StatusBadge>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <AnimatePresence>
                       {currentMortgage.hasRateRiskOnPortedDebt && (
                         <motion.div
                           initial={{ opacity: 0, y: 8, scale: 0.97 }}
@@ -2691,6 +3053,19 @@ export default function MortgageCalculator() {
                             {formatEuro(combinedGapCalc.portedDebt)}
                           </p>
                         </div>
+                        {currentMortgage.restschuldTekort > 0 && (
+                          <div>
+                            <span className="text-xs text-slate-400">
+                              Restschuld-tekort na verkoop
+                            </span>
+                            <p className="text-sm font-semibold text-red-600">
+                              +{formatEuro(currentMortgage.restschuldTekort)}
+                            </p>
+                            <span className="text-[11px] text-red-500">
+                              Verhoogt het financieringsgat
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {combinedGapCalc.gap > 0 ? (
@@ -2890,9 +3265,15 @@ export default function MortgageCalculator() {
                       </div>
 
                       <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Aflossingsvrij (max. 50% van de woningwaarde)
-                        </span>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Aflossingsvrij (max. {aflossingsvrijMaxPct}% van de woningwaarde)
+                          </span>
+                          <AflossingsvrijMaxToggle
+                            value={aflossingsvrijMaxPct}
+                            onChange={setAflossingsvrijMaxPct}
+                          />
+                        </div>
                         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                           <div>
                             <span className="text-xs text-slate-400">Meegenomen aflossingsvrij</span>
@@ -2907,7 +3288,9 @@ export default function MortgageCalculator() {
                             </p>
                           </div>
                           <div>
-                            <span className="text-xs text-slate-400">Totaal / maximum 50%</span>
+                            <span className="text-xs text-slate-400">
+                              Totaal / maximum {aflossingsvrijMaxPct}%
+                            </span>
                             <p
                               className={`text-sm font-semibold ${
                                 additionalLoanCalc.withinAflossingsvrijCap
@@ -2922,8 +3305,7 @@ export default function MortgageCalculator() {
                         </div>
                         {!additionalLoanCalc.withinAflossingsvrijCap ? (
                           <p className="mt-2 text-xs text-red-600">
-                            Dit overschrijdt de 50% aflossingsvrij-norm die de meeste banken
-                            hanteren.
+                            Dit overschrijdt de {aflossingsvrijMaxPct}% aflossingsvrij-norm.
                           </p>
                         ) : (
                           additionalLoanCalc.aflossingsvrijRoomRemaining > 0 && (
