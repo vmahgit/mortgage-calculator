@@ -22,6 +22,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
+import ScenarioAnalysis from './ScenarioAnalysis';
 import { getIncomeBasedMortgage } from './nibud2026';
 
 const ENERGY_LABELS = ['G', 'F', 'E', 'D', 'C', 'B', 'A', 'A+', 'A++', 'A+++', 'A++++'];
@@ -48,6 +49,7 @@ const TERM_MONTHS = 360;
 const HRA_RATE = 0.3756;
 const EWF_RATE = 0.0035;
 const EWF_CAP = 1350000;
+const SCENARIO_PERCENTAGES = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
 const TRANSFER_TAX_RATE = 0.02;
 const OTHER_PURCHASE_COSTS_RATE = 0.015;
 // AFM-toetsrente 2026 (elk kwartaal vastgesteld, tot nu toe steeds 5%). Verplicht te
@@ -1153,6 +1155,30 @@ export default function MortgageCalculator() {
     ownCapital2,
     purchasePrice,
   ]);
+
+  // Scenario-analyse: wat betekent een hogere of lagere bieding t.o.v. de aanschafprijs
+  // voor de benodigde hypotheek en de bruto/netto maandlast? De hypotheek per scenario
+  // gaat uit van dezelfde eigen-vermogen-inbreng als de hoofdberekening; bruto/netto
+  // maandlast volgt dezelfde annuïteit/HRA/EWF-systematiek als de rest van de tool.
+  // Losstaand van de leencapaciteitstoets (die blijft op de daadwerkelijke aanschafprijs
+  // gebaseerd) zodat dit blok puur een "wat als"-vergelijking is.
+  const scenarioAnalysis = useMemo(() => {
+    const basePrice = safeNum(purchasePrice);
+    const r = safeNum(rate) / 100 / 12;
+    const capFactor = getCapitalizationFactor(safeNum(rate));
+
+    return SCENARIO_PERCENTAGES.map((pct) => {
+      const price = basePrice * (1 + pct / 100);
+      const loanAmount = Math.max(0, price - calc.totalOwnCapital);
+      const grossMonthly = capFactor > 0 ? loanAmount / capFactor : 0;
+      const interestMonthly = loanAmount * r;
+      const taxBenefit = interestMonthly * HRA_RATE;
+      const ewfMonthly = (EWF_RATE * Math.min(price, EWF_CAP)) / 12;
+      const netMonthly = grossMonthly - taxBenefit + ewfMonthly;
+      const exceedsCapacity = loanAmount > calc.incomeBasedMax;
+      return { pct, price, loanAmount, grossMonthly, netMonthly, exceedsCapacity };
+    });
+  }, [purchasePrice, rate, calc.totalOwnCapital, calc.incomeBasedMax]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
 
@@ -3303,6 +3329,8 @@ export default function MortgageCalculator() {
           }
           purchasePrice={safeNum(purchasePrice)}
         />
+
+        <ScenarioAnalysis scenarios={scenarioAnalysis} incomeBasedMax={calc.incomeBasedMax} />
 
         <p className="mt-6 text-center text-[11px] text-slate-400">
           v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'}

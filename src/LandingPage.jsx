@@ -1,12 +1,17 @@
-import { useRef } from 'react';
-import { motion, useScroll, useTransform } from 'framer-motion';
+import { useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence, useScroll, useTransform } from 'framer-motion';
 import { ChevronDown, Home, Sparkles } from 'lucide-react';
 import MortgageCalculator from './MortgageCalculator';
 
-// Sfeerbeeld: luxe moderne vrijstaande villa (Unsplash). Losse constante zodat je 'm
-// makkelijk kunt vervangen door een eigen beeld.
-const HERO_IMAGE =
-  'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=2400&q=80';
+// Sfeerbeelden: moderne Nederlandse vrijstaande villa's (Unsplash), in de stijl van
+// Loenen aan de Vecht / het Gooi / IJburg. Een reeks i.p.v. één beeld, die op de
+// achtergrond langzaam doorkruist zodat de hero nooit statisch aanvoelt.
+const HERO_IMAGES = [
+  'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=2400&q=80',
+  'https://images.unsplash.com/photo-1613490493576-7fde63acd811?auto=format&fit=crop&w=2400&q=80',
+  'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=2400&q=80',
+  'https://images.unsplash.com/photo-1613977257363-707ba9348227?auto=format&fit=crop&w=2400&q=80',
+];
 
 // Herbruikbare scroll-reveal wrapper: laat kinderen elegant infaden zodra ze in beeld
 // scrollen. `once` zodat het niet steeds opnieuw animeert bij op-en-neer scrollen.
@@ -26,6 +31,8 @@ function Reveal({ children, className = '', delay = 0 }) {
 
 function Hero({ onScrollToCalculator }) {
   const heroRef = useRef(null);
+  const [imageIndex, setImageIndex] = useState(0);
+
   // Parallax: de achtergrond beweegt langzamer dan de scroll, de tekst iets sneller weg.
   const { scrollYProgress } = useScroll({
     target: heroRef,
@@ -35,20 +42,53 @@ function Hero({ onScrollToCalculator }) {
   const contentY = useTransform(scrollYProgress, [0, 1], ['0%', '60%']);
   const contentOpacity = useTransform(scrollYProgress, [0, 0.7], [1, 0]);
 
+  // Rotatie door de villa-foto's op de achtergrond. Staat stil bij "verminderde beweging".
+  useEffect(() => {
+    const prefersReduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReduced || HERO_IMAGES.length <= 1) return;
+
+    const interval = setInterval(() => {
+      setImageIndex((i) => (i + 1) % HERO_IMAGES.length);
+    }, 6000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <section ref={heroRef} className="relative h-dvh w-full overflow-hidden">
-      {/* Parallax-achtergrond */}
+      {/* Parallax-achtergrond: kruisvervagende villa-foto's */}
       <motion.div style={{ y: bgY }} className="absolute inset-0 z-0 h-[130%] w-full">
-        <img
-          src={HERO_IMAGE}
-          alt="Amsterdams grachtenpand"
-          className="h-full w-full object-cover"
-          loading="eager"
-        />
+        <AnimatePresence>
+          <motion.img
+            key={imageIndex}
+            src={HERO_IMAGES[imageIndex]}
+            alt="Moderne Nederlandse vrijstaande villa"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1.5, ease: 'easeInOut' }}
+            className="absolute inset-0 h-full w-full object-cover"
+            loading="eager"
+          />
+        </AnimatePresence>
         {/* Gradient-overlay voor leesbaarheid van de witte tekst over de foto, met een
             vloeiende overgang naar de lichte calculator-sectie onderaan. */}
         <div className="absolute inset-0 bg-gradient-to-b from-slate-900/55 via-slate-900/40 to-slate-50" />
       </motion.div>
+
+      {/* Indicatordots voor de fotoreeks */}
+      <div className="absolute bottom-20 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5">
+        {HERO_IMAGES.map((_, i) => (
+          <span
+            key={i}
+            className={`h-1.5 rounded-full transition-all duration-500 ${
+              i === imageIndex ? 'w-5 bg-amber-400' : 'w-1.5 bg-white/40'
+            }`}
+          />
+        ))}
+      </div>
 
       <motion.div
         style={{ y: contentY, opacity: contentOpacity }}
