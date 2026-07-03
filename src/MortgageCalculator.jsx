@@ -1156,30 +1156,6 @@ export default function MortgageCalculator() {
     purchasePrice,
   ]);
 
-  // Scenario-analyse: wat betekent een hogere of lagere bieding t.o.v. de aanschafprijs
-  // voor de benodigde hypotheek en de bruto/netto maandlast? De hypotheek per scenario
-  // gaat uit van dezelfde eigen-vermogen-inbreng als de hoofdberekening; bruto/netto
-  // maandlast volgt dezelfde annuïteit/HRA/EWF-systematiek als de rest van de tool.
-  // Losstaand van de leencapaciteitstoets (die blijft op de daadwerkelijke aanschafprijs
-  // gebaseerd) zodat dit blok puur een "wat als"-vergelijking is.
-  const scenarioAnalysis = useMemo(() => {
-    const basePrice = safeNum(purchasePrice);
-    const r = safeNum(rate) / 100 / 12;
-    const capFactor = getCapitalizationFactor(safeNum(rate));
-
-    return SCENARIO_PERCENTAGES.map((pct) => {
-      const price = basePrice * (1 + pct / 100);
-      const loanAmount = Math.max(0, price - calc.totalOwnCapital);
-      const grossMonthly = capFactor > 0 ? loanAmount / capFactor : 0;
-      const interestMonthly = loanAmount * r;
-      const taxBenefit = interestMonthly * HRA_RATE;
-      const ewfMonthly = (EWF_RATE * Math.min(price, EWF_CAP)) / 12;
-      const netMonthly = grossMonthly - taxBenefit + ewfMonthly;
-      const exceedsCapacity = loanAmount > calc.incomeBasedMax;
-      return { pct, price, loanAmount, grossMonthly, netMonthly, exceedsCapacity };
-    });
-  }, [purchasePrice, rate, calc.totalOwnCapital, calc.incomeBasedMax]);
-
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
 
   const currentMortgage = useMemo(() => {
@@ -1331,6 +1307,51 @@ export default function MortgageCalculator() {
       exceedsLenderCap,
     };
   }, [purchasePrice, calc, currentMortgage]);
+
+  // Scenario-analyse: wat betekent een hogere of lagere bieding t.o.v. de aanschafprijs
+  // voor het aanvullend te lenen bedrag en de bruto/netto maandlast? Bij een bestaande
+  // woning (hasExistingHome) wordt, net als bij de financieringsgat-berekening hierboven,
+  // uitgegaan van de meeneemregeling: de huidige hypotheek gaat mee tegen de huidige
+  // voorwaarden en de overwaarde (huidige marktwaarde min restschuld) wordt als cash
+  // ingezet. Beide zijn per definitie gelijk voor elk biedingsscenario (ze zijn immers
+  // gebaseerd op de te verkopen woning, niet op de beoogde woning); alleen het aanvullend
+  // te lenen bedrag varieert met de bieding. Zonder bestaande woning valt dit terug op
+  // eigen vermogen alleen, net als de hoofdberekening.
+  const scenarioAnalysis = useMemo(() => {
+    const basePrice = safeNum(purchasePrice);
+    const r = safeNum(rate) / 100 / 12;
+    const capFactor = getCapitalizationFactor(safeNum(rate));
+
+    const portedDebt = hasExistingHome ? currentMortgage.currentDebtBalance : 0;
+    const overwaarde = hasExistingHome ? currentMortgage.usableOverwaarde : 0;
+    const portedGrossMonthly = hasExistingHome ? currentMortgage.totalGross : 0;
+    const portedTaxBenefit = hasExistingHome ? currentMortgage.taxBenefit : 0;
+    const extraBorrowCapacity = hasExistingHome
+      ? currentMortgage.extraBorrowCapacity
+      : calc.incomeBasedMax;
+
+    const scenarios = SCENARIO_PERCENTAGES.map((pct) => {
+      const price = basePrice * (1 + pct / 100);
+      const gap = price - portedDebt - overwaarde;
+      const additionalMortgage = Math.max(0, gap - calc.totalOwnCapital);
+
+      const newGrossMonthly = capFactor > 0 ? additionalMortgage / capFactor : 0;
+      const newInterestMonthly = additionalMortgage * r;
+      const newTaxBenefit = newInterestMonthly * HRA_RATE;
+
+      const grossMonthly = portedGrossMonthly + newGrossMonthly;
+      // Eigenwoningforfait geldt één keer, over de waarde van de (ene) woning die u na de
+      // verhuizing bezit — dus gebaseerd op de beoogde aanschafprijs, niet (nogmaals) op de
+      // marktwaarde van de huidige, dan al verkochte woning.
+      const ewfMonthly = (EWF_RATE * Math.min(price, EWF_CAP)) / 12;
+      const netMonthly = grossMonthly - portedTaxBenefit - newTaxBenefit + ewfMonthly;
+
+      const exceedsCapacity = additionalMortgage > extraBorrowCapacity;
+      return { pct, price, additionalMortgage, grossMonthly, netMonthly, exceedsCapacity };
+    });
+
+    return { portedDebt, overwaarde, scenarios };
+  }, [purchasePrice, rate, calc, hasExistingHome, currentMortgage]);
 
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
@@ -3330,7 +3351,15 @@ export default function MortgageCalculator() {
           purchasePrice={safeNum(purchasePrice)}
         />
 
-        <ScenarioAnalysis scenarios={scenarioAnalysis} incomeBasedMax={calc.incomeBasedMax} />
+        <ScenarioAnalysis
+          scenarios={scenarioAnalysis.scenarios}
+          portedDebt={scenarioAnalysis.portedDebt}
+          overwaarde={scenarioAnalysis.overwaarde}
+          hasExistingHome={hasExistingHome}
+          extraBorrowCapacity={
+            hasExistingHome ? currentMortgage.extraBorrowCapacity : calc.incomeBasedMax
+          }
+        />
 
         <p className="mt-6 text-center text-[11px] text-slate-400">
           v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'}
