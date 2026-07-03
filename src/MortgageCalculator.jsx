@@ -1308,15 +1308,22 @@ export default function MortgageCalculator() {
     };
   }, [purchasePrice, calc, currentMortgage]);
 
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
   // Scenario-analyse: wat betekent een hogere of lagere bieding t.o.v. de aanschafprijs
   // voor het aanvullend te lenen bedrag en de bruto/netto maandlast? Bij een bestaande
   // woning (hasExistingHome) wordt, net als bij de financieringsgat-berekening hierboven,
   // uitgegaan van de meeneemregeling: de huidige hypotheek gaat mee tegen de huidige
   // voorwaarden en de overwaarde (huidige marktwaarde min restschuld) wordt als cash
-  // ingezet. Beide zijn per definitie gelijk voor elk biedingsscenario (ze zijn immers
-  // gebaseerd op de te verkopen woning, niet op de beoogde woning); alleen het aanvullend
-  // te lenen bedrag varieert met de bieding. Zonder bestaande woning valt dit terug op
-  // eigen vermogen alleen, net als de hoofdberekening.
+  // ingezet. Beide zijn per definitie gelijk voor elk biedingsscenario; alleen het
+  // aanvullend te lenen bedrag varieert met de bieding.
+  //
+  // De maandlast van dat aanvullende bedrag volgt zoveel mogelijk de daadwerkelijk
+  // ingestelde aanvullende leningdelen hieronder (type, rente, verhouding aflossingsvrij/
+  // annuïteit), geschaald naar elk scenario — dus als u op "Automatisch verdelen" klikt of
+  // handmatig een leningdeel aanpast, werkt dat door in deze tabel. Alleen als er nog geen
+  // aanvullend bedrag is ingevuld (som van de leningdelen is 0) valt dit terug op een
+  // generieke annuïteit tegen de ingestelde hypotheekrente.
   const scenarioAnalysis = useMemo(() => {
     const basePrice = safeNum(purchasePrice);
     const r = safeNum(rate) / 100 / 12;
@@ -1330,14 +1337,42 @@ export default function MortgageCalculator() {
       ? currentMortgage.extraBorrowCapacity
       : calc.incomeBasedMax;
 
+    // Huidige samenstelling van de aanvullende leningdelen (som + per deel het aandeel),
+    // zodat die verhouding naar elk scenario geschaald kan worden.
+    const configuredTotal = additionalLoanParts.reduce((sum, p) => sum + safeNum(p.principal), 0);
+
+    const computeNewPartMonthly = (additionalMortgage) => {
+      if (configuredTotal > 0) {
+        // Schaal elk ingesteld leningdeel proportioneel naar het benodigde bedrag in dit
+        // scenario, met behoud van elk deel zijn eigen type en rente.
+        let grossMonthly = 0;
+        let taxBenefit = 0;
+        additionalLoanParts.forEach((part) => {
+          const share = safeNum(part.principal) / configuredTotal;
+          const scaledPrincipal = share * additionalMortgage;
+          const result = calculateLoanPart(
+            { ...part, principal: String(scaledPrincipal) },
+            0,
+            todayIso
+          );
+          grossMonthly += result.grossMonthly;
+          if (result.eligibleForHRA) taxBenefit += result.interestMonthly * HRA_RATE;
+        });
+        return { grossMonthly, taxBenefit };
+      }
+      // Nog geen leningdelen ingevuld: generieke annuïteit tegen de hypotheekrente.
+      const grossMonthly = capFactor > 0 ? additionalMortgage / capFactor : 0;
+      const taxBenefit = additionalMortgage * r * HRA_RATE;
+      return { grossMonthly, taxBenefit };
+    };
+
     const scenarios = SCENARIO_PERCENTAGES.map((pct) => {
       const price = basePrice * (1 + pct / 100);
       const gap = price - portedDebt - overwaarde;
       const additionalMortgage = Math.max(0, gap - calc.totalOwnCapital);
 
-      const newGrossMonthly = capFactor > 0 ? additionalMortgage / capFactor : 0;
-      const newInterestMonthly = additionalMortgage * r;
-      const newTaxBenefit = newInterestMonthly * HRA_RATE;
+      const { grossMonthly: newGrossMonthly, taxBenefit: newTaxBenefit } =
+        computeNewPartMonthly(additionalMortgage);
       // Netto maandlast van uitsluitend het nieuwe/aanvullende leningdeel, zonder
       // eigenwoningforfait: dat geldt één keer over de hele woning en zit al volledig in de
       // gecombineerde totaalregel hieronder, niet toe te rekenen aan één leningdeel.
@@ -1364,9 +1399,7 @@ export default function MortgageCalculator() {
     });
 
     return { portedDebt, overwaarde, scenarios };
-  }, [purchasePrice, rate, calc, hasExistingHome, currentMortgage]);
-
-  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  }, [purchasePrice, rate, calc, hasExistingHome, currentMortgage, additionalLoanParts, todayIso]);
 
   const additionalLoanCalc = useMemo(() => {
     // Aanvullende leningdelen zijn gloednieuw en starten vandaag: elapsedMonths = 0, dus
