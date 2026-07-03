@@ -1722,6 +1722,19 @@ export default function MortgageCalculator() {
               />
               Schulden
             </button>
+            <span className="hidden h-px w-6 bg-slate-200 sm:block" />
+            <button
+              type="button"
+              onClick={() => scrollToSection('sectie-beoogde-woning')}
+              className="flex items-center gap-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:text-blue-600"
+            >
+              <CheckCircle2
+                className={`h-3.5 w-3.5 ${
+                  safeNum(purchasePrice) > 0 ? 'text-emerald-500' : 'text-slate-300'
+                }`}
+              />
+              Beoogde woning
+            </button>
             {hasExistingHome && (
               <>
                 <span className="hidden h-px w-6 bg-slate-200 sm:block" />
@@ -1739,19 +1752,6 @@ export default function MortgageCalculator() {
                 </button>
               </>
             )}
-            <span className="hidden h-px w-6 bg-slate-200 sm:block" />
-            <button
-              type="button"
-              onClick={() => scrollToSection('sectie-beoogde-woning')}
-              className="flex items-center gap-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:text-blue-600"
-            >
-              <CheckCircle2
-                className={`h-3.5 w-3.5 ${
-                  safeNum(purchasePrice) > 0 ? 'text-emerald-500' : 'text-slate-300'
-                }`}
-              />
-              Beoogde woning
-            </button>
             <span className="hidden h-px w-6 bg-slate-200 sm:block" />
             <button
               type="button"
@@ -2076,11 +2076,27 @@ export default function MortgageCalculator() {
                 />
                 {hasExistingHome && (
                   <p className="text-xs text-blue-200">
-                    Incl. meegenomen hypotheek en overwaarde uit verkoop. O.b.v. inkomen alleen:{' '}
-                    {formatEuro(calc.maxMortgage)}.
+                    Incl. meegenomen hypotheek en overwaarde uit verkoop van uw huidige woning.
                   </p>
                 )}
               </div>
+
+              {hasExistingHome && (
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <div className="rounded-xl bg-white/10 px-4 py-3">
+                    <p className="text-xs text-blue-200">Max. aankoopwaarde</p>
+                    <p className="text-[10px] text-blue-300">incl. overwaarde e.d.</p>
+                    <p className="mt-1 text-lg font-bold">{formatEuro(maxBudgetCalc.maxBudget)}</p>
+                  </div>
+                  <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3">
+                    <p className="text-xs text-amber-100">O.b.v. inkomen alleen</p>
+                    <p className="text-[10px] text-amber-200/80">zonder overwaarde/meeneem</p>
+                    <p className="mt-1 text-lg font-bold text-amber-50">
+                      {formatEuro(calc.maxMortgage)}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <AnimatePresence>
                 {!hasExistingHome && calc.cappedByPropertyValue && (
@@ -2189,6 +2205,70 @@ export default function MortgageCalculator() {
               </AnimatePresence>
             </div>
           </div>
+        </div>
+
+        <div className="mt-8">
+          <SectionCard id="sectie-beoogde-woning" title="Beoogde woning" icon={<Home className="h-4 w-4" />}>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <Slider
+                id="purchasePrice"
+                label="Aanschafprijs beoogde woning"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={purchasePrice}
+                min={100000}
+                max={2500000}
+                step={5000}
+                onChange={setPurchasePrice}
+                formatValue={formatEuro}
+              />
+              <Slider
+                id="rate"
+                label="Hypotheekrente"
+                icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
+                value={rate}
+                min={2.0}
+                max={6.0}
+                step={0.01}
+                onChange={setRate}
+                formatValue={formatRate}
+              />
+              <Slider
+                id="fixedRatePeriod"
+                label="Rentevastperiode nieuwe hypotheek"
+                icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+                value={fixedRatePeriod}
+                min={1}
+                max={30}
+                step={1}
+                onChange={setFixedRatePeriod}
+                formatValue={(v) => `${v} jaar`}
+              />
+              <EnergyLabelPicker
+                id="energyLabel"
+                label="Energielabel beoogde woning"
+                icon={<Leaf className="h-3.5 w-3.5 text-slate-400" />}
+                value={energyLabel}
+                onChange={setEnergyLabel}
+              />
+            </div>
+            <AnimatePresence>
+              {calc.toetsrenteApplies && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.2 }}
+                  className="mt-5"
+                >
+                  <StatusBadge status="warning">
+                    Bij een rentevastperiode korter dan 10 jaar moet wettelijk met de
+                    AFM-toetsrente van {formatRate(TOETSRENTE)} worden getoetst in plaats van de
+                    daadwerkelijke rente. Uw leencapaciteit is hierop gebaseerd.
+                  </StatusBadge>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </SectionCard>
         </div>
 
         {hasExistingHome && (
@@ -3366,70 +3446,6 @@ export default function MortgageCalculator() {
           </div>
         </div>
         )}
-
-        <div className="mt-8">
-          <SectionCard id="sectie-beoogde-woning" title="Beoogde woning" icon={<Home className="h-4 w-4" />}>
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Slider
-                id="purchasePrice"
-                label="Aanschafprijs beoogde woning"
-                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                value={purchasePrice}
-                min={100000}
-                max={2500000}
-                step={5000}
-                onChange={setPurchasePrice}
-                formatValue={formatEuro}
-              />
-              <Slider
-                id="rate"
-                label="Hypotheekrente"
-                icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
-                value={rate}
-                min={2.0}
-                max={6.0}
-                step={0.01}
-                onChange={setRate}
-                formatValue={formatRate}
-              />
-              <Slider
-                id="fixedRatePeriod"
-                label="Rentevastperiode nieuwe hypotheek"
-                icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
-                value={fixedRatePeriod}
-                min={1}
-                max={30}
-                step={1}
-                onChange={setFixedRatePeriod}
-                formatValue={(v) => `${v} jaar`}
-              />
-              <EnergyLabelPicker
-                id="energyLabel"
-                label="Energielabel beoogde woning"
-                icon={<Leaf className="h-3.5 w-3.5 text-slate-400" />}
-                value={energyLabel}
-                onChange={setEnergyLabel}
-              />
-            </div>
-            <AnimatePresence>
-              {calc.toetsrenteApplies && (
-                <motion.div
-                  initial={{ opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.2 }}
-                  className="mt-5"
-                >
-                  <StatusBadge status="warning">
-                    Bij een rentevastperiode korter dan 10 jaar moet wettelijk met de
-                    AFM-toetsrente van {formatRate(TOETSRENTE)} worden getoetst in plaats van de
-                    daadwerkelijke rente. Uw leencapaciteit is hierop gebaseerd.
-                  </StatusBadge>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </SectionCard>
-        </div>
 
         <OptionalPropertyDataModule
           onUseValue={hasExistingHome ? setMarketValue : setPurchasePrice}

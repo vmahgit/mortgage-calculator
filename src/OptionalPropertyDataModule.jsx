@@ -71,6 +71,25 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel, 
   const olderWozValues = showAllWoz ? allOlderWozValues : allOlderWozValues.slice(0, 2);
   const hasMoreWozValues = allOlderWozValues.length > 2;
 
+  // Procentuele verandering van de WOZ-waarde per jaar, o.b.v. alle beschikbare
+  // peildatums (niet beperkt tot de 3 die standaard zichtbaar zijn in de tabel erboven).
+  const wozYoyChanges = (() => {
+    const waarden = result?.woz?.waarden;
+    if (!waarden || waarden.length < 2) return [];
+    const sorted = [...waarden].sort((a, b) => new Date(a.peildatum) - new Date(b.peildatum));
+    const changes = [];
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      if (prev.vastgesteldeWaarde > 0) {
+        const pct = ((curr.vastgesteldeWaarde - prev.vastgesteldeWaarde) / prev.vastgesteldeWaarde) * 100;
+        changes.push({ year: new Date(curr.peildatum).getFullYear(), pct });
+      }
+    }
+    return changes;
+  })();
+  const wozMaxAbsPct = Math.max(1, ...wozYoyChanges.map((c) => Math.abs(c.pct)));
+
   // Prijs per vierkante meter wordt normaliter berekend op de gebruiksoppervlakte (het
   // woonoppervlak), niet de perceelgrootte.
   const gebruiksoppervlakte = result?.bag?.gebruiksoppervlakte || null;
@@ -256,6 +275,50 @@ export default function OptionalPropertyDataModule({ onUseValue, useValueLabel, 
                       </p>
                     )}
                   </div>
+
+                  {wozYoyChanges.length > 0 && (
+                    <div className="rounded-xl border border-slate-100 bg-white p-4">
+                      <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <TrendingUp className="h-3.5 w-3.5" />
+                        Jaarlijkse waardeontwikkeling
+                      </div>
+                      <div className="flex items-end gap-2 overflow-x-auto pb-1">
+                        {wozYoyChanges.map((c) => {
+                          const positive = c.pct >= 0;
+                          const heightPct = Math.max(8, (Math.abs(c.pct) / wozMaxAbsPct) * 100);
+                          return (
+                            <div
+                              key={c.year}
+                              className="flex w-11 flex-shrink-0 flex-col items-center gap-1"
+                            >
+                              <span
+                                className={`text-[10px] font-semibold ${
+                                  positive ? 'text-emerald-600' : 'text-red-600'
+                                }`}
+                              >
+                                {positive ? '+' : ''}
+                                {c.pct.toFixed(1)}%
+                              </span>
+                              <div className="flex h-16 w-full items-end justify-center">
+                                <div
+                                  className={`w-4 rounded-t transition-all duration-500 ${
+                                    positive ? 'bg-emerald-400' : 'bg-red-400'
+                                  }`}
+                                  style={{ height: `${heightPct}%` }}
+                                />
+                              </div>
+                              <span className="text-[10px] text-slate-400">{c.year}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-3 text-xs text-slate-400">
+                        Procentuele verandering van de WOZ-waarde t.o.v. het voorgaande
+                        beschikbare peildatum, o.b.v. alle {wozYoyChanges.length + 1} peildatums
+                        die voor dit adres bekend zijn.
+                      </p>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="rounded-xl border border-slate-100 bg-white p-3">
