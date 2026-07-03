@@ -149,9 +149,43 @@ export default function ScenarioAnalysis({
                         ))}
                       </tr>
                     )}
+                    {hasExistingHome && (
+                      <>
+                        <tr className="border-t border-slate-100">
+                          <td className="sticky left-0 z-10 bg-white p-2.5 font-medium text-slate-600">
+                            Maandlast nieuwe leningdelen bruto
+                          </td>
+                          {scenarios.map((s) => (
+                            <td
+                              key={s.pct}
+                              className={`p-2.5 text-right ${
+                                s.pct === 0 ? 'border-x-2 border-blue-300 bg-blue-50/60' : ''
+                              } ${s.exceedsCapacity ? 'bg-red-50 font-semibold text-red-700' : 'text-slate-700'}`}
+                            >
+                              {formatEuro(s.newGrossMonthly)}
+                            </td>
+                          ))}
+                        </tr>
+                        <tr className="border-t border-slate-100">
+                          <td className="sticky left-0 z-10 bg-white p-2.5 font-medium text-slate-600">
+                            Maandlast nieuwe leningdelen netto
+                          </td>
+                          {scenarios.map((s) => (
+                            <td
+                              key={s.pct}
+                              className={`p-2.5 text-right ${
+                                s.pct === 0 ? 'border-x-2 border-blue-300 bg-blue-50/60' : ''
+                              } ${s.exceedsCapacity ? 'bg-red-50 font-semibold text-red-700' : 'text-slate-700'}`}
+                            >
+                              {formatEuro(s.newNetMonthly)}
+                            </td>
+                          ))}
+                        </tr>
+                      </>
+                    )}
                     <tr className="border-t border-slate-100">
                       <td className="sticky left-0 z-10 bg-white p-2.5 font-medium text-slate-600">
-                        Hyp. maandlast bruto
+                        {hasExistingHome ? 'Totale maandlast bruto' : 'Hyp. maandlast bruto'}
                       </td>
                       {scenarios.map((s) => (
                         <td
@@ -166,7 +200,7 @@ export default function ScenarioAnalysis({
                     </tr>
                     <tr className="border-t border-slate-100">
                       <td className="sticky left-0 z-10 bg-white p-2.5 font-medium text-slate-600">
-                        Hyp. maandlast netto
+                        {hasExistingHome ? 'Totale maandlast netto' : 'Hyp. maandlast netto'}
                       </td>
                       {scenarios.map((s) => (
                         <td
@@ -185,9 +219,9 @@ export default function ScenarioAnalysis({
 
               <p className="text-xs text-slate-400">
                 {hasExistingHome
-                  ? 'Bruto/netto maandlast is de meegenomen hypotheek (tegen de huidige voorwaarden) plus het aanvullend te lenen bedrag (annuïteit, huidige hypotheekrente, 30 jaar), uitgaande van verkoop van uw huidige woning tegen de ingevoerde marktwaarde en uw ingebrachte eigen vermogen.'
+                  ? 'De totale maandlast is de meegenomen hypotheek (tegen de huidige voorwaarden, ongewijzigd per scenario) plus de maandlast van het nieuwe/aanvullende leningdeel (annuïteit, huidige hypotheekrente, 30 jaar), uitgaande van verkoop van uw huidige woning tegen de ingevoerde marktwaarde en uw ingebrachte eigen vermogen. De maandlast van het nieuwe leningdeel is exclusief eigenwoningforfait: dat geldt één keer over de hele woning en zit uitsluitend in de totaalregels.'
                   : 'Bruto/netto maandlast o.b.v. annuïteit, de huidige hypotheekrente en 30 jaar looptijd, uitgaande van uw ingebrachte eigen vermogen.'}{' '}
-                Netto is inclusief hypotheekrenteaftrek (HRA) en het eigenwoningforfait.
+                Netto is inclusief hypotheekrenteaftrek (HRA){hasExistingHome ? '' : ' en het eigenwoningforfait'}.
                 Indicatief.
               </p>
             </div>

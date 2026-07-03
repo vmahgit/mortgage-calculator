@@ -1338,6 +1338,10 @@ export default function MortgageCalculator() {
       const newGrossMonthly = capFactor > 0 ? additionalMortgage / capFactor : 0;
       const newInterestMonthly = additionalMortgage * r;
       const newTaxBenefit = newInterestMonthly * HRA_RATE;
+      // Netto maandlast van uitsluitend het nieuwe/aanvullende leningdeel, zonder
+      // eigenwoningforfait: dat geldt één keer over de hele woning en zit al volledig in de
+      // gecombineerde totaalregel hieronder, niet toe te rekenen aan één leningdeel.
+      const newNetMonthly = newGrossMonthly - newTaxBenefit;
 
       const grossMonthly = portedGrossMonthly + newGrossMonthly;
       // Eigenwoningforfait geldt één keer, over de waarde van de (ene) woning die u na de
@@ -1347,7 +1351,16 @@ export default function MortgageCalculator() {
       const netMonthly = grossMonthly - portedTaxBenefit - newTaxBenefit + ewfMonthly;
 
       const exceedsCapacity = additionalMortgage > extraBorrowCapacity;
-      return { pct, price, additionalMortgage, grossMonthly, netMonthly, exceedsCapacity };
+      return {
+        pct,
+        price,
+        additionalMortgage,
+        newGrossMonthly,
+        newNetMonthly,
+        grossMonthly,
+        netMonthly,
+        exceedsCapacity,
+      };
     });
 
     return { portedDebt, overwaarde, scenarios };
