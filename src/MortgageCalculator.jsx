@@ -1034,6 +1034,11 @@ export default function MortgageCalculator() {
   const [includeBuyersAgent, setIncludeBuyersAgent] = useState(false);
   const [includeNhgFee, setIncludeNhgFee] = useState(false);
 
+  // Betaalde partneralimentatie per aanvrager (bruto per maand): gaat ×12 van het
+  // toetsinkomen af, vóór de woonquote-bepaling (zie toetsinkomen.js).
+  const [partnerAlimony1, setPartnerAlimony1] = useState('0');
+  const [partnerAlimony2, setPartnerAlimony2] = useState('0');
+
   const [showCurrentMortgage, setShowCurrentMortgage] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
@@ -1133,10 +1138,19 @@ export default function MortgageCalculator() {
 
   const calc = useMemo(() => {
     // Toetsinkomen per aanvrager (toetsinkomen.js): nu nog altijd type 'vast'
-    // (bruto jaarinkomen telt volledig mee); inkomenstype, alimentatie en
-    // 3-jaarsmiddeling haken hier in latere stappen op aan.
-    const toets1 = getToetsinkomen({ incomeType: 'vast', income: income1 });
-    const toets2 = getToetsinkomen({ incomeType: 'vast', income: income2 });
+    // (bruto jaarinkomen telt volledig mee); inkomenstype en 3-jaarsmiddeling haken
+    // hier in latere stappen op aan. Betaalde partneralimentatie gaat er bruto
+    // (×12) vanaf, vóór de woonquote-bepaling.
+    const toets1 = getToetsinkomen({
+      incomeType: 'vast',
+      income: income1,
+      alimonyMonthly: partnerAlimony1,
+    });
+    const toets2 = getToetsinkomen({
+      incomeType: 'vast',
+      income: income2,
+      alimonyMonthly: partnerAlimony2,
+    });
     const combinedIncome = toets1.toetsinkomen + toets2.toetsinkomen;
 
     // A6: bij een rentevastperiode korter dan 10 jaar moet wettelijk met de (hogere)
@@ -1281,6 +1295,8 @@ export default function MortgageCalculator() {
     includeBankGuarantee,
     includeBuyersAgent,
     includeNhgFee,
+    partnerAlimony1,
+    partnerAlimony2,
   ]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
@@ -2192,6 +2208,14 @@ export default function MortgageCalculator() {
                     placeholder="0"
                     hint="Totale openstaande schuld, niet het maandbedrag"
                   />
+                  <CurrencyField
+                    id="partnerAlimony1"
+                    label="Betaalde partneralimentatie p/mnd"
+                    icon={<User className="h-3.5 w-3.5 text-slate-400" />}
+                    value={partnerAlimony1}
+                    onChange={setPartnerAlimony1}
+                    placeholder="0"
+                  />
                 </PartnerSubCard>
                 <PartnerSubCard label="Partner 2">
                   <CurrencyField
@@ -2210,6 +2234,14 @@ export default function MortgageCalculator() {
                     onChange={setStudyDebt2}
                     placeholder="0"
                     hint="Totale openstaande schuld, niet het maandbedrag"
+                  />
+                  <CurrencyField
+                    id="partnerAlimony2"
+                    label="Betaalde partneralimentatie p/mnd"
+                    icon={<User className="h-3.5 w-3.5 text-slate-400" />}
+                    value={partnerAlimony2}
+                    onChange={setPartnerAlimony2}
+                    placeholder="0"
                   />
                 </PartnerSubCard>
               </div>
@@ -2248,6 +2280,13 @@ export default function MortgageCalculator() {
                 {STUDY_DEBT_REGIMES[studyDebtRegime].termYears} jaar, toegepast op de
                 openstaande restschuld. Deze maandlasten worden vervolgens gekapitaliseerd tegen
                 de toetsrente en in mindering gebracht op de leencapaciteit.
+              </p>
+              <p className="mt-2 text-xs text-slate-400">
+                Betaalde partneralimentatie werkt anders: die gaat bruto (×12) van het
+                toetsinkomen af, vóór de woonquote-bepaling. Ontvangen partneralimentatie telt in
+                deze indicatieve berekening niet mee als toetsinkomen (geldverstrekkers gaan hier
+                verschillend mee om). Kinderalimentatie heeft geen invloed op de maximale
+                hypotheek.
               </p>
             </SectionCard>
           </div>
