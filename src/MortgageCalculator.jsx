@@ -22,6 +22,8 @@ import {
   CheckCircle2,
   Receipt,
   Briefcase,
+  RotateCcw,
+  BookOpen,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
@@ -1242,7 +1244,7 @@ function AflossingsvrijMaxToggle({ value, onChange }) {
   );
 }
 
-export default function MortgageCalculator() {
+function MortgageCalculatorForm({ onReset }) {
   const [income1, setIncome1] = useState(115000);
   const [income2, setIncome2] = useState(115000);
   const [age1, setAge1] = useState('35');
@@ -1309,6 +1311,7 @@ export default function MortgageCalculator() {
 
   const [showCurrentMortgage, setShowCurrentMortgage] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
+  const [showSources, setShowSources] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
   // Meeneemregeling: neemt u de bestaande hypotheek mee tegen de huidige voorwaarden
   // (rente, resterende looptijd), of lost u deze af bij verkoop en financiert u de nieuwe
@@ -2455,12 +2458,32 @@ export default function MortgageCalculator() {
           </div>
         </div>
 
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Hypotheekcalculator 2026</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Indicatieve berekening op basis van de Nibud-systematiek 2026. Geen rechten kunnen aan
-            deze uitkomst worden ontleend.
-          </p>
+        <div className="mb-8 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
+              Hypotheekcalculator 2026
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Indicatieve berekening op basis van de Nibud-systematiek 2026. Geen rechten kunnen
+              aan deze uitkomst worden ontleend.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                window.confirm(
+                  'Weet u zeker dat u opnieuw wilt beginnen? Alle ingevoerde gegevens gaan verloren.'
+                )
+              ) {
+                onReset();
+              }
+            }}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 transition-all duration-200 hover:border-slate-300 hover:text-slate-700"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Opnieuw beginnen
+          </button>
         </div>
 
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
@@ -4849,6 +4872,66 @@ export default function MortgageCalculator() {
           }
         />
 
+        <div className="mt-8 overflow-hidden rounded-2xl border border-slate-100 bg-white">
+          <button
+            type="button"
+            onClick={() => setShowSources((prev) => !prev)}
+            className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-all duration-200 hover:bg-slate-50"
+          >
+            <span className="flex items-center gap-2 text-sm font-medium text-slate-600">
+              <BookOpen className="h-4 w-4 text-slate-400" />
+              Bronnen & aannames
+            </span>
+            {showSources ? (
+              <ChevronUp className="h-4 w-4 flex-shrink-0 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-4 w-4 flex-shrink-0 text-slate-400" />
+            )}
+          </button>
+          <AnimatePresence initial={false}>
+            {showSources && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                className="overflow-hidden"
+              >
+                <ul className="space-y-2 border-t border-slate-100 px-5 py-4 text-xs text-slate-500">
+                  <li>
+                    <span className="font-medium text-slate-600">Financieringslastpercentages en AOW-tabel:</span>{' '}
+                    Wijzigingsregeling hypothecair krediet 2026, Staatscourant 2025, 36471 (Tabel 1
+                    en Tabel 2).
+                  </li>
+                  <li>
+                    <span className="font-medium text-slate-600">AFM-toetsrente:</span> per kwartaal
+                    vastgesteld door de AFM, van toepassing bij een rentevastperiode korter dan 10
+                    jaar.
+                  </li>
+                  <li>
+                    <span className="font-medium text-slate-600">Overdrachtsbelasting:</span>{' '}
+                    Belastingdienst/Rijksoverheid, tarieven en startersvrijstelling 2026.
+                  </li>
+                  <li>
+                    <span className="font-medium text-slate-600">Kosten koper:</span> notaris,
+                    taxatie, advies, bankgarantie en NHG-provisie zijn indicatieve
+                    marktgemiddelden en per post aanpasbaar in de kaart Kosten koper.
+                  </li>
+                  <li>
+                    <span className="font-medium text-slate-600">Studieschuld:</span> DUO-terugbetaalregeling
+                    (rente en aflostermijn per stelsel, sinds 1 januari 2024).
+                  </li>
+                  <li>
+                    Alle bedragen en percentages zijn indicatief; aan deze berekening kunnen geen
+                    rechten worden ontleend. Raadpleeg voor een bindend advies een erkend
+                    hypotheekadviseur.
+                  </li>
+                </ul>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
         <p className="mt-6 text-center text-[11px] text-slate-400">
           v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'}
           {typeof __GIT_COMMIT__ !== 'undefined' && __GIT_COMMIT__ !== 'dev' ? ` · ${__GIT_COMMIT__}` : ''}
@@ -4891,5 +4974,19 @@ export default function MortgageCalculator() {
         </AnimatePresence>
       </div>
     </div>
+  );
+}
+
+// Buitenste wrapper voor "opnieuw beginnen": een key-remount is de eenvoudigste,
+// robuustste manier om ~45 losse useState-velden tegelijk naar hun oorspronkelijke
+// waarde terug te zetten, zonder elk veld handmatig te hoeven opsommen (en zonder het
+// risico dat die lijst bij toekomstige nieuwe velden stilletjes uit sync raakt).
+export default function MortgageCalculator() {
+  const [resetKey, setResetKey] = useState(0);
+  return (
+    <MortgageCalculatorForm
+      key={resetKey}
+      onReset={() => setResetKey((k) => k + 1)}
+    />
   );
 }
