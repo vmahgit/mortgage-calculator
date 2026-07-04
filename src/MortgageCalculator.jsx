@@ -1158,6 +1158,11 @@ export default function MortgageCalculator() {
   const [showCurrentMortgage, setShowCurrentMortgage] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
+  // Meeneemregeling: neemt u de bestaande hypotheek mee tegen de huidige voorwaarden
+  // (rente, resterende looptijd), of lost u deze af bij verkoop en financiert u de nieuwe
+  // woning volledig opnieuw? Default: ja, meenemen (de gangbare route bij een lagere
+  // bestaande rente).
+  const [takeOverMortgage, setTakeOverMortgage] = useState(true);
   const [oldMortgageStance, setOldMortgageStance] = useState('volledig');
   const [bridgePeriodMonths, setBridgePeriodMonths] = useState(6);
   const [includeOwnCapitalInDoubleTest, setIncludeOwnCapitalInDoubleTest] = useState(true);
@@ -1542,10 +1547,19 @@ export default function MortgageCalculator() {
       const extraMonthly = Math.max(0, stressResult.grossMonthly - partResults[i].grossMonthly);
       return sum + extraMonthly * getCapitalizationFactor(testRate);
     }, 0);
-    const hasRateRiskOnPortedDebt = rateRiskCapacityHaircut > 0;
+    // Het renterisico op een korte rentevastperiode is alleen relevant als het leningdeel
+    // daadwerkelijk wordt meegenomen; wordt de hypotheek afgelost bij verkoop, dan vervalt
+    // dat risico voor de nieuwe financiering volledig.
+    const effectiveRateRiskHaircut = takeOverMortgage ? rateRiskCapacityHaircut : 0;
+    const hasRateRiskOnPortedDebt = takeOverMortgage && rateRiskCapacityHaircut > 0;
 
     const currentDebtBalance = loanParts.reduce((sum, p) => sum + safeNum(p.principal), 0);
     const ltv = safeNum(marketValue) > 0 ? (currentDebtBalance / safeNum(marketValue)) * 100 : 0;
+    // Meegenomen hypotheek: alleen van toepassing als de meeneemregeling aan staat. Wordt
+    // deze uitgezet, dan wordt de bestaande hypotheek bij verkoop volledig afgelost (de
+    // overwaarde-berekening houdt daar al rekening mee) en moet de nieuwe woning volledig
+    // opnieuw gefinancierd worden.
+    const portedDebt = takeOverMortgage ? currentDebtBalance : 0;
     // Werkelijke leencapaciteit: de inkomensgebaseerde leencapaciteit, gecorrigeerd voor het
     // renterisico op meegenomen leningdelen met een korte rentevastperiode. Dit is het getal
     // dat er in de praktijk toe doet, in plaats van de ongecorrigeerde leencapaciteit o.b.v.
@@ -1554,8 +1568,8 @@ export default function MortgageCalculator() {
     // aankoopbudget circulair begrensd worden door de aanschafprijs die u toevallig nu heeft
     // ingesteld, terwijl deze getallen juist bedoeld zijn om te laten zien wat maximaal
     // haalbaar is, ongeacht de huidige stand van de schuifknop.
-    const effectiveMaxMortgage = Math.max(0, calc.incomeBasedMax - rateRiskCapacityHaircut);
-    const extraBorrowCapacity = Math.max(0, effectiveMaxMortgage - currentDebtBalance);
+    const effectiveMaxMortgage = Math.max(0, calc.incomeBasedMax - effectiveRateRiskHaircut);
+    const extraBorrowCapacity = Math.max(0, effectiveMaxMortgage - portedDebt);
     // Werkelijke overwaarde: marktwaarde min restschuld, ongekort. Sommige geldverstrekkers
     // tellen de nog niet (onvoorwaardelijk) verkochte woning echter niet voor 100% mee als
     // onderpand voor de financiering, maar hanteren een verkoopafslag (bijvoorbeeld 95%). De
@@ -1584,6 +1598,7 @@ export default function MortgageCalculator() {
       hasRateRiskOnPortedDebt,
       effectiveMaxMortgage,
       currentDebtBalance,
+      portedDebt,
       ltv,
       extraBorrowCapacity,
       overwaarde,
@@ -1591,7 +1606,7 @@ export default function MortgageCalculator() {
       saleValueForFinancing,
       restschuldTekort,
     };
-  }, [loanParts, startDate, marketValue, saleDiscountPercentage, calc]);
+  }, [loanParts, startDate, marketValue, saleDiscountPercentage, calc, takeOverMortgage]);
 
   const newHomeCalc = useMemo(() => {
     const price = safeNum(purchasePrice);
@@ -1627,7 +1642,7 @@ export default function MortgageCalculator() {
 
   const combinedGapCalc = useMemo(() => {
     const price = safeNum(purchasePrice);
-    const portedDebt = currentMortgage.currentDebtBalance;
+    const portedDebt = currentMortgage.portedDebt;
     const overwaarde = currentMortgage.usableOverwaarde;
     const restschuldTekort = currentMortgage.restschuldTekort;
     // Meeneemregeling: de bestaande hypotheek gaat mee tegen de oude voorwaarden, en de
@@ -1682,10 +1697,10 @@ export default function MortgageCalculator() {
     const r = safeNum(rate) / 100 / 12;
     const capFactor = getCapitalizationFactor(safeNum(rate));
 
-    const portedDebt = hasExistingHome ? currentMortgage.currentDebtBalance : 0;
+    const portedDebt = hasExistingHome ? currentMortgage.portedDebt : 0;
     const overwaarde = hasExistingHome ? currentMortgage.usableOverwaarde : 0;
-    const portedGrossMonthly = hasExistingHome ? currentMortgage.totalGross : 0;
-    const portedTaxBenefit = hasExistingHome ? currentMortgage.taxBenefit : 0;
+    const portedGrossMonthly = hasExistingHome && takeOverMortgage ? currentMortgage.totalGross : 0;
+    const portedTaxBenefit = hasExistingHome && takeOverMortgage ? currentMortgage.taxBenefit : 0;
     const extraBorrowCapacity = hasExistingHome
       ? currentMortgage.extraBorrowCapacity
       : calc.incomeBasedMax;
@@ -1752,7 +1767,16 @@ export default function MortgageCalculator() {
     });
 
     return { portedDebt, overwaarde, scenarios };
-  }, [purchasePrice, rate, calc, hasExistingHome, currentMortgage, additionalLoanParts, todayIso]);
+  }, [
+    purchasePrice,
+    rate,
+    calc,
+    hasExistingHome,
+    takeOverMortgage,
+    currentMortgage,
+    additionalLoanParts,
+    todayIso,
+  ]);
 
   const additionalLoanCalc = useMemo(() => {
     // Aanvullende leningdelen zijn gloednieuw en starten vandaag: elapsedMonths = 0, dus
@@ -1790,9 +1814,11 @@ export default function MortgageCalculator() {
     // aangezien elk nieuw leningdeel hier zijn eigen rentevastperiode heeft.
     const effectiveCapacity = Math.max(
       0,
-      calc.incomeBasedMaxAtActualRate - currentMortgage.rateRiskCapacityHaircut - rateRiskHaircut
+      calc.incomeBasedMaxAtActualRate -
+        (takeOverMortgage ? currentMortgage.rateRiskCapacityHaircut : 0) -
+        rateRiskHaircut
     );
-    const totalDebtAfterMove = currentMortgage.currentDebtBalance + totalPrincipal;
+    const totalDebtAfterMove = currentMortgage.portedDebt + totalPrincipal;
     const capacityMargin = effectiveCapacity - totalDebtAfterMove;
     const withinIncomeCapacity = capacityMargin >= 0;
     const exceedsLenderCap = totalDebtAfterMove > LENDER_CAP_THRESHOLD;
@@ -1805,9 +1831,12 @@ export default function MortgageCalculator() {
 
     // Bancaire norm: maximaal het ingestelde percentage van de woningwaarde mag
     // aflossingsvrij gefinancierd worden, over de meegenomen én de nieuwe leningdelen samen.
-    const portedAflossingsvrij = loanParts
-      .filter((p) => p.type === 'Aflossingsvrij')
-      .reduce((sum, p) => sum + safeNum(p.principal), 0);
+    // Alleen relevant als de bestaande hypotheek daadwerkelijk wordt meegenomen.
+    const portedAflossingsvrij = takeOverMortgage
+      ? loanParts
+          .filter((p) => p.type === 'Aflossingsvrij')
+          .reduce((sum, p) => sum + safeNum(p.principal), 0)
+      : 0;
     const newAflossingsvrij = additionalLoanParts
       .filter((p) => p.type === 'Aflossingsvrij')
       .reduce((sum, p) => sum + safeNum(p.principal), 0);
@@ -1855,6 +1884,7 @@ export default function MortgageCalculator() {
     loanParts,
     combinedGapCalc,
     aflossingsvrijMaxPct,
+    takeOverMortgage,
   ]);
 
   const autoDistributeAdditionalLoan = () => {
@@ -1967,7 +1997,7 @@ export default function MortgageCalculator() {
   const maxBudgetCalc = useMemo(() => {
     const eigenVermogen = calc.totalOwnCapital;
     const overwaarde = currentMortgage.usableOverwaarde;
-    const oudeHypotheek = currentMortgage.currentDebtBalance;
+    const oudeHypotheek = currentMortgage.portedDebt;
     const nieuweHypotheekMax = currentMortgage.extraBorrowCapacity;
     // Bij onderwaarde moet het restschuld-tekort van het budget af: dat bedrag gaat op aan
     // het aflossen van de restschuld die na verkoop overblijft.
@@ -2004,15 +2034,17 @@ export default function MortgageCalculator() {
     for (let year = 0; year <= 30; year++) {
       const monthsFromNow = year * 12;
       let portedBalance = 0;
-      loanParts.forEach((part) => {
-        portedBalance += projectRemainingBalance(
-          part.principal,
-          part.rate,
-          part.type,
-          portedRemainingMonthsNow,
-          monthsFromNow
-        );
-      });
+      if (takeOverMortgage) {
+        loanParts.forEach((part) => {
+          portedBalance += projectRemainingBalance(
+            part.principal,
+            part.rate,
+            part.type,
+            portedRemainingMonthsNow,
+            monthsFromNow
+          );
+        });
+      }
       let newBalance = 0;
       additionalLoanParts.forEach((part) => {
         newBalance += projectRemainingBalance(
@@ -2026,7 +2058,7 @@ export default function MortgageCalculator() {
       points.push({ year, portedBalance, newBalance, total: portedBalance + newBalance });
     }
     return points;
-  }, [loanParts, additionalLoanParts, elapsedMonthsSinceStart]);
+  }, [loanParts, additionalLoanParts, elapsedMonthsSinceStart, takeOverMortgage]);
 
   // Nibud dubbele-lastentoets (optioneel): kan het huishouden tijdelijk zowel de huidige als
   // de nieuwe hypotheek dragen, voor het geval de huidige woning nog niet is verkocht op het
@@ -3373,6 +3405,44 @@ export default function MortgageCalculator() {
                   <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
                     <div>
                       <span className="text-xs font-medium text-slate-600">
+                        Meeneemregeling: hypotheek meenemen naar de nieuwe woning?
+                      </span>
+                      <p className="text-xs text-slate-400">
+                        Bij "ja" gaat de bestaande hypotheek mee tegen de huidige voorwaarden
+                        (rente, resterende looptijd) en telt de restschuld mee als "meegenomen
+                        hypotheek". Bij "nee" wordt de hypotheek bij verkoop afgelost en
+                        financiert u de nieuwe woning volledig opnieuw.
+                      </p>
+                    </div>
+                    <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                      <button
+                        type="button"
+                        onClick={() => setTakeOverMortgage(true)}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          takeOverMortgage
+                            ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        Ja, meenemen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTakeOverMortgage(false)}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          !takeOverMortgage
+                            ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        Nee, aflossen
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                    <div>
+                      <span className="text-xs font-medium text-slate-600">
                         Verkoopafslag onverkochte woning
                       </span>
                       <p className="text-xs text-slate-400">
@@ -3693,8 +3763,9 @@ export default function MortgageCalculator() {
                         Financieringsgat beoogde woning
                       </span>
                       <p className="mt-1 text-xs text-slate-400">
-                        Bij verkoop wordt de bestaande hypotheek meegenomen tegen de oude
-                        voorwaarden en komt de overwaarde daarnaast vrij als eigen inbreng.
+                        {takeOverMortgage
+                          ? 'Bij verkoop wordt de bestaande hypotheek meegenomen tegen de oude voorwaarden en komt de overwaarde daarnaast vrij als eigen inbreng.'
+                          : 'Bij verkoop wordt de bestaande hypotheek volledig afgelost; alleen de overwaarde komt vrij als eigen inbreng en de nieuwe woning wordt volledig opnieuw gefinancierd.'}
                       </p>
                       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                         <div>
@@ -3756,6 +3827,11 @@ export default function MortgageCalculator() {
                           <p className="text-sm font-semibold text-slate-800">
                             {formatEuro(combinedGapCalc.portedDebt)}
                           </p>
+                          {!takeOverMortgage && (
+                            <span className="text-[11px] text-slate-400">
+                              Niet meegenomen: wordt bij verkoop afgelost
+                            </span>
+                          )}
                         </div>
                         {currentMortgage.restschuldTekort > 0 && (
                           <div>
