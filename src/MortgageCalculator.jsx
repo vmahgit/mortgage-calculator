@@ -271,13 +271,14 @@ function formatRate(rate) {
   return safeNum(rate).toFixed(2).replace('.', ',') + '%';
 }
 
-function Slider({ id, label, icon, value, min, max, step, onChange, formatValue, hint }) {
+function Slider({ id, label, icon, value, min, max, step, onChange, formatValue, hint, labelExtra }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <label htmlFor={id} className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
           {icon}
           {label}
+          {labelExtra}
         </label>
         <span className="text-sm font-semibold text-blue-700">{formatValue(value)}</span>
       </div>
@@ -671,6 +672,55 @@ function AdvancedFieldsToggle({ children, label = 'Meer opties' }) {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// Klein (i)-icoon dat op klik/tik een korte uitleg toont bij vaktermen (toetsinkomen,
+// woonquote, AFM-toetsrente, ...). Werkt met een klik i.p.v. alleen hover, zodat het ook op
+// mobiel bruikbaar is; sluit vanzelf bij een klik daarbuiten. `variant="light"` is bedoeld
+// voor gebruik op de donkere resultaat-sidebar.
+function InfoTooltip({ text, variant = 'default' }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleClickOutside = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  return (
+    <span ref={ref} className="relative inline-flex">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-label="Meer uitleg"
+        className={`inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-full transition-colors duration-150 ${
+          variant === 'light'
+            ? 'text-blue-200/70 hover:text-white'
+            : 'text-slate-300 hover:text-blue-500'
+        }`}
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.96 }}
+            transition={{ duration: 0.15 }}
+            className="absolute left-1/2 top-full z-50 mt-2 w-56 -translate-x-1/2 rounded-lg bg-slate-800 px-3 py-2 text-left text-xs font-normal leading-relaxed text-white shadow-xl"
+          >
+            {text}
+            <span className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-slate-800" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </span>
   );
 }
 
@@ -2877,11 +2927,23 @@ export default function MortgageCalculator() {
                   <p className="text-sm font-medium">{formatEuro(calc.totalOwnCapital)}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-blue-100">Gezamenlijk toetsinkomen</p>
+                  <p className="flex items-center gap-1.5 text-sm text-blue-100">
+                    Gezamenlijk toetsinkomen
+                    <InfoTooltip
+                      variant="light"
+                      text="Het inkomen waarmee de leencapaciteit wordt getoetst: bruto inkomen plus structureel/gemiddeld extra inkomen, minus betaalde partneralimentatie. Niet per se hetzelfde als uw bruto jaarinkomen."
+                    />
+                  </p>
                   <p className="text-sm font-medium">{formatEuro(calc.combinedIncome)}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-blue-100">Woonquote (Nibud 2026)</p>
+                  <p className="flex items-center gap-1.5 text-sm text-blue-100">
+                    Woonquote (Nibud 2026)
+                    <InfoTooltip
+                      variant="light"
+                      text="Het percentage van uw toetsinkomen dat u volgens de officiële Nibud-tabel maximaal aan woonlasten mag besteden. Hoger inkomen en hogere toetsrente geven doorgaans een hogere woonquote."
+                    />
+                  </p>
                   <p className="text-sm font-medium">
                     {(calc.woonquote * 100).toFixed(1).replace('.', ',')}%
                   </p>
@@ -2891,7 +2953,13 @@ export default function MortgageCalculator() {
                   <p className="text-sm font-medium">{formatEuro(calc.maxWoonlastMonthly)}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-blue-100">Effectieve leenfactor</p>
+                  <p className="flex items-center gap-1.5 text-sm text-blue-100">
+                    Effectieve leenfactor
+                    <InfoTooltip
+                      variant="light"
+                      text="Uw maximale hypotheek gedeeld door uw toetsinkomen, puur ter illustratie. De daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor."
+                    />
+                  </p>
                   <p className="text-sm font-medium">
                     {calc.effectiveFactor.toFixed(1).replace('.', ',')}x
                   </p>
@@ -2994,6 +3062,9 @@ export default function MortgageCalculator() {
                 step={1}
                 onChange={setFixedRatePeriod}
                 formatValue={(v) => `${v} jaar`}
+                labelExtra={
+                  <InfoTooltip text={`Bij een rentevastperiode korter dan 10 jaar moet wettelijk met de (hogere) AFM-toetsrente van ${formatRate(TOETSRENTE)} worden getoetst in plaats van uw daadwerkelijke rente, ook al betaalt u die lagere rente gewoon echt.`} />
+                }
               />
               <EnergyLabelPicker
                 id="energyLabel"
@@ -3836,8 +3907,9 @@ export default function MortgageCalculator() {
                     </AnimatePresence>
 
                     <div className="mt-5 rounded-xl border border-slate-100 bg-white p-4">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Financieringsgat beoogde woning
+                        <InfoTooltip text="Het verschil tussen de aanschafprijs van de beoogde woning en wat u al heeft: de meegenomen hypotheek plus de overwaarde. Dit gat moet u dekken met eigen vermogen en/of een aanvullende hypotheek." />
                       </span>
                       <p className="mt-1 text-xs text-slate-400">
                         {takeOverMortgage
