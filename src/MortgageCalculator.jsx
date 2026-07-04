@@ -506,11 +506,25 @@ function DateField({ id, label, icon, value, onChange, hint }) {
   );
 }
 
-function SectionCard({ title, icon, children, id }) {
+// Accentkleur per categorie: geeft elke kaart een eigen gekleurde linkerrand en
+// icoon-achtergrond i.p.v. dat alle kaarten er identiek (vlak blauw) uitzien.
+const SECTION_ACCENTS = {
+  blue: { icon: 'bg-blue-50 text-blue-600', border: 'border-l-blue-400' },
+  amber: { icon: 'bg-amber-50 text-amber-600', border: 'border-l-amber-400' },
+  emerald: { icon: 'bg-emerald-50 text-emerald-600', border: 'border-l-emerald-400' },
+  violet: { icon: 'bg-violet-50 text-violet-600', border: 'border-l-violet-400' },
+  indigo: { icon: 'bg-indigo-50 text-indigo-600', border: 'border-l-indigo-400' },
+};
+
+function SectionCard({ title, icon, children, id, accent = 'blue' }) {
+  const styles = SECTION_ACCENTS[accent] || SECTION_ACCENTS.blue;
   return (
-    <div id={id} className="rounded-2xl bg-white p-6 shadow-xl border border-slate-100">
+    <div
+      id={id}
+      className={`rounded-2xl bg-white p-6 shadow-xl border border-l-4 border-slate-100 ${styles.border} transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl`}
+    >
       <div className="mb-5 flex items-center gap-2">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${styles.icon}`}>
           {icon}
         </span>
         <h2 className="text-base font-semibold text-slate-800">{title}</h2>
@@ -2449,7 +2463,7 @@ export default function MortgageCalculator() {
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-5 lg:items-start">
           <div className="space-y-6 lg:col-span-3 lg:row-start-1">
-            <SectionCard id="sectie-inkomen" title="Inkomen" icon={<Euro className="h-4 w-4" />}>
+            <SectionCard id="sectie-inkomen" title="Inkomen" icon={<Euro className="h-4 w-4" />} accent="blue">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <PartnerSubCard label="Partner 1">
                   <IncomeTypeSelect id="incomeType1" value={incomeType1} onChange={setIncomeType1} />
@@ -2642,7 +2656,7 @@ export default function MortgageCalculator() {
               </AnimatePresence>
             </SectionCard>
 
-            <SectionCard id="sectie-schulden" title="Schulden" icon={<CreditCard className="h-4 w-4" />}>
+            <SectionCard id="sectie-schulden" title="Schulden" icon={<CreditCard className="h-4 w-4" />} accent="amber">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <PartnerSubCard label="Partner 1">
                   <CurrencyField
@@ -2946,7 +2960,7 @@ export default function MortgageCalculator() {
         </div>
 
         <div className="mt-8">
-          <SectionCard id="sectie-beoogde-woning" title="Beoogde woning" icon={<Home className="h-4 w-4" />}>
+          <SectionCard id="sectie-beoogde-woning" title="Beoogde woning" icon={<Home className="h-4 w-4" />} accent="emerald">
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <Slider
                 id="purchasePrice"
@@ -3096,6 +3110,7 @@ export default function MortgageCalculator() {
             id="sectie-kosten-koper"
             title="Kosten koper"
             icon={<Receipt className="h-4 w-4" />}
+            accent="violet"
           >
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
               <CurrencyField
@@ -3225,6 +3240,7 @@ export default function MortgageCalculator() {
               id="sectie-starter-hypotheek"
               title="Maandlasten & samenstelling hypotheek"
               icon={<PiggyBank className="h-4 w-4" />}
+              accent="indigo"
             >
               <p className="text-xs text-slate-500">
                 Splits uw benodigde hypotheek in maximaal 3 leningdelen, elk met een eigen
@@ -3397,7 +3413,7 @@ export default function MortgageCalculator() {
         )}
 
         {hasExistingHome && (
-        <div id="sectie-huidige-woning" className="mt-8 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-xl">
+        <div id="sectie-huidige-woning" className="mt-8 overflow-hidden rounded-2xl border border-l-4 border-slate-100 border-l-indigo-400 bg-white shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl">
           <button
             type="button"
             onClick={() => setShowCurrentMortgage((prev) => !prev)}
@@ -4276,7 +4292,7 @@ export default function MortgageCalculator() {
             )}
           </AnimatePresence>
 
-          <div className="mt-8 rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
+          <div className="mt-8 rounded-2xl border border-l-4 border-slate-100 border-l-blue-400 bg-white p-6 shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl">
             <div className="mb-2 flex items-center gap-2">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
                 <Home className="h-4 w-4" />
@@ -4362,7 +4378,7 @@ export default function MortgageCalculator() {
             </p>
           </div>
 
-          <div className="mt-8 rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
+          <div className="mt-8 rounded-2xl border border-l-4 border-slate-100 border-l-blue-400 bg-white p-6 shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl">
             <div className="mb-2 flex items-center gap-2">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
                 <TrendingUp className="h-4 w-4" />
@@ -4406,7 +4422,7 @@ export default function MortgageCalculator() {
             </div>
           </div>
 
-          <div className="mt-8 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-xl">
+          <div className="mt-8 overflow-hidden rounded-2xl border border-l-4 border-slate-100 border-l-amber-400 bg-white shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl">
             <button
               type="button"
               onClick={() => setShowDoubleCostsTest((prev) => !prev)}
