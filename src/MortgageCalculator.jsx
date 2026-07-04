@@ -2173,11 +2173,27 @@ export default function MortgageCalculator() {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // Op mobiel staat het volledige resultaatpaneel pas ná Inkomen en Schulden — daarom
+  // een compacte samenvatting die vastgepind blijft zolang dat paneel niet in beeld is,
+  // zodat er altijd meteen feedback zichtbaar is op de ingevoerde gegevens.
+  const [resultInView, setResultInView] = useState(true);
+  useEffect(() => {
+    const el = document.getElementById('sectie-resultaat');
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setResultInView(entry.isIntersecting),
+      { threshold: 0.15 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const mobileSummaryValue = hasExistingHome ? maxBudgetCalc.maxBudget : calc.maxMortgage;
+
   return (
-    <div className="w-full px-4 py-10 sm:px-6 lg:px-10">
+    <div className="w-full px-4 py-10 pb-24 sm:px-6 lg:px-10 lg:pb-10">
       <div className="mx-auto max-w-6xl">
         <div className="sticky top-0 z-40 -mx-4 mb-6 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-4 gap-y-2 sm:justify-between">
+          <div className="mx-auto flex max-w-6xl items-center gap-x-4 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:justify-between sm:gap-y-2 sm:overflow-visible sm:whitespace-normal [&::-webkit-scrollbar]:hidden">
             <button
               type="button"
               onClick={() => scrollToSection('sectie-inkomen')}
@@ -2190,7 +2206,7 @@ export default function MortgageCalculator() {
               />
               Inkomen
             </button>
-            <span className="hidden h-px w-6 bg-slate-200 sm:block" />
+            <span className="hidden h-px w-6 flex-shrink-0 bg-slate-200 sm:block" />
             <button
               type="button"
               onClick={() => scrollToSection('sectie-schulden')}
@@ -2201,7 +2217,7 @@ export default function MortgageCalculator() {
               />
               Schulden
             </button>
-            <span className="hidden h-px w-6 bg-slate-200 sm:block" />
+            <span className="hidden h-px w-6 flex-shrink-0 bg-slate-200 sm:block" />
             <button
               type="button"
               onClick={() => scrollToSection('sectie-beoogde-woning')}
@@ -2216,7 +2232,7 @@ export default function MortgageCalculator() {
             </button>
             {hasExistingHome && (
               <>
-                <span className="hidden h-px w-6 bg-slate-200 sm:block" />
+                <span className="hidden h-px w-6 flex-shrink-0 bg-slate-200 sm:block" />
                 <button
                   type="button"
                   onClick={() => scrollToSection('sectie-huidige-woning')}
@@ -2231,7 +2247,7 @@ export default function MortgageCalculator() {
                 </button>
               </>
             )}
-            <span className="hidden h-px w-6 bg-slate-200 sm:block" />
+            <span className="hidden h-px w-6 flex-shrink-0 bg-slate-200 sm:block" />
             <button
               type="button"
               onClick={() => scrollToSection('sectie-resultaat')}
@@ -4628,6 +4644,42 @@ export default function MortgageCalculator() {
           v{typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'}
           {typeof __GIT_COMMIT__ !== 'undefined' && __GIT_COMMIT__ !== 'dev' ? ` · ${__GIT_COMMIT__}` : ''}
         </p>
+      </div>
+
+      {/* Mobiele sticky resultaat-samenvatting: het volledige resultaatpaneel staat pas
+          verderop in de flow, dus zolang dat niet in beeld is tonen we hier een compacte
+          versie met directe feedback op wat er tot nu toe is ingevuld. */}
+      <div className="fixed inset-x-0 bottom-0 z-40 lg:hidden">
+        <AnimatePresence>
+          {!resultInView && (
+            <motion.button
+              type="button"
+              onClick={() => scrollToSection('sectie-resultaat')}
+              initial={{ y: 80, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 80, opacity: 0 }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              className={`flex w-full items-center justify-between gap-3 border-t px-5 py-3.5 text-left shadow-[0_-4px_16px_rgba(15,23,42,0.12)] ${
+                overallAffordable
+                  ? 'border-emerald-500/30 bg-gradient-to-r from-emerald-600 to-emerald-700'
+                  : 'border-blue-500/30 bg-gradient-to-r from-blue-600 to-indigo-700'
+              }`}
+            >
+              <span className="flex items-center gap-2 text-xs font-medium text-white/85">
+                {overallAffordable ? (
+                  <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                )}
+                {hasExistingHome ? 'Maximaal aankoopbudget' : 'Maximale hypotheek'}
+              </span>
+              <span className="flex items-center gap-1.5 text-base font-bold text-white">
+                {formatEuro(mobileSummaryValue)}
+                <ChevronUp className="h-4 w-4 opacity-70" />
+              </span>
+            </motion.button>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
