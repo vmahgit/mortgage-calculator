@@ -20,11 +20,17 @@ import {
   PiggyBank,
   TrendingUp,
   CheckCircle2,
+  Receipt,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
 import { getIncomeBasedMortgage } from './nibud2026';
-import { getTransferTaxRate, STARTER_EXEMPTION_PRICE_CAP } from './kostenKoper';
+import {
+  getTransferTaxRate,
+  getKostenKoperBreakdown,
+  STARTER_EXEMPTION_PRICE_CAP,
+  KOSTEN_KOPER_DEFAULTS,
+} from './kostenKoper';
 
 const ENERGY_LABELS = ['G', 'F', 'E', 'D', 'C', 'B', 'A', 'A+', 'A++', 'A+++', 'A++++'];
 
@@ -51,10 +57,9 @@ const HRA_RATE = 0.3756;
 const EWF_RATE = 0.0035;
 const EWF_CAP = 1350000;
 const SCENARIO_PERCENTAGES = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
-// Overdrachtsbelasting is niet langer een vast percentage maar wordt gedifferentieerd
-// bepaald (startersvrijstelling, zelfbewoning, niet-hoofdverblijf, nieuwbouw) via
-// getTransferTaxRate() in kostenKoper.js.
-const OTHER_PURCHASE_COSTS_RATE = 0.015;
+// Overdrachtsbelasting en kosten koper zijn niet langer vaste percentages maar worden
+// gedifferentieerd en per post bepaald via getTransferTaxRate() en
+// getKostenKoperBreakdown() in kostenKoper.js.
 // AFM-toetsrente 2026 (elk kwartaal vastgesteld, tot nu toe steeds 5%). Verplicht te
 // gebruiken zodra de rentevastperiode van de nieuwe hypotheek korter is dan 10 jaar.
 const TOETSRENTE = 5.0;
@@ -1015,6 +1020,19 @@ export default function MortgageCalculator() {
   const [starterExemption1, setStarterExemption1] = useState(true);
   const [starterExemption2, setStarterExemption2] = useState(true);
 
+  // Kosten koper: per post aanpasbare bedragen en aan/uit te zetten posten, met
+  // realistische 2026-defaults (zie kostenKoper.js).
+  const [notaryCosts, setNotaryCosts] = useState(String(KOSTEN_KOPER_DEFAULTS.notaryCosts));
+  const [valuationCosts, setValuationCosts] = useState(
+    String(KOSTEN_KOPER_DEFAULTS.valuationCosts)
+  );
+  const [advisoryCosts, setAdvisoryCosts] = useState(
+    String(KOSTEN_KOPER_DEFAULTS.advisoryCosts)
+  );
+  const [includeBankGuarantee, setIncludeBankGuarantee] = useState(true);
+  const [includeBuyersAgent, setIncludeBuyersAgent] = useState(false);
+  const [includeNhgFee, setIncludeNhgFee] = useState(false);
+
   const [showCurrentMortgage, setShowCurrentMortgage] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
@@ -1166,12 +1184,34 @@ export default function MortgageCalculator() {
       ].filter((b) => b.age > 0),
     });
     const transferTax = kostenKoperBasis * transferTaxInfo.rate;
-    const ownMoney = transferTax + kostenKoperBasis * OTHER_PURCHASE_COSTS_RATE;
+
+    const totalOwnCapital = safeNum(ownCapital1) + safeNum(ownCapital2);
+
+    // Indicatieve hypotheek als basis voor de NHG-borgtochtprovisie: wat er na inzet van
+    // het eigen vermogen gefinancierd moet worden, begrensd door de maximale hypotheek.
+    const nhgMortgageBasis = Math.min(
+      maxMortgage,
+      Math.max(0, kostenKoperBasis - totalOwnCapital)
+    );
+    const kostenKoper = getKostenKoperBreakdown({
+      price: kostenKoperBasis,
+      mortgageAmount: nhgMortgageBasis,
+      transferTax,
+      transferTaxLabel: transferTaxInfo.shortLabel,
+      options: {
+        notaryCosts,
+        valuationCosts,
+        advisoryCosts,
+        includeBankGuarantee,
+        includeBuyersAgent,
+        includeNhgFee,
+      },
+    });
+    const ownMoney = kostenKoper.total;
 
     const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly;
     const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
     const showPensionWarning = safeNum(age1) >= 57 || safeNum(age2) >= 57;
-    const totalOwnCapital = safeNum(ownCapital1) + safeNum(ownCapital2);
     const purchasingPower = maxMortgage + totalOwnCapital;
 
     // Basis voor de aanvullende-hypotheektoets verderop: leencapaciteit o.b.v. inkomen bij
@@ -1198,6 +1238,7 @@ export default function MortgageCalculator() {
       maxMortgage,
       transferTaxInfo,
       transferTax,
+      kostenKoper,
       ownMoney,
       isOverIndebted,
       showSustainability,
@@ -1226,6 +1267,12 @@ export default function MortgageCalculator() {
     propertyUsage,
     starterExemption1,
     starterExemption2,
+    notaryCosts,
+    valuationCosts,
+    advisoryCosts,
+    includeBankGuarantee,
+    includeBuyersAgent,
+    includeNhgFee,
   ]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
@@ -1325,9 +1372,10 @@ export default function MortgageCalculator() {
 
   const newHomeCalc = useMemo(() => {
     const price = safeNum(purchasePrice);
-    // Zelfde gedifferentieerde tarief als in calc, toegepast op de aanschafprijs.
-    const transferTax = price * calc.transferTaxInfo.rate;
-    const otherCosts = price * OTHER_PURCHASE_COSTS_RATE;
+    // Eén gedeelde bron voor kosten koper: de uitsplitsing uit calc, zodat deze flow
+    // nooit uit de pas kan lopen met de Kosten koper-kaart en de sidebar.
+    const transferTax = calc.transferTax;
+    const otherCosts = calc.kostenKoper.otherCostsTotal;
     const nonFinanceableCosts = transferTax + otherCosts;
     const availableFunds = calc.totalOwnCapital + currentMortgage.usableOverwaarde;
     const fundsAfterCosts = availableFunds - nonFinanceableCosts;
@@ -1777,7 +1825,7 @@ export default function MortgageCalculator() {
     // beleggingen zijn, anders dan overwaarde, wél direct beschikbaar en mogen daarom ook
     // tijdens de overbruggingsperiode worden ingezet om de nieuwe hypotheek te verlagen. Dit
     // is expliciet schakelbaar voor een behoudender toets.
-    const kostenKoper = price * (calc.transferTaxInfo.rate + OTHER_PURCHASE_COSTS_RATE);
+    const kostenKoper = calc.kostenKoper.total;
     const ownCapitalUsed = includeOwnCapitalInDoubleTest ? calc.totalOwnCapital : 0;
     const newMortgageAmount = Math.max(0, price + kostenKoper - ownCapitalUsed);
 
@@ -2302,10 +2350,7 @@ export default function MortgageCalculator() {
 
               <div className="space-y-4">
                 <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-blue-100">
-                    Geschat eigen geld (kosten koper, o.b.v. {calc.transferTaxInfo.shortLabel}{' '}
-                    overdrachtsbelasting)
-                  </p>
+                  <p className="text-sm text-blue-100">Geschat eigen geld (kosten koper)</p>
                   <p className="text-lg font-semibold">{formatEuro(calc.ownMoney)}</p>
                 </div>
                 <div className="flex items-center justify-between">
@@ -2526,6 +2571,132 @@ export default function MortgageCalculator() {
                 </motion.div>
               )}
             </AnimatePresence>
+          </SectionCard>
+
+          <SectionCard
+            id="sectie-kosten-koper"
+            title="Kosten koper"
+            icon={<Receipt className="h-4 w-4" />}
+          >
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <CurrencyField
+                id="notaryCosts"
+                label="Notaris"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={notaryCosts}
+                onChange={setNotaryCosts}
+                placeholder="1.200"
+                hint="Leverings- en hypotheekakte, Kadaster"
+              />
+              <CurrencyField
+                id="valuationCosts"
+                label="Taxatie"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={valuationCosts}
+                onChange={setValuationCosts}
+                placeholder="600"
+                hint="Fysiek taxatierapport (desktoptaxatie ~€110)"
+              />
+              <CurrencyField
+                id="advisoryCosts"
+                label="Hypotheekadvies"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={advisoryCosts}
+                onChange={setAdvisoryCosts}
+                placeholder="2.500"
+                hint="Advies- en bemiddelingskosten"
+              />
+            </div>
+
+            <div className="mt-5 space-y-2">
+              {[
+                {
+                  id: 'includeBankGuarantee',
+                  key: 'bankGuarantee',
+                  checked: includeBankGuarantee,
+                  onChange: setIncludeBankGuarantee,
+                  label: 'Bankgarantie',
+                  hint: '~1% van de waarborgsom (10% koopsom)',
+                },
+                {
+                  id: 'includeBuyersAgent',
+                  key: 'buyersAgent',
+                  checked: includeBuyersAgent,
+                  onChange: setIncludeBuyersAgent,
+                  label: 'Aankoopmakelaar (courtage 1,2%)',
+                  hint: 'Optioneel; niet bij aankoop zonder makelaar',
+                },
+                {
+                  id: 'includeNhgFee',
+                  key: 'nhgFee',
+                  checked: includeNhgFee,
+                  onChange: setIncludeNhgFee,
+                  label: 'NHG-borgtochtprovisie (0,4%)',
+                  hint: 'Indicatief; de volledige NHG-toets (kostengrens, lagere rente) zit nog niet in deze calculator',
+                },
+              ].map((row) => {
+                const item = calc.kostenKoper.items.find((i) => i.key === row.key);
+                return (
+                  <div
+                    key={row.id}
+                    className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3"
+                  >
+                    <label
+                      htmlFor={row.id}
+                      className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-700"
+                    >
+                      <input
+                        id={row.id}
+                        type="checkbox"
+                        checked={row.checked}
+                        onChange={(e) => row.onChange(e.target.checked)}
+                        className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>
+                        {row.label}
+                        <span className="block text-xs text-slate-400">{row.hint}</span>
+                      </span>
+                    </label>
+                    <span
+                      className={`text-sm font-semibold ${
+                        row.checked ? 'text-slate-800' : 'text-slate-300 line-through'
+                      }`}
+                    >
+                      {formatEuro(item ? item.amount : 0)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-600">
+                  Overdrachtsbelasting ({calc.transferTaxInfo.shortLabel})
+                </span>
+                <span className="font-semibold text-slate-800">
+                  {formatEuro(calc.transferTax)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                Automatisch bepaald via het type aankoop en de startersvrijstelling in de kaart
+                Beoogde woning.
+              </p>
+              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                <span className="text-sm font-medium text-slate-700">
+                  Totaal kosten koper (eigen geld)
+                </span>
+                <AnimatedEuro
+                  value={calc.kostenKoper.total}
+                  className="text-xl font-bold text-slate-900"
+                />
+              </div>
+              <p className="mt-2 text-xs text-slate-400">
+                Kosten koper kunnen niet worden meegefinancierd en betaalt u uit eigen middelen.
+                Alle bedragen zijn indicatief; werkelijke tarieven verschillen per notaris,
+                taxateur en adviseur.
+              </p>
+            </div>
           </SectionCard>
         </div>
 
@@ -3127,14 +3298,12 @@ export default function MortgageCalculator() {
                           </p>
                         </div>
                         <div>
-                          <span className="text-xs text-slate-400">
-                            Overige kosten koper (indicatief 1,5%)
-                          </span>
+                          <span className="text-xs text-slate-400">Overige kosten koper</span>
                           <p className="text-sm font-semibold text-slate-800">
                             {formatEuro(newHomeCalc.otherCosts)}
                           </p>
                           <span className="text-[11px] text-slate-400">
-                            Notaris, taxatie, hypotheekadvies
+                            Notaris, taxatie, advies e.d. — zie de kaart Kosten koper
                           </span>
                         </div>
                         <div>

@@ -9,6 +9,24 @@
 // - Nieuwbouw: geen overdrachtsbelasting; de koopsom is vrij op naam (v.o.n.) en bevat
 //   BTW in plaats van overdrachtsbelasting.
 
+// Kosten koper: realistische, per post aanpasbare 2026-defaults in plaats van een
+// platte 3,5%. Indicatieve bedragen (NN, Viisi, De Hypotheker, 2026):
+// - Notaris (leverings- + hypotheekakte, inschrijving Kadaster): ~€1.200
+// - Taxatie (fysiek taxatierapport): ~€600
+// - Hypotheekadvies en bemiddeling: ~€2.500
+// - Bankgarantie: ~1% van de waarborgsom (10% van de koopsom) → 0,1% van de koopsom
+// - Aankoopmakelaar (courtage, optioneel): ~1,2% van de koopsom
+// - NHG-borgtochtprovisie 2026: 0,4% van het hypotheekbedrag (optioneel; de volledige
+//   NHG-toets — kostengrens, lagere rente — zit nog niet in deze calculator)
+export const KOSTEN_KOPER_DEFAULTS = {
+  notaryCosts: 1200,
+  valuationCosts: 600,
+  advisoryCosts: 2500,
+};
+export const BANK_GUARANTEE_RATE = 0.001; // 1% van de 10%-waarborgsom
+export const BUYERS_AGENT_RATE = 0.012;
+export const NHG_FEE_RATE = 0.004;
+
 export const STARTER_EXEMPTION_PRICE_CAP = 555000; // woningwaardegrens 2026
 export const STARTER_EXEMPTION_MIN_AGE = 18;
 export const STARTER_EXEMPTION_MAX_AGE = 34; // t/m 34 jaar (jonger dan 35)
@@ -98,4 +116,88 @@ export function getTransferTaxRate({ propertyUsage, price, buyers = [] }) {
     exemptBuyers: 0,
     totalBuyers,
   };
+}
+
+// Volledige kosten-koper-uitsplitsing. Alle bedragen zijn indicatief en door de
+// gebruiker aanpasbaar of aan/uit te zetten; de overdrachtsbelasting komt uit
+// getTransferTaxRate() en wordt hier alleen als post opgenomen.
+//
+// - price: aanschafprijs (basis voor bankgarantie en makelaarscourtage)
+// - mortgageAmount: indicatieve hypotheek (basis voor de NHG-borgtochtprovisie)
+// - transferTax: berekend bedrag overdrachtsbelasting
+// - transferTaxLabel: korte tariefaanduiding voor de weergave (bijv. '2%')
+// - options: { notaryCosts, valuationCosts, advisoryCosts,
+//              includeBankGuarantee, includeBuyersAgent, includeNhgFee }
+export function getKostenKoperBreakdown({
+  price,
+  mortgageAmount,
+  transferTax,
+  transferTaxLabel,
+  options,
+}) {
+  const p = Math.max(0, price || 0);
+  const m = Math.max(0, mortgageAmount || 0);
+  const num = (v) => {
+    const n = parseFloat(v);
+    return isNaN(n) || !isFinite(n) ? 0 : Math.max(0, n);
+  };
+
+  const items = [
+    {
+      key: 'transferTax',
+      label: `Overdrachtsbelasting (${transferTaxLabel})`,
+      amount: Math.max(0, transferTax || 0),
+      editable: false,
+      included: true,
+    },
+    {
+      key: 'notary',
+      label: 'Notaris (leverings- en hypotheekakte)',
+      amount: num(options.notaryCosts),
+      editable: true,
+      included: true,
+    },
+    {
+      key: 'valuation',
+      label: 'Taxatie',
+      amount: num(options.valuationCosts),
+      editable: true,
+      included: true,
+    },
+    {
+      key: 'advisory',
+      label: 'Hypotheekadvies en bemiddeling',
+      amount: num(options.advisoryCosts),
+      editable: true,
+      included: true,
+    },
+    {
+      key: 'bankGuarantee',
+      label: 'Bankgarantie (0,1% koopsom)',
+      amount: p * BANK_GUARANTEE_RATE,
+      editable: false,
+      included: !!options.includeBankGuarantee,
+    },
+    {
+      key: 'buyersAgent',
+      label: 'Aankoopmakelaar (1,2% koopsom)',
+      amount: p * BUYERS_AGENT_RATE,
+      editable: false,
+      included: !!options.includeBuyersAgent,
+    },
+    {
+      key: 'nhgFee',
+      label: 'NHG-borgtochtprovisie (0,4% hypotheek)',
+      amount: m * NHG_FEE_RATE,
+      editable: false,
+      included: !!options.includeNhgFee,
+    },
+  ];
+
+  const total = items.reduce((sum, item) => sum + (item.included ? item.amount : 0), 0);
+  // Overige kosten koper: alles behalve de overdrachtsbelasting, voor weergaven die de
+  // belasting apart tonen (financieringsgatblok).
+  const otherCostsTotal = total - items[0].amount;
+
+  return { items, total, otherCostsTotal };
 }
