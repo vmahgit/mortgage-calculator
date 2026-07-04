@@ -1039,6 +1039,13 @@ export default function MortgageCalculator() {
   const [partnerAlimony1, setPartnerAlimony1] = useState('0');
   const [partnerAlimony2, setPartnerAlimony2] = useState('0');
 
+  // AOW-toets: verwacht bruto pensioeninkomen per jaar (incl. AOW) per aanvrager.
+  // Alleen relevant (en zichtbaar) vanaf leeftijd 57 — binnen 10 jaar van de
+  // AOW-leeftijd van 67. Leeg = nog niet ingevuld; er wordt dan bewust NIET op €0
+  // getoetst maar een waarschuwing getoond.
+  const [pensionIncome1, setPensionIncome1] = useState('');
+  const [pensionIncome2, setPensionIncome2] = useState('');
+
   const [showCurrentMortgage, setShowCurrentMortgage] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
@@ -1181,7 +1188,57 @@ export default function MortgageCalculator() {
     // gekapitaliseerde waarde van de schuldmaandlast tegen de toetsrente).
     const debtDeduction = monthlyDebt * nibud.annuityFactor;
 
-    const incomeBasedMax = Math.max(0, nibud.maxLoan + energyBonus);
+    // AOW-toets (Stcrt. 2025-36471): wie binnen 10 jaar de AOW-leeftijd (67) bereikt,
+    // wordt óók getoetst op het verwachte pensioeninkomen, tegen de aparte
+    // AOW-financieringslasttabel (Tabel 2). De laagste van de twee uitkomsten is
+    // bindend. De min() gebeurt hier op maxLoan-niveau — vóór de energiebonus en de
+    // LTV-cap — zodat ook alle afgeleide berekeningen (doorstromer-bijleenruimte,
+    // scenario-analyse, dubbele-lasten-test) automatisch de bindende toets volgen.
+    const pensionApplies1 = safeNum(age1) >= 57;
+    const pensionApplies2 = safeNum(age2) >= 57;
+    const pensionApplies = pensionApplies1 || pensionApplies2;
+    const pensionMissing1 = pensionApplies1 && safeNum(pensionIncome1) <= 0;
+    const pensionMissing2 = pensionApplies2 && safeNum(pensionIncome2) <= 0;
+    // Zolang een verwacht pensioeninkomen ontbreekt, wordt er bewust niet op €0
+    // getoetst maar een waarschuwing getoond: de toets is dan onvolledig.
+    const pensionIncomplete = pensionMissing1 || pensionMissing2;
+    const pensionActive = pensionApplies && !pensionIncomplete;
+
+    // Pensioenscenario-inkomen: voor aanvragers binnen 10 jaar van de AOW-leeftijd het
+    // verwachte pensioeninkomen (met dezelfde alimentatie-aftrek), voor de ander het
+    // gewone toetsinkomen.
+    const pensionToets1 = pensionApplies1
+      ? getToetsinkomen({
+          incomeType: 'vast',
+          income: pensionIncome1,
+          alimonyMonthly: partnerAlimony1,
+        })
+      : toets1;
+    const pensionToets2 = pensionApplies2
+      ? getToetsinkomen({
+          incomeType: 'vast',
+          income: pensionIncome2,
+          alimonyMonthly: partnerAlimony2,
+        })
+      : toets2;
+    const pensionCombinedIncome = pensionToets1.toetsinkomen + pensionToets2.toetsinkomen;
+
+    const nibudPension = pensionActive
+      ? getIncomeBasedMortgage(pensionCombinedIncome, testRate, monthlyDebt, { aow: true })
+      : null;
+    const pensionBinding = pensionActive && nibudPension.maxLoan < nibud.maxLoan;
+    const boundMaxLoan = pensionActive
+      ? Math.min(nibud.maxLoan, nibudPension.maxLoan)
+      : nibud.maxLoan;
+
+    // Scenariobedragen voor de vergelijkings-UI (beide inclusief energiebonus, zodat ze
+    // één-op-één vergelijkbaar zijn met de getoonde maximale hypotheek).
+    const currentScenarioMax = Math.max(0, nibud.maxLoan + energyBonus);
+    const pensionScenarioMax = pensionActive
+      ? Math.max(0, nibudPension.maxLoan + energyBonus)
+      : null;
+
+    const incomeBasedMax = Math.max(0, boundMaxLoan + energyBonus);
 
     // B10: een hypotheek kan nooit hoger zijn dan de aanschafprijs van de woning
     // (maximale LTV van 100%), ongeacht hoeveel de leencapaciteit op inkomen toelaat.
@@ -1231,15 +1288,22 @@ export default function MortgageCalculator() {
 
     const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly;
     const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
-    const showPensionWarning = safeNum(age1) >= 57 || safeNum(age2) >= 57;
     const purchasingPower = maxMortgage + totalOwnCapital;
 
     // Basis voor de aanvullende-hypotheektoets verderop: leencapaciteit o.b.v. inkomen bij
     // de daadwerkelijke rente, zonder de generieke toetsrentecorrectie hierboven (die is
     // gebaseerd op één algemene rentevastperiode-aanname). Bij het toetsen van de
     // aanvullende leningdelen wordt per leningdeel opnieuw en preciezer getoetst.
+    // Ook hier geldt de AOW-toets: het bindende (laagste) scenario telt.
     const nibudAtActualRate = getIncomeBasedMortgage(combinedIncome, safeNum(rate), monthlyDebt);
-    const incomeBasedMaxAtActualRate = Math.max(0, nibudAtActualRate.maxLoan + energyBonus);
+    const boundMaxLoanAtActualRate = pensionActive
+      ? Math.min(
+          nibudAtActualRate.maxLoan,
+          getIncomeBasedMortgage(pensionCombinedIncome, safeNum(rate), monthlyDebt, { aow: true })
+            .maxLoan
+        )
+      : nibudAtActualRate.maxLoan;
+    const incomeBasedMaxAtActualRate = Math.max(0, boundMaxLoanAtActualRate + energyBonus);
 
     // Effectieve leenfactor puur ter illustratie (maximale hypotheek gedeeld door inkomen);
     // de daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor.
@@ -1264,7 +1328,16 @@ export default function MortgageCalculator() {
       ownMoney,
       isOverIndebted,
       showSustainability,
-      showPensionWarning,
+      pensionApplies,
+      pensionApplies1,
+      pensionApplies2,
+      pensionMissing1,
+      pensionMissing2,
+      pensionIncomplete,
+      pensionBinding,
+      pensionCombinedIncome,
+      currentScenarioMax,
+      pensionScenarioMax,
       totalOwnCapital,
       purchasingPower,
       toetsrenteApplies,
@@ -1297,6 +1370,8 @@ export default function MortgageCalculator() {
     includeNhgFee,
     partnerAlimony1,
     partnerAlimony2,
+    pensionIncome1,
+    pensionIncome2,
   ]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
@@ -2078,19 +2153,87 @@ export default function MortgageCalculator() {
         </div>
 
         <AnimatePresence>
-          {calc.showPensionWarning && (
+          {calc.pensionApplies && (
             <motion.div
               initial={{ opacity: 0, y: -8, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -8, scale: 0.98 }}
               transition={{ duration: 0.25, ease: 'easeOut' }}
-              className="mb-6 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm"
+              className="mb-6"
             >
-              <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
-              <p className="text-sm text-amber-800">
-                <span className="font-semibold">Let op:</span> Vanwege de naderende pensioenleeftijd
-                moet er wettelijk getoetst worden op het (vaak lagere) pensioeninkomen.
-              </p>
+              {calc.pensionIncomplete ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+                  <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
+                  <p className="text-sm text-amber-800">
+                    <span className="font-semibold">AOW-toets onvolledig:</span> vul bij{' '}
+                    {calc.pensionMissing1 && calc.pensionMissing2
+                      ? 'beide partners'
+                      : calc.pensionMissing1
+                        ? 'partner 1'
+                        : 'partner 2'}{' '}
+                    het verwachte bruto pensioeninkomen in (Inkomen-kaart). Wie binnen 10 jaar
+                    de AOW-leeftijd van 67 bereikt, moet wettelijk óók op het (vaak lagere)
+                    pensioeninkomen worden getoetst. Zolang dit veld leeg is, rekent de
+                    calculator alleen met het huidige inkomen.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    AOW-toets: dubbele toetsing (binnen 10 jaar van de AOW-leeftijd)
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div
+                      className={`rounded-xl border px-4 py-3 ${
+                        !calc.pensionBinding
+                          ? 'border-indigo-200 bg-indigo-50'
+                          : 'border-slate-100 bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-slate-500">
+                          Toets op huidig inkomen (Tabel 1)
+                        </span>
+                        {!calc.pensionBinding && (
+                          <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                            Bindend
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-lg font-bold text-slate-900">
+                        {formatEuro(calc.currentScenarioMax)}
+                      </p>
+                    </div>
+                    <div
+                      className={`rounded-xl border px-4 py-3 ${
+                        calc.pensionBinding
+                          ? 'border-amber-300 bg-amber-50'
+                          : 'border-slate-100 bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs text-slate-500">
+                          Toets op pensioeninkomen (Tabel 2, AOW)
+                        </span>
+                        {calc.pensionBinding && (
+                          <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                            Bindend
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-lg font-bold text-slate-900">
+                        {formatEuro(calc.pensionScenarioMax)}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs text-slate-400">
+                    De laagste uitkomst bepaalt de maximale hypotheek. Het pensioenscenario
+                    rekent met het verwachte pensioeninkomen ({formatEuro(calc.pensionCombinedIncome)}{' '}
+                    gezamenlijk toetsinkomen) tegen de aparte AOW-financieringslasttabel uit
+                    dezelfde regeling.
+                  </p>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -2133,6 +2276,26 @@ export default function MortgageCalculator() {
                     min={18}
                     max={100}
                   />
+                  <AnimatePresence>
+                    {calc.pensionApplies1 && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <CurrencyField
+                          id="pensionIncome1"
+                          label="Verwacht bruto pensioeninkomen p/j"
+                          icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+                          value={pensionIncome1}
+                          onChange={setPensionIncome1}
+                          placeholder="29.000"
+                          hint="Incl. AOW. Binnen 10 jaar van de AOW-leeftijd (67) wordt ook hierop getoetst."
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </PartnerSubCard>
                 <PartnerSubCard label="Partner 2">
                   <Slider
@@ -2168,6 +2331,26 @@ export default function MortgageCalculator() {
                     min={18}
                     max={100}
                   />
+                  <AnimatePresence>
+                    {calc.pensionApplies2 && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <CurrencyField
+                          id="pensionIncome2"
+                          label="Verwacht bruto pensioeninkomen p/j"
+                          icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+                          value={pensionIncome2}
+                          onChange={setPensionIncome2}
+                          placeholder="29.000"
+                          hint="Incl. AOW. Binnen 10 jaar van de AOW-leeftijd (67) wordt ook hierop getoetst."
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </PartnerSubCard>
               </div>
               <AnimatePresence>
@@ -2430,6 +2613,20 @@ export default function MortgageCalculator() {
                     <p className="text-sm font-medium text-red-200">
                       -{formatEuro(calc.debtDeduction)}
                     </p>
+                  </div>
+                )}
+                {calc.pensionBinding && (
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-amber-200">AOW-toets bindend (pensioeninkomen)</p>
+                    <p className="text-sm font-medium text-amber-200">
+                      {formatEuro(calc.pensionScenarioMax)}
+                    </p>
+                  </div>
+                )}
+                {calc.pensionIncomplete && (
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-amber-200">AOW-toets onvolledig</p>
+                    <p className="text-sm font-medium text-amber-200">pensioeninkomen?</p>
                   </div>
                 )}
               </div>
