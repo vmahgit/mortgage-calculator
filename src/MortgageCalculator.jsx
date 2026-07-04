@@ -25,6 +25,7 @@ import {
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
 import { getIncomeBasedMortgage } from './nibud2026';
+import { getToetsinkomen } from './toetsinkomen';
 import {
   getTransferTaxRate,
   getKostenKoperBreakdown,
@@ -1131,7 +1132,12 @@ export default function MortgageCalculator() {
   };
 
   const calc = useMemo(() => {
-    const combinedIncome = safeNum(income1) + safeNum(income2);
+    // Toetsinkomen per aanvrager (toetsinkomen.js): nu nog altijd type 'vast'
+    // (bruto jaarinkomen telt volledig mee); inkomenstype, alimentatie en
+    // 3-jaarsmiddeling haken hier in latere stappen op aan.
+    const toets1 = getToetsinkomen({ incomeType: 'vast', income: income1 });
+    const toets2 = getToetsinkomen({ incomeType: 'vast', income: income2 });
+    const combinedIncome = toets1.toetsinkomen + toets2.toetsinkomen;
 
     // A6: bij een rentevastperiode korter dan 10 jaar moet wettelijk met de (hogere)
     // AFM-toetsrente worden getoetst, nooit met de lagere daadwerkelijke rente.
@@ -1227,6 +1233,8 @@ export default function MortgageCalculator() {
 
     return {
       combinedIncome,
+      toets1,
+      toets2,
       woonquote,
       effectiveFactor,
       maxWoonlastMonthly: nibud.maxWoonlastMonthly,
@@ -2358,7 +2366,7 @@ export default function MortgageCalculator() {
                   <p className="text-sm font-medium">{formatEuro(calc.totalOwnCapital)}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="text-sm text-blue-100">Gezamenlijk bruto inkomen</p>
+                  <p className="text-sm text-blue-100">Gezamenlijk toetsinkomen</p>
                   <p className="text-sm font-medium">{formatEuro(calc.combinedIncome)}</p>
                 </div>
                 <div className="flex items-center justify-between">
