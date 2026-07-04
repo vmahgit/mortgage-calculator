@@ -1,7 +1,7 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
-**Laatste commit**: `fc5a33a` — bekijk `git log --oneline` voor de volledige geschiedenis
-(21+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
+**Laatste commit**: `4780d78` — bekijk `git log --oneline` voor de volledige geschiedenis
+(30+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
 
 Live: https://mortgage-calculator-three-drab.vercel.app *(let op: dit is de vorige
 versie — na nieuwe wijzigingen moet je zelf opnieuw `vercel --prod` draaien om de live
@@ -34,6 +34,30 @@ met de echte Nibud-woonquote-systematiek 2026, niet met een benaderde leenfactor
 - **Landingspagina** (`src/LandingPage.jsx`): cinematische hero met roterende
   Nederlandse villafoto's (Unsplash), scroll-parallax, count-up-animaties, titel
   "Hypotheek Calculator" met gouden gradient.
+- **Kosten koper & overdrachtsbelasting** (`src/kostenKoper.js`): `getTransferTaxRate()`
+  bepaalt het gedifferentieerde tarief (0% startersvrijstelling 18–34 jr onder
+  €555.000, 2% eigen woning, 8% niet-hoofdverblijf, 0%/n.v.t. bij nieuwbouw);
+  `getKostenKoperBreakdown()` splitst kosten koper op in per-post aanpasbare en
+  aan/uit te zetten bedragen (notaris, taxatie, advies, bankgarantie, makelaar,
+  NHG-provisie). `calc` in MortgageCalculator.jsx is de ene gedeelde bron —
+  `newHomeCalc`, `doubleCostsCalc`, de sidebar en het financieringsgatblok lezen
+  er allemaal uit.
+- **Toetsinkomen per aanvrager** (`src/toetsinkomen.js`): `getToetsinkomen()` bouwt
+  het toetsinkomen op uit inkomenstype (vast / flex met of zonder
+  intentieverklaring / ZZP, met 3-jaarsmiddeling gemaximeerd op het laatste jaar),
+  structureel inkomen (13e maand, telt volledig) en incidenteel inkomen (gemiddelde
+  bonus/overwerk), min betaalde partneralimentatie (bruto ×12, vóór de
+  woonquote-bepaling — dus geen kapitalisatie zoals schulden). Retourneert een
+  transparant opbouwobject (basis, structureel, aftrek, cap-vlaggen) — een
+  voorschot op de nog openstaande auditbare-toetsopbouw-taak.
+- **AOW-toets** (`src/nibud2026.js`): tweede financieringslasttabel (Tabel 2, zelfde
+  Stcrt. 2025-36471) voor consumenten die de AOW-leeftijd al bereikt hebben, via de
+  optie `{ aow: true }` op `getWoonquote()`/`getIncomeBasedMortgage()`. Vanaf
+  leeftijd 57 (binnen 10 jaar van AOW-leeftijd 67) toetst `calc` in
+  MortgageCalculator.jsx zowel het huidige inkomen als het ingevoerde verwachte
+  pensioeninkomen; de laagste `maxLoan` is bindend, toegepast vóór de
+  energiebonus/LTV-cap zodat ook de doorstromer-bijleenruimte de toets volgt. Leeg
+  pensioenveld → expliciete waarschuwing, geen toets op €0.
 
 ## Herbruikbare bouwstenen (ken je deze, dan bouw je sneller mee)
 In `src/MortgageCalculator.jsx`: `SectionCard`, `StatusBadge` (status=
@@ -60,36 +84,52 @@ In `src/MortgageCalculator.jsx`: `SectionCard`, `StatusBadge` (status=
   verloren omdat er nog niets gecommit was, maar: laat groot werk liever gewoon in een
   gewone, actieve sessie doen in plaats van in de achtergrond terwijl niemand kijkt.
 
-## Openstaande taken (expliciete lijst, nog NIET gebouwd)
-Dit is de volledige, door de gebruiker aangeleverde lijst. Geef deze 1-op-1 aan Claude in
-de nieuwe sessie zodat er niets verloren gaat:
+## Afgeronde uitbreidingen (professionaliseringsronde, punten 2/3/4/6/7)
+In deze sessie gebouwd, elk als eigen commit met browser-verificatie:
+- **Kosten koper realistisch uitgesplitst** (`src/kostenKoper.js`,
+  `getKostenKoperBreakdown()`): notaris, taxatie, advies (aanpasbaar), bankgarantie,
+  makelaarscourtage, NHG-provisie (aan/uit).
+- **Overdrachtsbelasting gedifferentieerd** (`getTransferTaxRate()`): 0%
+  startersvrijstelling, 2% eigen woning, 8% niet-hoofdverblijf, 0%/n.v.t. bij
+  nieuwbouw. Vereenvoudiging bij twee kopers: één vrijgesteld → indicatief 1% via
+  50/50-aandeel (uitgelegd in de UI).
+- **AOW/pensioen als echte dubbele toets** (`nibud2026.js` Tabel 2 + `calc` in
+  MortgageCalculator.jsx): huidig inkomen vs. verwacht pensioeninkomen, laagste
+  bindend, met scenariovergelijking in de UI i.p.v. alleen een waarschuwing.
+- **Alimentatie** (`src/toetsinkomen.js`): betaalde partneralimentatie bruto ×12 van
+  het toetsinkomen af; ontvangen alimentatie en kinderalimentatie tellen niet mee
+  (infotekst).
+- **Flexibel/variabel inkomen** (`toetsinkomen.js`): inkomenstype-keuze per
+  aanvrager (vast/flexMet/flexZonder/ZZP) met 3-jaarsmiddeling gemaximeerd op het
+  laatste jaar, plus structureel (13e maand) en incidenteel (gem. bonus) inkomen.
 
+Nog niet aangeraakt: punt 1 (NHG — de NHG-borgtochtprovisie is wél als optionele
+kostenpost toegevoegd, maar de kostengrens en lagere NHG-rente ontbreken nog), 5
+(erfpacht), 8 (verduurzaming >100% LTV), 9 (volledige nieuwbouw-flow — het
+woningtype-onderscheid bestaat al voor overdrachtsbelasting, maar bouwdepot/
+makelaarskosten-koppeling nog niet), 10–13 (zie hieronder).
+
+## Openstaande taken (bijgewerkte lijst)
 1. **NHG (Nationale Hypotheek Garantie)**: kostengrens (jaarlijks geïndexeerd, hoger bij
-   verduurzaming), lagere NHG-rente, 0,4% borgtochtprovisie. Bijna elke starter valt
-   hieronder → tientallen euro's/maand verschil. **Zoek actuele 2026-cijfers op bij
-   nhg.nl voordat je iets hardcodet.**
-2. **Kosten koper realistisch uitgesplitst** i.p.v. platte 3,5%: aparte posten voor
-   notaris, taxatie, advies/bemiddeling, NHG-kosten, makelaarscourtage, bankgarantie.
-3. **Overdrachtsbelasting gedifferentieerd**: 0% startersvrijstelling (<35 jr, onder de
-   woningwaardegrens), 2% eigen bewoning, hoog tarief (belegger/niet-zelfbewoning), 0%/
-   n.v.t. bij nieuwbouw (BTW i.p.v. overdrachtsbelasting). Nu staat het vast op 2%.
-4. **AOW/pensioen als echte toets** i.p.v. alleen een waarschuwing: toetsen op (lager)
-   verwacht pensioeninkomen wanneer iemand binnen 10 jaar van de AOW-leeftijd zit.
+   verduurzaming), lagere NHG-rente. De 0,4% borgtochtprovisie zit al als optionele post
+   in de Kosten koper-kaart. **Zoek actuele 2026-cijfers op bij nhg.nl voordat je iets
+   hardcodet.**
+2. ~~Kosten koper realistisch uitgesplitst~~ — **gedaan**.
+3. ~~Overdrachtsbelasting gedifferentieerd~~ — **gedaan**.
+4. ~~AOW/pensioen als echte toets~~ — **gedaan**.
 5. **Erfpacht (canon)** als maandlast die de leencapaciteit verlaagt (kapitaliseren tegen
    de toetsrente, net als overige schulden nu al gebeurt).
-6. **Alimentatie**: betaalde partneralimentatie als last meewegen; ontvangen alimentatie
-   telt niet mee als toetsinkomen.
-7. **Flexibel/variabel inkomen**: ZZP (3-jaarsgemiddelde winst), flexcontract met
-   intentieverklaring, en onderscheid structureel vs. incidenteel (bonus, 13e maand,
-   vakantiegeld).
+6. ~~Alimentatie~~ — **gedaan**.
+7. ~~Flexibel/variabel inkomen~~ — **gedaan**.
 8. **Verduurzaming boven 100% LTV**: energiebesparende maatregelen mogen tot ~106%
    meegefinancierd worden; nu is het een platte bonus zonder LTV-verhoging.
-9. **Nieuwbouw-flow**: geen overdrachtsbelasting, bouwdepot met rente, geen
-   makelaarskosten (hangt samen met punt 2 en 3 — waarschijnlijk één toggle
-   "bestaande bouw / nieuwbouw" die meerdere berekeningen tegelijk beïnvloedt).
+9. **Nieuwbouw-flow**: bouwdepot met rente, geen makelaarskosten. Het woningtype-toggle
+   ("bestaande bouw / nieuwbouw / niet-hoofdverblijf") bestaat al en regelt de
+   overdrachtsbelasting; bouwdepot en de koppeling met makelaarskosten ontbreken nog.
 10. **Auditbare toetsopbouw**: toon expliciet, stap voor stap, waarom de max hypotheek X
-    is (woonquote Y × inkomen Z − schulden = ...). Bouwt vertrouwen, maakt fouten
-    zichtbaar. Grotendeels UI-werk op basis van al bestaande berekende waarden.
+    is (woonquote Y × inkomen Z − schulden = ...). `toetsinkomen.js` retourneert al een
+    transparant opbouwobject per aanvrager (basis/structureel/aftrek/cap-vlaggen) —
+    grotendeels UI-werk op basis van al bestaande berekende waarden.
 11. **PDF-klantrapport**: export met alle aannames, bronnen en de uitkomst — wat een
     klant normaal van een adviseur meekrijgt.
 12. **Referentie-/unit tests**: tegen bekende Nibud-uitkomsten (bijv. vitest, past
@@ -98,10 +138,9 @@ de nieuwe sessie zodat er niets verloren gaat:
     afwerken — subtiele verfijning (schaduwen, ritme, iconografie) over de bestaande
     stijl, geen risicovolle volledige herontwerp.
 
-**Aanbevolen volgorde** (hoogste impact op de kloppendheid van de uitkomst eerst):
-NHG → overdrachtsbelasting + nieuwbouw-flow (horen bij elkaar) → kosten koper → erfpacht
-→ alimentatie → AOW-toets → flexibel inkomen → verduurzaming >100% LTV → auditbare
-toetsopbouw → PDF-export → tests → visuele polish.
+**Aanbevolen volgorde**: NHG (kostengrens + rente) → erfpacht → verduurzaming >100% LTV
+→ nieuwbouw-flow afmaken (bouwdepot) → auditbare toetsopbouw → PDF-export → tests →
+visuele polish.
 
 ## Hoe verder te werken (voor een nieuwe sessie / beginner-instructies)
 Zie de losse instructies die apart zijn meegegeven bij het delen van dit bestand.
