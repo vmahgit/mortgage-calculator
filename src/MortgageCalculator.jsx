@@ -21,11 +21,12 @@ import {
   TrendingUp,
   CheckCircle2,
   Receipt,
+  Briefcase,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
 import { getIncomeBasedMortgage } from './nibud2026';
-import { getToetsinkomen } from './toetsinkomen';
+import { getToetsinkomen, INCOME_TYPES } from './toetsinkomen';
 import {
   getTransferTaxRate,
   getKostenKoperBreakdown,
@@ -527,6 +528,97 @@ function PartnerSubCard({ label, children }) {
         {label}
       </div>
       {children}
+    </div>
+  );
+}
+
+// Inkomenstype-keuze per aanvrager (vast / flex mét of zónder intentieverklaring / ZZP).
+function IncomeTypeSelect({ id, value, onChange }) {
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+        <Briefcase className="h-3.5 w-3.5 text-slate-400" />
+        Inkomenstype
+      </label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+      >
+        {Object.entries(INCOME_TYPES).map(([key, label]) => (
+          <option key={key} value={key}>
+            {label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// Drie jaar inkomenshistorie voor flex zonder intentieverklaring en ZZP: de laatste
+// drie kalenderjaren, met het meest recente jaar bovenaan (y1 = laatste jaar).
+function IncomeHistoryFields({ idPrefix, incomeType, history, onChange }) {
+  const currentYear = new Date().getFullYear();
+  const labelBase = incomeType === 'zzp' ? 'Fiscale winst' : 'Bruto jaarinkomen';
+  return (
+    <>
+      {[
+        ['y1', currentYear - 1],
+        ['y2', currentYear - 2],
+        ['y3', currentYear - 3],
+      ].map(([key, year]) => (
+        <CurrencyField
+          key={key}
+          id={`${idPrefix}-${key}`}
+          label={`${labelBase} ${year}`}
+          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+          value={history[key]}
+          onChange={(v) => onChange(key, v)}
+          placeholder="0"
+        />
+      ))}
+    </>
+  );
+}
+
+// Berekende toetsinkomen-regel onderaan elke partner-kaart, met uitleg waarom het
+// afwijkt van het ingevoerde inkomen (3-jaarscap, alimentatie, intentieverklaring).
+function ToetsinkomenSummary({ toets, incomeType }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-slate-500">Toetsinkomen</span>
+        <span className="text-sm font-bold text-slate-800">{formatEuro(toets.toetsinkomen)}</span>
+      </div>
+      {toets.cappedAtLastYear && (
+        <p className="mt-1 text-[11px] text-slate-400">
+          3-jaarsgemiddelde gemaximeerd op het laatste jaar
+        </p>
+      )}
+      {toets.structural > 0 && (
+        <p className="mt-1 text-[11px] text-slate-400">
+          Incl. {formatEuro(toets.structural)} structureel/gemiddeld extra inkomen
+        </p>
+      )}
+      {toets.alimonyDeduction > 0 && (
+        <p className="mt-1 text-[11px] text-slate-400">
+          Na aftrek van {formatEuro(toets.alimonyDeduction)} betaalde partneralimentatie per jaar
+        </p>
+      )}
+      {incomeType === 'flexMet' && (
+        <p className="mt-1 text-[11px] text-emerald-600">
+          Telt volledig mee dankzij de intentieverklaring van de werkgever
+        </p>
+      )}
+      {toets.usesHistory && toets.insufficientHistory && (
+        <p className="mt-1 text-[11px] text-amber-600">
+          Minder dan drie jaren ingevuld.{' '}
+          {incomeType === 'zzp'
+            ? 'Korter dan drie jaar ZZP wordt door geldverstrekkers beperkter beoordeeld; deze uitkomst is extra indicatief.'
+            : 'Vul drie jaarinkomens in voor een betrouwbare middeling.'}
+        </p>
+      )}
     </div>
   );
 }
@@ -1046,6 +1138,15 @@ export default function MortgageCalculator() {
   const [pensionIncome1, setPensionIncome1] = useState('');
   const [pensionIncome2, setPensionIncome2] = useState('');
 
+  // Inkomenstype per aanvrager: 'vast' | 'flexMet' | 'flexZonder' | 'zzp'.
+  // Bij flexZonder/zzp geldt het gemiddelde van de laatste drie jaarinkomens
+  // (resp. fiscale winsten), gemaximeerd op het laatste jaar (zie toetsinkomen.js);
+  // de gewone inkomens-slider verdwijnt dan uit beeld.
+  const [incomeType1, setIncomeType1] = useState('vast');
+  const [incomeType2, setIncomeType2] = useState('vast');
+  const [incomeHistory1, setIncomeHistory1] = useState({ y1: '', y2: '', y3: '' });
+  const [incomeHistory2, setIncomeHistory2] = useState({ y1: '', y2: '', y3: '' });
+
   const [showCurrentMortgage, setShowCurrentMortgage] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
@@ -1144,18 +1245,21 @@ export default function MortgageCalculator() {
   };
 
   const calc = useMemo(() => {
-    // Toetsinkomen per aanvrager (toetsinkomen.js): nu nog altijd type 'vast'
-    // (bruto jaarinkomen telt volledig mee); inkomenstype en 3-jaarsmiddeling haken
-    // hier in latere stappen op aan. Betaalde partneralimentatie gaat er bruto
-    // (×12) vanaf, vóór de woonquote-bepaling.
+    // Toetsinkomen per aanvrager (toetsinkomen.js): afhankelijk van het inkomenstype
+    // telt het bruto jaarinkomen volledig mee (vast, flex mét intentieverklaring) of
+    // geldt het 3-jaarsgemiddelde gemaximeerd op het laatste jaar (flex zónder
+    // intentieverklaring, ZZP). Betaalde partneralimentatie gaat er bruto (×12)
+    // vanaf, vóór de woonquote-bepaling.
     const toets1 = getToetsinkomen({
-      incomeType: 'vast',
+      incomeType: incomeType1,
       income: income1,
+      history: incomeHistory1,
       alimonyMonthly: partnerAlimony1,
     });
     const toets2 = getToetsinkomen({
-      incomeType: 'vast',
+      incomeType: incomeType2,
       income: income2,
+      history: incomeHistory2,
       alimonyMonthly: partnerAlimony2,
     });
     const combinedIncome = toets1.toetsinkomen + toets2.toetsinkomen;
@@ -1372,6 +1476,10 @@ export default function MortgageCalculator() {
     partnerAlimony2,
     pensionIncome1,
     pensionIncome2,
+    incomeType1,
+    incomeType2,
+    incomeHistory1,
+    incomeHistory2,
   ]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
@@ -2243,17 +2351,27 @@ export default function MortgageCalculator() {
             <SectionCard id="sectie-inkomen" title="Inkomen" icon={<Euro className="h-4 w-4" />}>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <PartnerSubCard label="Partner 1">
-                  <Slider
-                    id="income1"
-                    label="Bruto jaarinkomen"
-                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                    value={income1}
-                    min={0}
-                    max={150000}
-                    step={1000}
-                    onChange={setIncome1}
-                    formatValue={formatEuro}
-                  />
+                  <IncomeTypeSelect id="incomeType1" value={incomeType1} onChange={setIncomeType1} />
+                  {calc.toets1.usesHistory ? (
+                    <IncomeHistoryFields
+                      idPrefix="incomeHistory1"
+                      incomeType={incomeType1}
+                      history={incomeHistory1}
+                      onChange={(key, v) => setIncomeHistory1((prev) => ({ ...prev, [key]: v }))}
+                    />
+                  ) : (
+                    <Slider
+                      id="income1"
+                      label="Bruto jaarinkomen"
+                      icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                      value={income1}
+                      min={0}
+                      max={150000}
+                      step={1000}
+                      onChange={setIncome1}
+                      formatValue={formatEuro}
+                    />
+                  )}
                   <Slider
                     id="ownCapital1"
                     label="Inbreng eigen vermogen"
@@ -2296,19 +2414,30 @@ export default function MortgageCalculator() {
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  <ToetsinkomenSummary toets={calc.toets1} incomeType={incomeType1} />
                 </PartnerSubCard>
                 <PartnerSubCard label="Partner 2">
-                  <Slider
-                    id="income2"
-                    label="Bruto jaarinkomen"
-                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                    value={income2}
-                    min={0}
-                    max={150000}
-                    step={1000}
-                    onChange={setIncome2}
-                    formatValue={formatEuro}
-                  />
+                  <IncomeTypeSelect id="incomeType2" value={incomeType2} onChange={setIncomeType2} />
+                  {calc.toets2.usesHistory ? (
+                    <IncomeHistoryFields
+                      idPrefix="incomeHistory2"
+                      incomeType={incomeType2}
+                      history={incomeHistory2}
+                      onChange={(key, v) => setIncomeHistory2((prev) => ({ ...prev, [key]: v }))}
+                    />
+                  ) : (
+                    <Slider
+                      id="income2"
+                      label="Bruto jaarinkomen"
+                      icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                      value={income2}
+                      min={0}
+                      max={150000}
+                      step={1000}
+                      onChange={setIncome2}
+                      formatValue={formatEuro}
+                    />
+                  )}
                   <Slider
                     id="ownCapital2"
                     label="Inbreng eigen vermogen"
@@ -2351,6 +2480,7 @@ export default function MortgageCalculator() {
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  <ToetsinkomenSummary toets={calc.toets2} incomeType={incomeType2} />
                 </PartnerSubCard>
               </div>
               <AnimatePresence>
