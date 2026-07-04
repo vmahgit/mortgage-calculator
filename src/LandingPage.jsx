@@ -64,24 +64,36 @@ function Hero({ onScrollToCalculator }) {
 
   return (
     <section ref={heroRef} className="relative h-dvh w-full overflow-hidden">
-      {/* Parallax-achtergrond: kruisvervagende villa-foto's */}
+      {/* Parallax-achtergrond: kruisvervagende villa-foto's, met een langzame Ken
+          Burns-zoom per foto zodat de achtergrond nooit stilstaat. */}
       <motion.div style={{ y: bgY }} className="absolute inset-0 z-0 h-[130%] w-full">
         <AnimatePresence>
           <motion.img
             key={imageIndex}
             src={HERO_IMAGES[imageIndex]}
             alt="Moderne Nederlandse vrijstaande villa"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
+            initial={{ opacity: 0, scale: 1 }}
+            animate={{ opacity: 1, scale: 1.08 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 1.5, ease: 'easeInOut' }}
+            transition={{ opacity: { duration: 1.5, ease: 'easeInOut' }, scale: { duration: 6.5, ease: 'linear' } }}
             className="absolute inset-0 h-full w-full object-cover"
             loading="eager"
           />
         </AnimatePresence>
-        {/* Gradient-overlay voor leesbaarheid van de witte tekst over de foto, met een
-            vloeiende overgang naar de lichte calculator-sectie onderaan. */}
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-900/55 via-slate-900/40 to-slate-50" />
+        {/* Lichte gradient-overlay: alleen bovenin/onderin getint zodat de foto in het
+            midden goed zichtbaar blijft, met een vloeiende overgang naar de lichte
+            calculator-sectie onderaan. Leesbaarheid van de tekst komt van de aparte
+            vignet-laag hieronder, niet van deze vlakke tint. */}
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-900/35 via-slate-900/10 to-slate-50" />
+        {/* Radiale vignet, gecentreerd op de tekst, voor contrast zonder de hele foto te
+            verdonkeren. */}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(ellipse 70% 55% at 50% 42%, rgba(15,23,42,0.55) 0%, rgba(15,23,42,0) 70%)',
+          }}
+        />
       </motion.div>
 
       {/* Indicatordots voor de fotoreeks */}
