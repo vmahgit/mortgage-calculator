@@ -1,7 +1,7 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
-**Laatste commit**: `4780d78` — bekijk `git log --oneline` voor de volledige geschiedenis
-(30+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
+**Laatste commit**: `719dcc8` — bekijk `git log --oneline` voor de volledige geschiedenis
+(45+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
 
 Live: https://mortgage-calculator-three-drab.vercel.app *(let op: dit is de vorige
 versie — na nieuwe wijzigingen moet je zelf opnieuw `vercel --prod` draaien om de live
@@ -18,10 +18,15 @@ met de echte Nibud-woonquote-systematiek 2026, niet met een benaderde leenfactor
 - **Rekenkern** (`src/nibud2026.js`): officiële financieringslastpercentages (Tabel 1,
   Wijzigingsregeling hypothecair krediet 2026, Stcrt. 2025, 36471) als ankerpunten, met
   bilineaire interpolatie tussen inkomens- en toetsrenteschijven.
-- **Hoofdcomponent** (`src/MortgageCalculator.jsx`, ~3900 regels): alle calculator-state
-  en -logica. Bevat o.a. financieringsgat-berekening (meegenomen hypotheek + overwaarde +
-  eigen vermogen + restschuld-tekort bij onderwaarde), scenario-analyse, aflossingsgrafiek,
-  starters-maandlastenblok, instelbare aflossingsvrij-norm (30/50/100%).
+- **Hoofdcomponent** (`src/MortgageCalculator.jsx`, ~4900 regels): alle calculator-state
+  en -logica zit in `MortgageCalculatorForm`; de `export default MortgageCalculator` is
+  een dunne wrapper die alleen een `resetKey` bijhoudt en `MortgageCalculatorForm` met
+  die `key` rendert — "Opnieuw beginnen" hoogt de key op en remount't zo de hele vorm met
+  verse defaults, zonder elk los state-veld handmatig te moeten resetten. Bevat o.a.
+  financieringsgat-berekening (meegenomen hypotheek + overwaarde + eigen vermogen +
+  restschuld-tekort bij onderwaarde, schakelbaar via de meeneemregeling-toggle),
+  scenario-analyse, aflossingsgrafiek, starters-maandlastenblok, instelbare
+  aflossingsvrij-norm (30/50/100%).
 - **Woninggegevens-opzoeker** (`src/OptionalPropertyDataModule.jsx` +
   `src/housingData.js`): haalt bouwjaar, oppervlakte, perceelgrootte en historische
   WOZ-waarden (incl. cumulatieve waardeontwikkeling-grafiek en %-wijziging per jaar) op
@@ -58,13 +63,43 @@ met de echte Nibud-woonquote-systematiek 2026, niet met een benaderde leenfactor
   pensioeninkomen; de laagste `maxLoan` is bindend, toegepast vóór de
   energiebonus/LTV-cap zodat ook de doorstromer-bijleenruimte de toets volgt. Leeg
   pensioenveld → expliciete waarschuwing, geen toets op €0.
+- **Meeneemregeling schakelbaar** (`takeOverMortgage`, default aan): bij "nee, aflossen"
+  wordt `currentMortgage.portedDebt` 0 en vervalt het renterisico op de oude leningdelen.
+  Dit is de ene plek waar dat wordt bepaald; `combinedGapCalc`, `maxBudgetCalc`,
+  `scenarioAnalysis`, `additionalLoanCalc` en de aflossingsgrafiek lezen er allemaal uit.
+
+## Visuele/UX-polish (op verzoek, na de professionaliseringsronde)
+Acht kleine fases, elk als eigen commit met browser-verificatie (zie
+`git log --oneline` rond de commits ná "Alimentatie..."):
+1. Hero-overlay verlicht (was bijna ondoorzichtig) + Ken Burns-zoom op de villafoto's.
+2. Mobiele voortgangsbalk (horizontaal scrollbaar i.p.v. lelijk wrappen) + een fixed
+   bottom-bar met live resultaat-samenvatting zolang het echte paneel niet in beeld is
+   (`IntersectionObserver` op `sectie-resultaat`).
+3. `AdvancedFieldsToggle` verbergt zelden-gebruikte velden (13e maand, bonus,
+   alimentatie) achter "Meer opties", standaard dicht.
+4. `SectionCard`-accentkleuren per categorie + hover-lift op alle kaarten.
+5. `InfoTooltip` bij vaktermen (toetsinkomen, woonquote, AFM-toetsrente, ...). Let op:
+   een tooltip-popover (div) mag nooit in een `<p>` genest worden — geeft een
+   HTML-nesting/hydration-fout; gebruik `<span>` als wrapper.
+6. `InlineNote` voor puur informatieve toelichtingen; `StatusBadge` alleen nog voor
+   verdicts/acties.
+7. Micro-interacties: puls op `AnimatedEuro` bij >5% wijziging, fade-in op
+   `AmortizationChart`, een "vier het moment"-wiebel op de statuspil bij de overgang
+   van niet-haalbaar naar haalbaar.
+8. "Opnieuw beginnen"-knop (key-remount-patroon) + inklapbare "Bronnen & aannames".
 
 ## Herbruikbare bouwstenen (ken je deze, dan bouw je sneller mee)
-In `src/MortgageCalculator.jsx`: `SectionCard`, `StatusBadge` (status=
-"success"|"warning"|"error"|"info"), `AnimatedEuro` (count-up-getal), `Slider`,
-`CurrencyField`, `EnergyLabelPicker`, `AflossingsvrijMaxToggle`, `DonutChart`,
-`AmortizationChart`, `AdditionalLoanPartCard`, `calculateLoanPart()`, `formatEuro()`,
-`formatRate()`, `safeNum()`.
+In `src/MortgageCalculator.jsx`: `SectionCard` (met `accent`-prop: blue/amber/emerald/
+violet/indigo — gekleurde linkerrand + icoon-achtergrond per categorie), `StatusBadge`
+(status="success"|"warning"|"error"|"info", gereserveerd voor verdicts/acties),
+`InlineNote` (rustige grijze tekst + info-icoon, voor puur informatieve toelichtingen),
+`InfoTooltip` (klein (i)-icoon, klik/tik-tooltip, `variant="light"` voor donkere
+achtergronden), `AdvancedFieldsToggle` ("Meer opties"-inklapper, standaard dicht),
+`AnimatedEuro` (count-up-getal + puls bij >5% wijziging), `Slider` (met optionele
+`labelExtra`-node, bijv. voor een InfoTooltip), `CurrencyField`, `EnergyLabelPicker`,
+`AflossingsvrijMaxToggle`, `DonutChart`, `AmortizationChart` (fade-in bij laden),
+`AdditionalLoanPartCard`, `calculateLoanPart()`, `formatEuro()`, `formatRate()`,
+`safeNum()`.
 
 ## Belangrijke lessen / valkuilen (voor vervolgwerk)
 - **Scroll-reveal bug**: een `whileInView`-animatie met `amount: 0.2` op een element dat
@@ -74,6 +109,14 @@ In `src/MortgageCalculator.jsx`: `SectionCard`, `StatusBadge` (status=
   betrouwbaar; de straatnaam-zoeker (`?straat=`) werkt wel consistent.
 - **Twee gap-berekeningen** (`newHomeCalc` en `combinedGapCalc`) bestaan naast elkaar in
   de code — `combinedGapCalc` is de actief gebruikte/UI-tonende variant.
+- **div-in-p hydration-bug**: een framer-motion-popover (rendert een `<div>`) genest in
+  een `<p>`-label gaf een "cannot be a descendant of p"-hydration-fout — de browser
+  sluit `<p>` stilletjes af zodra hij een blok-element tegenkomt. Gebruik `<span>` als
+  wrapper voor labels die een popover/tooltip bevatten, nooit `<p>`.
+- **Console-logs uit de preview-tool kunnen stale zijn**: na een reload bleven oude
+  hydration-fouten in `preview_console_logs` staan alsof ze nog optraden. Controleer
+  bij twijfel de live DOM direct (bijv. `document.querySelectorAll('p').filter(p =>
+  p.querySelector('div'))`) i.p.v. alleen op de logregel te vertrouwen.
 - Elke wijziging deze hele sessie is als aparte git-commit vastgelegd. Werkwijze die
   steeds is aangehouden: (1) research bij officiële bron indien harde cijfers/regels
   nodig zijn, (2) implementeren, (3) verifiëren in de browser via de preview-tool
