@@ -24,6 +24,7 @@ import {
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
 import { getIncomeBasedMortgage } from './nibud2026';
+import { getTransferTaxRate, STARTER_EXEMPTION_PRICE_CAP } from './kostenKoper';
 
 const ENERGY_LABELS = ['G', 'F', 'E', 'D', 'C', 'B', 'A', 'A+', 'A++', 'A+++', 'A++++'];
 
@@ -50,7 +51,9 @@ const HRA_RATE = 0.3756;
 const EWF_RATE = 0.0035;
 const EWF_CAP = 1350000;
 const SCENARIO_PERCENTAGES = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
-const TRANSFER_TAX_RATE = 0.02;
+// Overdrachtsbelasting is niet langer een vast percentage maar wordt gedifferentieerd
+// bepaald (startersvrijstelling, zelfbewoning, niet-hoofdverblijf, nieuwbouw) via
+// getTransferTaxRate() in kostenKoper.js.
 const OTHER_PURCHASE_COSTS_RATE = 0.015;
 // AFM-toetsrente 2026 (elk kwartaal vastgesteld, tot nu toe steeds 5%). Verplicht te
 // gebruiken zodra de rentevastperiode van de nieuwe hypotheek korter is dan 10 jaar.
@@ -213,13 +216,6 @@ function calculateLoanPart(part, elapsedMonths, startDate) {
 function safeNum(value) {
   const n = parseFloat(value);
   return isNaN(n) || !isFinite(n) ? 0 : n;
-}
-
-// Eén gedeelde plek voor de kosten-koper-berekening (overdrachtsbelasting + overige
-// kosten koper), zodat de standaardflow en de overbruggingsflow nooit uit elkaar kunnen
-// lopen als deze percentages ooit wijzigen.
-function getKostenKoperCosts(price) {
-  return safeNum(price) * (TRANSFER_TAX_RATE + OTHER_PURCHASE_COSTS_RATE);
 }
 
 const currencyFormatter = new Intl.NumberFormat('nl-NL', {
@@ -1013,6 +1009,12 @@ export default function MortgageCalculator() {
   const [studyDebt2, setStudyDebt2] = useState('0');
   const [studyDebtRegime, setStudyDebtRegime] = useState('nieuw');
 
+  // Overdrachtsbelasting: gebruiksdoel van de beoogde woning en, per koper, of de
+  // startersvrijstelling nog beschikbaar is (niet eerder gebruikt).
+  const [propertyUsage, setPropertyUsage] = useState('zelfbewoning');
+  const [starterExemption1, setStarterExemption1] = useState(true);
+  const [starterExemption2, setStarterExemption2] = useState(true);
+
   const [showCurrentMortgage, setShowCurrentMortgage] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
@@ -1151,8 +1153,20 @@ export default function MortgageCalculator() {
 
     // B11: kosten koper nu consistent gebaseerd op de daadwerkelijke aanschafprijs (net
     // als verderop bij de financieringsgat-berekening), in plaats van op de maximale
-    // hypotheek zoals voorheen.
-    const ownMoney = getKostenKoperCosts(priceNum > 0 ? priceNum : maxMortgage);
+    // hypotheek zoals voorheen. De overdrachtsbelasting wordt gedifferentieerd bepaald
+    // (startersvrijstelling, gebruiksdoel, nieuwbouw); dit is de ene gedeelde bron
+    // waar ook newHomeCalc en doubleCostsCalc hun tarief uit halen.
+    const kostenKoperBasis = priceNum > 0 ? priceNum : maxMortgage;
+    const transferTaxInfo = getTransferTaxRate({
+      propertyUsage,
+      price: kostenKoperBasis,
+      buyers: [
+        { age: safeNum(age1), exemption: starterExemption1 },
+        { age: safeNum(age2), exemption: starterExemption2 },
+      ].filter((b) => b.age > 0),
+    });
+    const transferTax = kostenKoperBasis * transferTaxInfo.rate;
+    const ownMoney = transferTax + kostenKoperBasis * OTHER_PURCHASE_COSTS_RATE;
 
     const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly;
     const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
@@ -1182,6 +1196,8 @@ export default function MortgageCalculator() {
       incomeBasedMaxAtActualRate,
       cappedByPropertyValue,
       maxMortgage,
+      transferTaxInfo,
+      transferTax,
       ownMoney,
       isOverIndebted,
       showSustainability,
@@ -1207,6 +1223,9 @@ export default function MortgageCalculator() {
     ownCapital1,
     ownCapital2,
     purchasePrice,
+    propertyUsage,
+    starterExemption1,
+    starterExemption2,
   ]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
@@ -1306,7 +1325,8 @@ export default function MortgageCalculator() {
 
   const newHomeCalc = useMemo(() => {
     const price = safeNum(purchasePrice);
-    const transferTax = price * TRANSFER_TAX_RATE;
+    // Zelfde gedifferentieerde tarief als in calc, toegepast op de aanschafprijs.
+    const transferTax = price * calc.transferTaxInfo.rate;
     const otherCosts = price * OTHER_PURCHASE_COSTS_RATE;
     const nonFinanceableCosts = transferTax + otherCosts;
     const availableFunds = calc.totalOwnCapital + currentMortgage.usableOverwaarde;
@@ -1757,7 +1777,7 @@ export default function MortgageCalculator() {
     // beleggingen zijn, anders dan overwaarde, wél direct beschikbaar en mogen daarom ook
     // tijdens de overbruggingsperiode worden ingezet om de nieuwe hypotheek te verlagen. Dit
     // is expliciet schakelbaar voor een behoudender toets.
-    const kostenKoper = getKostenKoperCosts(price);
+    const kostenKoper = price * (calc.transferTaxInfo.rate + OTHER_PURCHASE_COSTS_RATE);
     const ownCapitalUsed = includeOwnCapitalInDoubleTest ? calc.totalOwnCapital : 0;
     const newMortgageAmount = Math.max(0, price + kostenKoper - ownCapitalUsed);
 
@@ -2282,7 +2302,10 @@ export default function MortgageCalculator() {
 
               <div className="space-y-4">
                 <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-blue-100">Geschat eigen geld (kosten koper, 3,5%)</p>
+                  <p className="text-sm text-blue-100">
+                    Geschat eigen geld (kosten koper, o.b.v. {calc.transferTaxInfo.shortLabel}{' '}
+                    overdrachtsbelasting)
+                  </p>
                   <p className="text-lg font-semibold">{formatEuro(calc.ownMoney)}</p>
                 </div>
                 <div className="flex items-center justify-between">
@@ -2402,6 +2425,90 @@ export default function MortgageCalculator() {
                 onChange={setEnergyLabel}
               />
             </div>
+
+            {/* Overdrachtsbelasting: gebruiksdoel bepaalt het tarief (0/1/2/8% of n.v.t.). */}
+            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Type aankoop (overdrachtsbelasting)
+                </span>
+                <div className="inline-flex rounded-lg border border-slate-100 bg-white p-1">
+                  {[
+                    { key: 'zelfbewoning', label: 'Bestaande bouw' },
+                    { key: 'nieuwbouw', label: 'Nieuwbouw' },
+                    { key: 'nietHoofdverblijf', label: 'Niet-hoofdverblijf' },
+                  ].map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setPropertyUsage(option.key)}
+                      className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        propertyUsage === option.key
+                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {propertyUsage === 'zelfbewoning' && (
+                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:gap-6">
+                  {[
+                    {
+                      label: 'Partner 1',
+                      age: age1,
+                      checked: starterExemption1,
+                      onChange: setStarterExemption1,
+                      id: 'starterExemption1',
+                    },
+                    {
+                      label: 'Partner 2',
+                      age: age2,
+                      checked: starterExemption2,
+                      onChange: setStarterExemption2,
+                      id: 'starterExemption2',
+                    },
+                  ]
+                    .filter((buyer) => safeNum(buyer.age) > 0)
+                    .map((buyer) => (
+                      <label
+                        key={buyer.id}
+                        htmlFor={buyer.id}
+                        className="flex cursor-pointer items-center gap-2 text-xs text-slate-600"
+                      >
+                        <input
+                          id={buyer.id}
+                          type="checkbox"
+                          checked={buyer.checked}
+                          onChange={(e) => buyer.onChange(e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        {buyer.label} ({buyer.age} jr): startersvrijstelling nog niet gebruikt
+                      </label>
+                    ))}
+                </div>
+              )}
+
+              <StatusBadge status={calc.transferTaxInfo.rate === 0 ? 'success' : 'info'}>
+                Overdrachtsbelasting: {calc.transferTaxInfo.label}
+                {safeNum(purchasePrice) > 0 && calc.transferTaxInfo.rate > 0 && (
+                  <> — {formatEuro(safeNum(purchasePrice) * calc.transferTaxInfo.rate)}</>
+                )}
+                . {calc.transferTaxInfo.explanation}
+              </StatusBadge>
+              {propertyUsage === 'zelfbewoning' &&
+                safeNum(purchasePrice) > STARTER_EXEMPTION_PRICE_CAP &&
+                (safeNum(age1) < 35 || safeNum(age2) < 35) && (
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    De startersvrijstelling vervalt hier volledig omdat de woningwaarde boven de
+                    grens van {formatEuro(STARTER_EXEMPTION_PRICE_CAP)} (2026) ligt.
+                  </p>
+                )}
+            </div>
+
             <AnimatePresence>
               {calc.toetsrenteApplies && (
                 <motion.div
@@ -3012,7 +3119,9 @@ export default function MortgageCalculator() {
                           </p>
                         </div>
                         <div>
-                          <span className="text-xs text-slate-400">Overdrachtsbelasting (2%)</span>
+                          <span className="text-xs text-slate-400">
+                            Overdrachtsbelasting ({calc.transferTaxInfo.shortLabel})
+                          </span>
                           <p className="text-sm font-semibold text-slate-800">
                             {formatEuro(newHomeCalc.transferTax)}
                           </p>
