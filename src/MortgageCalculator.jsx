@@ -240,10 +240,12 @@ function formatEuro(amount) {
 // systeeminstelling "verminderde beweging" door dan direct de eindwaarde te tonen.
 function AnimatedEuro({ value, className }) {
   const [display, setDisplay] = useState(() => safeNum(value));
+  const [pulsing, setPulsing] = useState(false);
   const prev = useRef(safeNum(value));
 
   useEffect(() => {
     const target = safeNum(value);
+    const from = prev.current;
     const prefersReduced =
       typeof window !== 'undefined' &&
       window.matchMedia &&
@@ -252,19 +254,43 @@ function AnimatedEuro({ value, className }) {
     if (prefersReduced) {
       prev.current = target;
       setDisplay(target);
-      return;
+      return undefined;
     }
 
-    const controls = animate(prev.current, target, {
+    // Bij een significante wijziging (>5%) een korte puls op het getal, zodat direct
+    // duidelijk is dat een aanpassing elders echt effect had, niet alleen bij kleine
+    // afrondingsverschillen.
+    const relativeChange = from !== 0 ? Math.abs((target - from) / from) : target !== 0 ? 1 : 0;
+    let pulseTimeout;
+    if (relativeChange > 0.05) {
+      setPulsing(true);
+      pulseTimeout = setTimeout(() => setPulsing(false), 600);
+    }
+
+    const controls = animate(from, target, {
       duration: 0.8,
       ease: [0.16, 1, 0.3, 1],
       onUpdate: (v) => setDisplay(v),
     });
     prev.current = target;
-    return () => controls.stop();
+    return () => {
+      controls.stop();
+      clearTimeout(pulseTimeout);
+    };
   }, [value]);
 
-  return <span className={className}>{formatEuro(display)}</span>;
+  // De buitenste wrapper is bewust altijd inline-block: een schaal-transform werkt niet op
+  // een gewoon inline element, en dit laat de meegegeven className (die soms `block` bevat
+  // voor de lay-out) op het binnenste element ongemoeid.
+  return (
+    <motion.span
+      className="inline-block"
+      animate={pulsing ? { scale: [1, 1.08, 1] } : { scale: 1 }}
+      transition={{ duration: 0.6, ease: 'easeOut' }}
+    >
+      <span className={className}>{formatEuro(display)}</span>
+    </motion.span>
+  );
 }
 
 function formatRate(rate) {
@@ -994,8 +1020,20 @@ function AmortizationChart({ data }) {
           </g>
         );
       })}
-      <path d={layer1Path} fill="#60a5fa" opacity="0.85" />
-      <path d={layer2Path} fill="#6366f1" opacity="0.85" />
+      <motion.path
+        d={layer1Path}
+        fill="#60a5fa"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 0.85 }}
+        transition={{ duration: 0.7, ease: 'easeOut' }}
+      />
+      <motion.path
+        d={layer2Path}
+        fill="#6366f1"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 0.85 }}
+        transition={{ duration: 0.7, delay: 0.1, ease: 'easeOut' }}
+      />
       {gridYears.map((yr) => (
         <text
           key={yr}
@@ -2303,6 +2341,26 @@ export default function MortgageCalculator() {
   }, []);
   const mobileSummaryValue = hasExistingHome ? maxBudgetCalc.maxBudget : calc.maxMortgage;
 
+  // Klein "vier het moment"-effect: zodra de situatie omslaat van niet-haalbaar naar
+  // haalbaar (niet bij elke wijziging, alleen bij die ene overgang) een korte, speelse
+  // wiebel/schaal-animatie op de statuspil in de sidebar, in plaats van dat de kleur
+  // stilletjes van rood/amber naar groen verspringt.
+  const isAffordableNow = hasExistingHome
+    ? combinedGapCalc.withinCapacity
+    : !calc.isOverIndebted && !calc.cappedByPropertyValue;
+  const [celebrate, setCelebrate] = useState(false);
+  const wasAffordable = useRef(isAffordableNow);
+  useEffect(() => {
+    if (isAffordableNow && !wasAffordable.current) {
+      setCelebrate(true);
+      const t = setTimeout(() => setCelebrate(false), 800);
+      wasAffordable.current = isAffordableNow;
+      return () => clearTimeout(t);
+    }
+    wasAffordable.current = isAffordableNow;
+    return undefined;
+  }, [isAffordableNow]);
+
   return (
     <div className="w-full px-4 py-10 pb-24 sm:px-6 lg:px-10 lg:pb-10">
       <div className="mx-auto max-w-6xl">
@@ -2835,7 +2893,13 @@ export default function MortgageCalculator() {
                 <h2 className="text-base font-semibold">Resultaat</h2>
               </div>
 
-              <div
+              <motion.div
+                animate={
+                  celebrate
+                    ? { scale: [1, 1.18, 0.94, 1.06, 1], rotate: [0, -6, 6, -3, 0] }
+                    : { scale: 1, rotate: 0 }
+                }
+                transition={{ duration: 0.7, ease: 'easeOut' }}
                 className={`mb-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
                   hasExistingHome
                     ? combinedGapCalc.withinCapacity
@@ -2870,7 +2934,7 @@ export default function MortgageCalculator() {
                   : calc.cappedByPropertyValue
                   ? 'Begrensd door aanschafprijs'
                   : 'Haalbaar op basis van inkomen'}
-              </div>
+              </motion.div>
 
               <div className="space-y-1">
                 <p className="text-sm text-blue-100">
