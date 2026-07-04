@@ -36,6 +36,24 @@ const WOONQUOTE_TABLE = {
   6.0: [22.7, 26.4, 26.4, 26.4, 26.4, 26.4, 27.0, 28.9, 29.3, 29.7, 30.0, 30.8],
 };
 
+// Tabel 2 — financieringslastpercentages voor consumenten die de AOW-leeftijd al
+// hebben bereikt (zelfde Stcrt. 2025, 36471). Gebruikt voor het pensioenscenario van
+// de AOW-toets: wie binnen 10 jaar de AOW-leeftijd bereikt, wordt óók getoetst op het
+// verwachte pensioeninkomen, en die toekomstige situatie valt onder deze tabel.
+// De tabel start bij €29.000 (verwachte bruto AOW-uitkering per januari 2026) en
+// loopt tot €110.000; daarbuiten geldt de dichtstbijzijnde rand (clamp), zoals ook
+// bij Tabel 1. De AOW-quotes liggen hoger dan die van Tabel 1 omdat gepensioneerden
+// lagere belasting- en premiedruk hebben.
+const AOW_INCOME_ANCHORS = [29000, 30000, 35000, 40000, 45000, 50000, 60000, 70000, 80000, 90000, 100000, 110000];
+
+const AOW_WOONQUOTE_TABLE = {
+  1.5: [18.5, 19.2, 21.6, 22.2, 22.8, 23.4, 25.5, 26.2, 27.1, 27.7, 28.0, 28.4],
+  3.0: [19.7, 20.8, 23.9, 25.2, 25.9, 26.7, 29.9, 31.3, 31.7, 32.1, 32.3, 32.5],
+  4.0: [20.4, 21.5, 25.1, 26.9, 27.7, 28.6, 32.1, 34.3, 34.8, 34.8, 34.9, 35.1],
+  5.0: [20.9, 22.1, 26.1, 28.2, 29.4, 30.2, 34.1, 36.9, 37.3, 37.3, 37.3, 37.5],
+  6.0: [21.3, 22.5, 26.9, 29.3, 30.8, 31.7, 35.7, 38.9, 39.5, 39.5, 39.5, 39.6],
+};
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -57,14 +75,15 @@ function interpolate(anchors, values, x) {
 // Woonquote (als fractie, bijv. 0,274) bij een gegeven toetsinkomen en toetsrente.
 // Bilineaire interpolatie: eerst per rente-kolom over inkomen, dan tussen de twee
 // omliggende rente-kolommen. Inkomen boven de hoogste schijf gebruikt de hoogste
-// woonquote (zoals gebruikelijk bij deze tabel).
-export function getWoonquote(toetsinkomen, toetsrente) {
+// woonquote (zoals gebruikelijk bij deze tabel). Met { aow: true } wordt Tabel 2
+// (vanaf AOW-leeftijd) gebruikt in plaats van Tabel 1.
+export function getWoonquote(toetsinkomen, toetsrente, { aow = false } = {}) {
   const rate = clamp(toetsrente, RATE_ANCHORS[0], RATE_ANCHORS[RATE_ANCHORS.length - 1]);
+  const anchors = aow ? AOW_INCOME_ANCHORS : INCOME_ANCHORS;
+  const table = aow ? AOW_WOONQUOTE_TABLE : WOONQUOTE_TABLE;
 
   // Woonquote per rente-anker, op het gevraagde inkomen.
-  const perRate = RATE_ANCHORS.map((r) =>
-    interpolate(INCOME_ANCHORS, WOONQUOTE_TABLE[r], toetsinkomen)
-  );
+  const perRate = RATE_ANCHORS.map((r) => interpolate(anchors, table[r], toetsinkomen));
 
   // Interpoleer tussen de rente-ankers.
   const pct = interpolate(RATE_ANCHORS, perRate, rate);
@@ -84,9 +103,15 @@ export function getAnnuityFactor(ratePct) {
 // - toetsrente: de te toetsen rente (AFM-toetsrente bij rentevast < 10 jaar, anders de
 //   werkelijke rente).
 // - monthlyDebtObligations: maandlast van bestaande schulden (overige schulden, studie).
-export function getIncomeBasedMortgage(combinedIncome, toetsrente, monthlyDebtObligations = 0) {
+// - options.aow: true voor het scenario vanaf AOW-leeftijd (Tabel 2 in plaats van Tabel 1).
+export function getIncomeBasedMortgage(
+  combinedIncome,
+  toetsrente,
+  monthlyDebtObligations = 0,
+  { aow = false } = {}
+) {
   const income = Math.max(0, combinedIncome);
-  const woonquote = getWoonquote(income, toetsrente);
+  const woonquote = getWoonquote(income, toetsrente, { aow });
   const maxWoonlastMonthly = (woonquote * income) / 12;
   const availableMonthly = Math.max(0, maxWoonlastMonthly - Math.max(0, monthlyDebtObligations));
   const annuityFactor = getAnnuityFactor(toetsrente);
