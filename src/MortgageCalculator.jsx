@@ -1106,6 +1106,19 @@ function StatusBadge({ status, children, className = '' }) {
   );
 }
 
+// Rustige, niet-gekleurde variant voor puur informatieve toelichtingen (waarom een getal
+// afwijkt, achtergrond bij een berekening) die geen actie van de gebruiker vragen. Een
+// StatusBadge trekt de aandacht met kleur; deze variant houdt dat gereserveerd voor
+// meldingen die er echt toe doen (verdicts, waarschuwingen die actie vragen).
+function InlineNote({ children, className = '' }) {
+  return (
+    <p className={`mt-3 flex items-start gap-1.5 text-xs text-slate-400 ${className}`}>
+      <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-slate-300" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
 function DonutChart({ interestValue, principalValue, centerLabel, centerValue }) {
   const total = Math.max(0, interestValue) + Math.max(0, principalValue);
   const radius = 70;
@@ -2927,23 +2940,23 @@ export default function MortgageCalculator() {
                   <p className="text-sm font-medium">{formatEuro(calc.totalOwnCapital)}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-1.5 text-sm text-blue-100">
+                  <span className="flex items-center gap-1.5 text-sm text-blue-100">
                     Gezamenlijk toetsinkomen
                     <InfoTooltip
                       variant="light"
                       text="Het inkomen waarmee de leencapaciteit wordt getoetst: bruto inkomen plus structureel/gemiddeld extra inkomen, minus betaalde partneralimentatie. Niet per se hetzelfde als uw bruto jaarinkomen."
                     />
-                  </p>
+                  </span>
                   <p className="text-sm font-medium">{formatEuro(calc.combinedIncome)}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-1.5 text-sm text-blue-100">
+                  <span className="flex items-center gap-1.5 text-sm text-blue-100">
                     Woonquote (Nibud 2026)
                     <InfoTooltip
                       variant="light"
                       text="Het percentage van uw toetsinkomen dat u volgens de officiële Nibud-tabel maximaal aan woonlasten mag besteden. Hoger inkomen en hogere toetsrente geven doorgaans een hogere woonquote."
                     />
-                  </p>
+                  </span>
                   <p className="text-sm font-medium">
                     {(calc.woonquote * 100).toFixed(1).replace('.', ',')}%
                   </p>
@@ -2953,13 +2966,13 @@ export default function MortgageCalculator() {
                   <p className="text-sm font-medium">{formatEuro(calc.maxWoonlastMonthly)}</p>
                 </div>
                 <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-1.5 text-sm text-blue-100">
+                  <span className="flex items-center gap-1.5 text-sm text-blue-100">
                     Effectieve leenfactor
                     <InfoTooltip
                       variant="light"
                       text="Uw maximale hypotheek gedeeld door uw toetsinkomen, puur ter illustratie. De daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor."
                     />
-                  </p>
+                  </span>
                   <p className="text-sm font-medium">
                     {calc.effectiveFactor.toFixed(1).replace('.', ',')}x
                   </p>
@@ -3167,11 +3180,11 @@ export default function MortgageCalculator() {
                   transition={{ duration: 0.2 }}
                   className="mt-5"
                 >
-                  <StatusBadge status="warning">
+                  <InlineNote className="mt-0">
                     Bij een rentevastperiode korter dan 10 jaar moet wettelijk met de
                     AFM-toetsrente van {formatRate(TOETSRENTE)} worden getoetst in plaats van de
                     daadwerkelijke rente. Uw leencapaciteit is hierop gebaseerd.
-                  </StatusBadge>
+                  </InlineNote>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -3765,11 +3778,10 @@ export default function MortgageCalculator() {
                           transition={{ duration: 0.25, ease: 'easeOut' }}
                           className="mt-5"
                         >
-                          <StatusBadge status="info">
-                            Let op: Geen verplichte aflossing, maar ook geen
-                            hypotheekrenteaftrek als dit deel na 2013 is afgesloten (tenzij
-                            overgangsrecht).
-                          </StatusBadge>
+                          <InlineNote className="mt-0">
+                            Geen verplichte aflossing, maar ook geen hypotheekrenteaftrek als dit
+                            deel na 2013 is afgesloten (tenzij overgangsrecht).
+                          </InlineNote>
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -3890,18 +3902,18 @@ export default function MortgageCalculator() {
                           transition={{ duration: 0.25, ease: 'easeOut' }}
                           className="mt-4"
                         >
-                          <StatusBadge status="warning">
-                            Let op: een deel van uw mee te nemen hypotheek heeft een
-                            rentevastperiode korter dan 10 jaar tegen een rente onder de
-                            AFM-toetsrente van {formatRate(TOETSRENTE)}. Voor de leencapaciteit
-                            wordt dit deel getoetst tegen de toetsrente in plaats van de
-                            daadwerkelijke, lagere rente. Dit verlaagt uw leencapaciteit met{' '}
+                          <InlineNote className="mt-0">
+                            Een deel van uw mee te nemen hypotheek heeft een rentevastperiode
+                            korter dan 10 jaar tegen een rente onder de AFM-toetsrente van{' '}
+                            {formatRate(TOETSRENTE)}. Voor de leencapaciteit wordt dit deel
+                            getoetst tegen de toetsrente in plaats van de daadwerkelijke, lagere
+                            rente. Dit verlaagt uw leencapaciteit met{' '}
                             {formatEuro(currentMortgage.rateRiskCapacityHaircut)}, van{' '}
                             {formatEuro(calc.incomeBasedMax)} naar een werkelijke leencapaciteit
                             van {formatEuro(currentMortgage.effectiveMaxMortgage)}. Dit werkt
                             door in uw bijleenruimte, het financieringsgat en de resterende
                             aanvullende hypotheek hieronder.
-                          </StatusBadge>
+                          </InlineNote>
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -4313,12 +4325,12 @@ export default function MortgageCalculator() {
                             transition={{ duration: 0.25, ease: 'easeOut' }}
                             className="mt-4"
                           >
-                            <StatusBadge status="warning">
+                            <InlineNote className="mt-0">
                               Voor de leencapaciteitstoets hieronder is uw effectieve capaciteit
                               verlaagd met {formatEuro(additionalLoanCalc.rateRiskHaircut)}{' '}
                               vanwege een rentevastperiode korter dan 10 jaar op één of meer
                               nieuwe leningdelen.
-                            </StatusBadge>
+                            </InlineNote>
                           </motion.div>
                         )}
                       </AnimatePresence>
