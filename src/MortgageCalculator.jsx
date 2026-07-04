@@ -1147,6 +1147,14 @@ export default function MortgageCalculator() {
   const [incomeHistory1, setIncomeHistory1] = useState({ y1: '', y2: '', y3: '' });
   const [incomeHistory2, setIncomeHistory2] = useState({ y1: '', y2: '', y3: '' });
 
+  // Structureel inkomen (vaste 13e maand/eindejaarsuitkering, telt volledig mee) en
+  // incidenteel inkomen (bonus/overwerk, alleen als gemiddelde over drie jaar meetellen
+  // conform de systematiek — hier als één bedrag per jaar ingevoerd).
+  const [thirteenthMonth1, setThirteenthMonth1] = useState('0');
+  const [thirteenthMonth2, setThirteenthMonth2] = useState('0');
+  const [avgBonus1, setAvgBonus1] = useState('0');
+  const [avgBonus2, setAvgBonus2] = useState('0');
+
   const [showCurrentMortgage, setShowCurrentMortgage] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
@@ -1254,12 +1262,16 @@ export default function MortgageCalculator() {
       incomeType: incomeType1,
       income: income1,
       history: incomeHistory1,
+      thirteenthMonth: thirteenthMonth1,
+      avgBonus: avgBonus1,
       alimonyMonthly: partnerAlimony1,
     });
     const toets2 = getToetsinkomen({
       incomeType: incomeType2,
       income: income2,
       history: incomeHistory2,
+      thirteenthMonth: thirteenthMonth2,
+      avgBonus: avgBonus2,
       alimonyMonthly: partnerAlimony2,
     });
     const combinedIncome = toets1.toetsinkomen + toets2.toetsinkomen;
@@ -1480,6 +1492,10 @@ export default function MortgageCalculator() {
     incomeType2,
     incomeHistory1,
     incomeHistory2,
+    thirteenthMonth1,
+    thirteenthMonth2,
+    avgBonus1,
+    avgBonus2,
   ]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
@@ -2414,6 +2430,24 @@ export default function MortgageCalculator() {
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  <CurrencyField
+                    id="thirteenthMonth1"
+                    label="Vaste 13e maand / eindejaarsuitkering p/j"
+                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                    value={thirteenthMonth1}
+                    onChange={setThirteenthMonth1}
+                    placeholder="0"
+                    hint="Structureel, telt volledig mee"
+                  />
+                  <CurrencyField
+                    id="avgBonus1"
+                    label="Gem. bonus/overwerk laatste 3 jaar p/j"
+                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                    value={avgBonus1}
+                    onChange={setAvgBonus1}
+                    placeholder="0"
+                    hint="Incidenteel, telt mee als gemiddelde"
+                  />
                   <ToetsinkomenSummary toets={calc.toets1} incomeType={incomeType1} />
                 </PartnerSubCard>
                 <PartnerSubCard label="Partner 2">
@@ -2480,6 +2514,24 @@ export default function MortgageCalculator() {
                       </motion.div>
                     )}
                   </AnimatePresence>
+                  <CurrencyField
+                    id="thirteenthMonth2"
+                    label="Vaste 13e maand / eindejaarsuitkering p/j"
+                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                    value={thirteenthMonth2}
+                    onChange={setThirteenthMonth2}
+                    placeholder="0"
+                    hint="Structureel, telt volledig mee"
+                  />
+                  <CurrencyField
+                    id="avgBonus2"
+                    label="Gem. bonus/overwerk laatste 3 jaar p/j"
+                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                    value={avgBonus2}
+                    onChange={setAvgBonus2}
+                    placeholder="0"
+                    hint="Incidenteel, telt mee als gemiddelde"
+                  />
                   <ToetsinkomenSummary toets={calc.toets2} incomeType={incomeType2} />
                 </PartnerSubCard>
               </div>
