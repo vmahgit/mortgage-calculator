@@ -623,6 +623,43 @@ function ToetsinkomenSummary({ toets, incomeType }) {
   );
 }
 
+// Verbergt minder vaak gebruikte velden (13e maand, bonus, alimentatie) achter een
+// "Meer opties"-toggle, dicht bij het veld gehouden i.p.v. verzameld op app-niveau: elk
+// gebruik heeft zijn eigen open/dicht-status. Standaard dicht, zodat het merendeel van de
+// gebruikers (voor wie deze velden op 0 blijven staan) een rustiger formulier ziet.
+function AdvancedFieldsToggle({ children, label = 'Meer opties' }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex items-center gap-1 text-xs font-medium text-blue-600 transition-colors duration-200 hover:text-blue-700"
+      >
+        {open ? (
+          <ChevronUp className="h-3.5 w-3.5" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5" />
+        )}
+        {open ? 'Minder opties' : label}
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="space-y-4 pt-4">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 function LoanPartCard({ part, index, onChange, onRemove, canRemove, elapsedMonths }) {
   const fixedPeriod = getRemainingFixedPeriod(part.originalFixedYears, elapsedMonths);
   const testRate = getTestRate(part.rate, fixedPeriod.fractionalYears);
@@ -2478,24 +2515,26 @@ export default function MortgageCalculator() {
                       </motion.div>
                     )}
                   </AnimatePresence>
-                  <CurrencyField
-                    id="thirteenthMonth1"
-                    label="Vaste 13e maand / eindejaarsuitkering p/j"
-                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                    value={thirteenthMonth1}
-                    onChange={setThirteenthMonth1}
-                    placeholder="0"
-                    hint="Structureel, telt volledig mee"
-                  />
-                  <CurrencyField
-                    id="avgBonus1"
-                    label="Gem. bonus/overwerk laatste 3 jaar p/j"
-                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                    value={avgBonus1}
-                    onChange={setAvgBonus1}
-                    placeholder="0"
-                    hint="Incidenteel, telt mee als gemiddelde"
-                  />
+                  <AdvancedFieldsToggle label="Meer opties (13e maand, bonus)">
+                    <CurrencyField
+                      id="thirteenthMonth1"
+                      label="Vaste 13e maand / eindejaarsuitkering p/j"
+                      icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                      value={thirteenthMonth1}
+                      onChange={setThirteenthMonth1}
+                      placeholder="0"
+                      hint="Structureel, telt volledig mee"
+                    />
+                    <CurrencyField
+                      id="avgBonus1"
+                      label="Gem. bonus/overwerk laatste 3 jaar p/j"
+                      icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                      value={avgBonus1}
+                      onChange={setAvgBonus1}
+                      placeholder="0"
+                      hint="Incidenteel, telt mee als gemiddelde"
+                    />
+                  </AdvancedFieldsToggle>
                   <ToetsinkomenSummary toets={calc.toets1} incomeType={incomeType1} />
                 </PartnerSubCard>
                 <PartnerSubCard label="Partner 2">
@@ -2562,24 +2601,26 @@ export default function MortgageCalculator() {
                       </motion.div>
                     )}
                   </AnimatePresence>
-                  <CurrencyField
-                    id="thirteenthMonth2"
-                    label="Vaste 13e maand / eindejaarsuitkering p/j"
-                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                    value={thirteenthMonth2}
-                    onChange={setThirteenthMonth2}
-                    placeholder="0"
-                    hint="Structureel, telt volledig mee"
-                  />
-                  <CurrencyField
-                    id="avgBonus2"
-                    label="Gem. bonus/overwerk laatste 3 jaar p/j"
-                    icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                    value={avgBonus2}
-                    onChange={setAvgBonus2}
-                    placeholder="0"
-                    hint="Incidenteel, telt mee als gemiddelde"
-                  />
+                  <AdvancedFieldsToggle label="Meer opties (13e maand, bonus)">
+                    <CurrencyField
+                      id="thirteenthMonth2"
+                      label="Vaste 13e maand / eindejaarsuitkering p/j"
+                      icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                      value={thirteenthMonth2}
+                      onChange={setThirteenthMonth2}
+                      placeholder="0"
+                      hint="Structureel, telt volledig mee"
+                    />
+                    <CurrencyField
+                      id="avgBonus2"
+                      label="Gem. bonus/overwerk laatste 3 jaar p/j"
+                      icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                      value={avgBonus2}
+                      onChange={setAvgBonus2}
+                      placeholder="0"
+                      hint="Incidenteel, telt mee als gemiddelde"
+                    />
+                  </AdvancedFieldsToggle>
                   <ToetsinkomenSummary toets={calc.toets2} incomeType={incomeType2} />
                 </PartnerSubCard>
               </div>
@@ -2621,14 +2662,16 @@ export default function MortgageCalculator() {
                     placeholder="0"
                     hint="Totale openstaande schuld, niet het maandbedrag"
                   />
-                  <CurrencyField
-                    id="partnerAlimony1"
-                    label="Betaalde partneralimentatie p/mnd"
-                    icon={<User className="h-3.5 w-3.5 text-slate-400" />}
-                    value={partnerAlimony1}
-                    onChange={setPartnerAlimony1}
-                    placeholder="0"
-                  />
+                  <AdvancedFieldsToggle label="Meer opties (alimentatie)">
+                    <CurrencyField
+                      id="partnerAlimony1"
+                      label="Betaalde partneralimentatie p/mnd"
+                      icon={<User className="h-3.5 w-3.5 text-slate-400" />}
+                      value={partnerAlimony1}
+                      onChange={setPartnerAlimony1}
+                      placeholder="0"
+                    />
+                  </AdvancedFieldsToggle>
                 </PartnerSubCard>
                 <PartnerSubCard label="Partner 2">
                   <CurrencyField
@@ -2648,14 +2691,16 @@ export default function MortgageCalculator() {
                     placeholder="0"
                     hint="Totale openstaande schuld, niet het maandbedrag"
                   />
-                  <CurrencyField
-                    id="partnerAlimony2"
-                    label="Betaalde partneralimentatie p/mnd"
-                    icon={<User className="h-3.5 w-3.5 text-slate-400" />}
-                    value={partnerAlimony2}
-                    onChange={setPartnerAlimony2}
-                    placeholder="0"
-                  />
+                  <AdvancedFieldsToggle label="Meer opties (alimentatie)">
+                    <CurrencyField
+                      id="partnerAlimony2"
+                      label="Betaalde partneralimentatie p/mnd"
+                      icon={<User className="h-3.5 w-3.5 text-slate-400" />}
+                      value={partnerAlimony2}
+                      onChange={setPartnerAlimony2}
+                      placeholder="0"
+                    />
+                  </AdvancedFieldsToggle>
                 </PartnerSubCard>
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
