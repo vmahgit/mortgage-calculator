@@ -318,7 +318,7 @@ function Slider({ id, label, icon, value, min, max, step, onChange, formatValue,
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="w-full h-2 rounded-lg appearance-none cursor-pointer bg-slate-200 accent-blue-600 transition-all duration-200"
+        className="w-full h-3 rounded-lg appearance-none cursor-pointer bg-slate-200 accent-blue-600 transition-all duration-200 touch-none"
       />
       {hint && <p className="text-xs text-slate-400">{hint}</p>}
     </div>
@@ -361,7 +361,7 @@ function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hi
           value={value}
           onChange={handleChange}
           placeholder={placeholder}
-          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
         />
         {suffix && (
           <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
@@ -419,7 +419,7 @@ function CurrencyField({ id, label, icon, value, onChange, placeholder, hint }) 
           onBlur={() => setIsFocused(false)}
           onChange={(e) => onChange(parseDisplayInput(e.target.value))}
           placeholder={placeholder}
-          className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-7 pr-3 text-sm text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+          className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-7 pr-3 text-base text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
         />
       </div>
       {hint && <p className="text-xs text-slate-400">{hint}</p>}
@@ -504,7 +504,7 @@ function SelectField({ id, label, icon, value, onChange, options }) {
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
       >
         {options.map((opt) => (
           <option key={opt} value={opt}>
@@ -528,7 +528,7 @@ function DateField({ id, label, icon, value, onChange, hint }) {
         type="date"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
       />
       {hint && <p className="text-xs text-slate-400">{hint}</p>}
     </div>
@@ -587,7 +587,7 @@ function IncomeTypeSelect({ id, value, onChange }) {
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
       >
         {Object.entries(INCOME_TYPES).map(([key, label]) => (
           <option key={key} value={key}>
@@ -1231,7 +1231,7 @@ function AflossingsvrijMaxToggle({ value, onChange }) {
           key={pct}
           type="button"
           onClick={() => onChange(pct)}
-          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
             value === pct
               ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
               : 'text-slate-500 hover:text-slate-700'
@@ -1245,8 +1245,8 @@ function AflossingsvrijMaxToggle({ value, onChange }) {
 }
 
 function MortgageCalculatorForm({ onReset }) {
-  const [income1, setIncome1] = useState(115000);
-  const [income2, setIncome2] = useState(115000);
+  const [income1, setIncome1] = useState(100000);
+  const [income2, setIncome2] = useState(100000);
   const [age1, setAge1] = useState('35');
   const [age2, setAge2] = useState('34');
   const [ownCapital1, setOwnCapital1] = useState(0);
@@ -1254,7 +1254,10 @@ function MortgageCalculatorForm({ onReset }) {
   const [rate, setRate] = useState(4.0);
   const [fixedRatePeriod, setFixedRatePeriod] = useState(10);
   const [energyLabel, setEnergyLabel] = useState('A');
-  const [purchasePrice, setPurchasePrice] = useState(1300000);
+  const [purchasePrice, setPurchasePrice] = useState(100000);
+  // Standaard twee aanvragers; schakelbaar naar één aanvrager (Partner 2 telt dan
+  // nergens in de berekening mee, ongeacht wat er nog in die velden staat).
+  const [hasPartner2, setHasPartner2] = useState(true);
   const [debt1, setDebt1] = useState('0');
   const [debt2, setDebt2] = useState('0');
   const [studyDebt1, setStudyDebt1] = useState('0');
@@ -1426,14 +1429,19 @@ function MortgageCalculatorForm({ onReset }) {
       avgBonus: avgBonus1,
       alimonyMonthly: partnerAlimony1,
     });
-    const toets2 = getToetsinkomen({
-      incomeType: incomeType2,
-      income: income2,
-      history: incomeHistory2,
-      thirteenthMonth: thirteenthMonth2,
-      avgBonus: avgBonus2,
-      alimonyMonthly: partnerAlimony2,
-    });
+    // Bij één aanvrager telt Partner 2 nergens mee, ongeacht wat er nog in die velden
+    // staat (ze blijven zichtbaar-onzichtbaar bewaard voor als de gebruiker weer twee
+    // aanvragers kiest).
+    const toets2 = hasPartner2
+      ? getToetsinkomen({
+          incomeType: incomeType2,
+          income: income2,
+          history: incomeHistory2,
+          thirteenthMonth: thirteenthMonth2,
+          avgBonus: avgBonus2,
+          alimonyMonthly: partnerAlimony2,
+        })
+      : getToetsinkomen({ incomeType: 'vast', income: 0 });
     const combinedIncome = toets1.toetsinkomen + toets2.toetsinkomen;
 
     // A6: bij een rentevastperiode korter dan 10 jaar moet wettelijk met de (hogere)
@@ -1447,9 +1455,10 @@ function MortgageCalculatorForm({ onReset }) {
     // voor overige schulden). Studieschuld wordt sinds 2024 berekend op basis van de
     // werkelijke DUO-terugbetaalregeling (rente en aflostermijn van het gekozen stelsel),
     // toegepast op de restschuld.
-    const otherDebtMonthly = (safeNum(debt1) + safeNum(debt2)) * OTHER_DEBT_MONTHLY_WEIGHT;
+    const otherDebtMonthly =
+      (safeNum(debt1) + (hasPartner2 ? safeNum(debt2) : 0)) * OTHER_DEBT_MONTHLY_WEIGHT;
     const studyDebtMonthly = getStudyDebtMonthlyBurden(
-      safeNum(studyDebt1) + safeNum(studyDebt2),
+      safeNum(studyDebt1) + (hasPartner2 ? safeNum(studyDebt2) : 0),
       studyDebtRegime
     );
     const monthlyDebt = otherDebtMonthly + studyDebtMonthly;
@@ -1471,7 +1480,7 @@ function MortgageCalculatorForm({ onReset }) {
     // LTV-cap — zodat ook alle afgeleide berekeningen (doorstromer-bijleenruimte,
     // scenario-analyse, dubbele-lasten-test) automatisch de bindende toets volgen.
     const pensionApplies1 = safeNum(age1) >= 57;
-    const pensionApplies2 = safeNum(age2) >= 57;
+    const pensionApplies2 = hasPartner2 && safeNum(age2) >= 57;
     const pensionApplies = pensionApplies1 || pensionApplies2;
     const pensionMissing1 = pensionApplies1 && safeNum(pensionIncome1) <= 0;
     const pensionMissing2 = pensionApplies2 && safeNum(pensionIncome2) <= 0;
@@ -1533,12 +1542,12 @@ function MortgageCalculatorForm({ onReset }) {
       price: kostenKoperBasis,
       buyers: [
         { age: safeNum(age1), exemption: starterExemption1 },
-        { age: safeNum(age2), exemption: starterExemption2 },
+        ...(hasPartner2 ? [{ age: safeNum(age2), exemption: starterExemption2 }] : []),
       ].filter((b) => b.age > 0),
     });
     const transferTax = kostenKoperBasis * transferTaxInfo.rate;
 
-    const totalOwnCapital = safeNum(ownCapital1) + safeNum(ownCapital2);
+    const totalOwnCapital = safeNum(ownCapital1) + (hasPartner2 ? safeNum(ownCapital2) : 0);
 
     // Indicatieve hypotheek als basis voor de NHG-borgtochtprovisie: wat er na inzet van
     // het eigen vermogen gefinancierd moet worden, begrensd door de maximale hypotheek.
@@ -1656,6 +1665,7 @@ function MortgageCalculatorForm({ onReset }) {
     thirteenthMonth2,
     avgBonus1,
     avgBonus2,
+    hasPartner2,
   ]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
@@ -2497,7 +2507,7 @@ function MortgageCalculatorForm({ onReset }) {
             <button
               type="button"
               onClick={() => setHasExistingHome(true)}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+              className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                 hasExistingHome
                   ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
@@ -2508,7 +2518,7 @@ function MortgageCalculatorForm({ onReset }) {
             <button
               type="button"
               onClick={() => setHasExistingHome(false)}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+              className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                 !hasExistingHome
                   ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
@@ -2608,8 +2618,35 @@ function MortgageCalculatorForm({ onReset }) {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-5 lg:items-start">
           <div className="space-y-6 lg:col-span-3 lg:row-start-1">
             <SectionCard id="sectie-inkomen" title="Inkomen" icon={<Euro className="h-4 w-4" />} accent="blue">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <PartnerSubCard label="Partner 1">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-medium text-slate-600">Aantal aanvragers</span>
+                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setHasPartner2(false)}
+                    className={`rounded-md px-3 py-2 text-xs font-semibold transition-all duration-200 sm:py-1.5 ${
+                      !hasPartner2
+                        ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    1 aanvrager
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHasPartner2(true)}
+                    className={`rounded-md px-3 py-2 text-xs font-semibold transition-all duration-200 sm:py-1.5 ${
+                      hasPartner2
+                        ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    2 aanvragers
+                  </button>
+                </div>
+              </div>
+              <div className={`grid grid-cols-1 gap-4 ${hasPartner2 ? 'sm:grid-cols-2' : ''}`}>
+                <PartnerSubCard label={hasPartner2 ? 'Partner 1' : 'Aanvrager'}>
                   <IncomeTypeSelect id="incomeType1" value={incomeType1} onChange={setIncomeType1} />
                   {calc.toets1.usesHistory ? (
                     <IncomeHistoryFields
@@ -2625,7 +2662,7 @@ function MortgageCalculatorForm({ onReset }) {
                       icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
                       value={income1}
                       min={0}
-                      max={150000}
+                      max={300000}
                       step={1000}
                       onChange={setIncome1}
                       formatValue={formatEuro}
@@ -2637,7 +2674,7 @@ function MortgageCalculatorForm({ onReset }) {
                     icon={<PiggyBank className="h-3.5 w-3.5 text-slate-400" />}
                     value={ownCapital1}
                     min={0}
-                    max={200000}
+                    max={400000}
                     step={1000}
                     onChange={setOwnCapital1}
                     formatValue={formatEuro}
@@ -2695,6 +2732,7 @@ function MortgageCalculatorForm({ onReset }) {
                   </AdvancedFieldsToggle>
                   <ToetsinkomenSummary toets={calc.toets1} incomeType={incomeType1} />
                 </PartnerSubCard>
+                {hasPartner2 && (
                 <PartnerSubCard label="Partner 2">
                   <IncomeTypeSelect id="incomeType2" value={incomeType2} onChange={setIncomeType2} />
                   {calc.toets2.usesHistory ? (
@@ -2711,7 +2749,7 @@ function MortgageCalculatorForm({ onReset }) {
                       icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
                       value={income2}
                       min={0}
-                      max={150000}
+                      max={300000}
                       step={1000}
                       onChange={setIncome2}
                       formatValue={formatEuro}
@@ -2723,7 +2761,7 @@ function MortgageCalculatorForm({ onReset }) {
                     icon={<PiggyBank className="h-3.5 w-3.5 text-slate-400" />}
                     value={ownCapital2}
                     min={0}
-                    max={200000}
+                    max={400000}
                     step={1000}
                     onChange={setOwnCapital2}
                     formatValue={formatEuro}
@@ -2781,6 +2819,7 @@ function MortgageCalculatorForm({ onReset }) {
                   </AdvancedFieldsToggle>
                   <ToetsinkomenSummary toets={calc.toets2} incomeType={incomeType2} />
                 </PartnerSubCard>
+                )}
               </div>
               <AnimatePresence>
                 {calc.combinedIncome === 0 && (
@@ -2801,8 +2840,8 @@ function MortgageCalculatorForm({ onReset }) {
             </SectionCard>
 
             <SectionCard id="sectie-schulden" title="Schulden" icon={<CreditCard className="h-4 w-4" />} accent="amber">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <PartnerSubCard label="Partner 1">
+              <div className={`grid grid-cols-1 gap-4 ${hasPartner2 ? 'sm:grid-cols-2' : ''}`}>
+                <PartnerSubCard label={hasPartner2 ? 'Partner 1' : 'Aanvrager'}>
                   <CurrencyField
                     id="debt1"
                     label="Overige schulden"
@@ -2831,6 +2870,7 @@ function MortgageCalculatorForm({ onReset }) {
                     />
                   </AdvancedFieldsToggle>
                 </PartnerSubCard>
+                {hasPartner2 && (
                 <PartnerSubCard label="Partner 2">
                   <CurrencyField
                     id="debt2"
@@ -2860,6 +2900,7 @@ function MortgageCalculatorForm({ onReset }) {
                     />
                   </AdvancedFieldsToggle>
                 </PartnerSubCard>
+                )}
               </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-medium text-slate-600">Studieschuld stelsel</span>
@@ -2867,7 +2908,7 @@ function MortgageCalculatorForm({ onReset }) {
                   <button
                     type="button"
                     onClick={() => setStudyDebtRegime('nieuw')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                       studyDebtRegime === 'nieuw'
                         ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                         : 'text-slate-500 hover:text-slate-700'
@@ -2878,7 +2919,7 @@ function MortgageCalculatorForm({ onReset }) {
                   <button
                     type="button"
                     onClick={() => setStudyDebtRegime('oud')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                       studyDebtRegime === 'oud'
                         ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                         : 'text-slate-500 hover:text-slate-700'
@@ -3191,7 +3232,7 @@ function MortgageCalculatorForm({ onReset }) {
                       key={option.key}
                       type="button"
                       onClick={() => setPropertyUsage(option.key)}
-                      className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                         propertyUsage === option.key
                           ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                           : 'text-slate-500 hover:text-slate-700'
@@ -3215,7 +3256,7 @@ function MortgageCalculatorForm({ onReset }) {
                     },
                     {
                       label: 'Partner 2',
-                      age: age2,
+                      age: hasPartner2 ? age2 : 0,
                       checked: starterExemption2,
                       onChange: setStarterExemption2,
                       id: 'starterExemption2',
@@ -3533,7 +3574,7 @@ function MortgageCalculatorForm({ onReset }) {
                       <button
                         type="button"
                         onClick={() => setStarterViewMode('bruto')}
-                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                           starterViewMode === 'bruto'
                             ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                             : 'text-slate-500 hover:text-slate-700'
@@ -3544,7 +3585,7 @@ function MortgageCalculatorForm({ onReset }) {
                       <button
                         type="button"
                         onClick={() => setStarterViewMode('netto')}
-                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                           starterViewMode === 'netto'
                             ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                             : 'text-slate-500 hover:text-slate-700'
@@ -3666,7 +3707,7 @@ function MortgageCalculatorForm({ onReset }) {
                       <button
                         type="button"
                         onClick={() => setTakeOverMortgage(true)}
-                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                           takeOverMortgage
                             ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                             : 'text-slate-500 hover:text-slate-700'
@@ -3677,7 +3718,7 @@ function MortgageCalculatorForm({ onReset }) {
                       <button
                         type="button"
                         onClick={() => setTakeOverMortgage(false)}
-                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                           !takeOverMortgage
                             ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                             : 'text-slate-500 hover:text-slate-700'
@@ -3702,7 +3743,7 @@ function MortgageCalculatorForm({ onReset }) {
                       <button
                         type="button"
                         onClick={() => setSaleDiscountPercentage(100)}
-                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                           saleDiscountPercentage === 100
                             ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                             : 'text-slate-500 hover:text-slate-700'
@@ -3713,7 +3754,7 @@ function MortgageCalculatorForm({ onReset }) {
                       <button
                         type="button"
                         onClick={() => setSaleDiscountPercentage(95)}
-                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                           saleDiscountPercentage === 95
                             ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                             : 'text-slate-500 hover:text-slate-700'
@@ -3795,7 +3836,7 @@ function MortgageCalculatorForm({ onReset }) {
                         <button
                           type="button"
                           onClick={() => setViewMode('bruto')}
-                          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                             viewMode === 'bruto'
                               ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                               : 'text-slate-500 hover:text-slate-700'
@@ -3806,7 +3847,7 @@ function MortgageCalculatorForm({ onReset }) {
                         <button
                           type="button"
                           onClick={() => setViewMode('netto')}
-                          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                             viewMode === 'netto'
                               ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                               : 'text-slate-500 hover:text-slate-700'
@@ -4355,7 +4396,7 @@ function MortgageCalculatorForm({ onReset }) {
                             <button
                               type="button"
                               onClick={() => setAdditionalViewMode('bruto')}
-                              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                              className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                                 additionalViewMode === 'bruto'
                                   ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                                   : 'text-slate-500 hover:text-slate-700'
@@ -4366,7 +4407,7 @@ function MortgageCalculatorForm({ onReset }) {
                             <button
                               type="button"
                               onClick={() => setAdditionalViewMode('netto')}
-                              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                              className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                                 additionalViewMode === 'netto'
                                   ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                                   : 'text-slate-500 hover:text-slate-700'
@@ -4654,7 +4695,7 @@ function MortgageCalculatorForm({ onReset }) {
                         <button
                           type="button"
                           onClick={() => setOldMortgageStance('volledig')}
-                          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                             oldMortgageStance === 'volledig'
                               ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                               : 'text-slate-500 hover:text-slate-700'
@@ -4665,7 +4706,7 @@ function MortgageCalculatorForm({ onReset }) {
                         <button
                           type="button"
                           onClick={() => setOldMortgageStance('rente')}
-                          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                             oldMortgageStance === 'rente'
                               ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                               : 'text-slate-500 hover:text-slate-700'
@@ -4703,7 +4744,7 @@ function MortgageCalculatorForm({ onReset }) {
                         <button
                           type="button"
                           onClick={() => setIncludeOwnCapitalInDoubleTest(true)}
-                          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                             includeOwnCapitalInDoubleTest
                               ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                               : 'text-slate-500 hover:text-slate-700'
@@ -4714,7 +4755,7 @@ function MortgageCalculatorForm({ onReset }) {
                         <button
                           type="button"
                           onClick={() => setIncludeOwnCapitalInDoubleTest(false)}
-                          className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
                             !includeOwnCapitalInDoubleTest
                               ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
                               : 'text-slate-500 hover:text-slate-700'
