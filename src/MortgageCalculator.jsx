@@ -2323,15 +2323,13 @@ function MortgageCalculatorForm({ onReset }) {
     ? combinedGapCalc.withinCapacity
     : calc.incomeBasedMax >= safeNum(purchasePrice);
 
-  // Stappen voor de voortgangsbalk. Schulden heeft geen eigen verplicht veld (0 is een
-  // geldig antwoord), dus die stap wordt als "bereikt" beschouwd zodra Inkomen is ingevuld
-  // in plaats van hem altijd als voltooid te tonen.
+  // Dit is bewust GEEN wizard met gating: elke sectie is altijd tegelijk zichtbaar en in
+  // elke volgorde te bewerken. De chips hieronder zijn dus anker-navigatie ("spring naar"),
+  // geen stappenteller — vandaar geen verbindingslijnen en geen cumulatieve voortgangsbalk.
+  // Schulden heeft geen eigen verplicht veld (0 is een geldig antwoord), dus die chip wordt
+  // als "ingevuld" beschouwd zodra Inkomen is ingevuld.
   const incomeStepDone = calc.combinedIncome > 0;
   const debtsStepDone = incomeStepDone;
-  const propertyStepDone = safeNum(purchasePrice) > 0;
-  const progressSteps = [incomeStepDone, debtsStepDone, propertyStepDone, overallAffordable];
-  const progressPercentage =
-    (progressSteps.filter(Boolean).length / progressSteps.length) * 100;
 
   const scrollToSection = (id) => {
     const el = document.getElementById(id);
@@ -2377,36 +2375,15 @@ function MortgageCalculatorForm({ onReset }) {
   return (
     <div className="w-full px-4 py-10 pb-24 sm:px-6 lg:px-10 lg:pb-10">
       <div className="mx-auto max-w-6xl">
-        <div className="sticky top-0 z-40 -mx-4 mb-6 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
-          <div className="mx-auto flex max-w-6xl items-center gap-x-4 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:justify-between sm:gap-y-2 sm:overflow-visible sm:whitespace-normal [&::-webkit-scrollbar]:hidden">
-            <button
-              type="button"
-              onClick={() => scrollToSection('sectie-inkomen')}
-              className="flex items-center gap-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:text-blue-600"
-            >
-              <CheckCircle2
-                className={`h-3.5 w-3.5 ${
-                  calc.combinedIncome > 0 ? 'text-emerald-500' : 'text-slate-300'
-                }`}
-              />
-              Inkomen
-            </button>
-            <span className="hidden h-px w-6 flex-shrink-0 bg-slate-200 sm:block" />
-            <button
-              type="button"
-              onClick={() => scrollToSection('sectie-schulden')}
-              className="flex items-center gap-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:text-blue-600"
-            >
-              <CheckCircle2
-                className={`h-3.5 w-3.5 ${debtsStepDone ? 'text-emerald-500' : 'text-slate-300'}`}
-              />
-              Schulden
-            </button>
-            <span className="hidden h-px w-6 flex-shrink-0 bg-slate-200 sm:block" />
+        <div className="sticky top-0 z-40 -mx-4 mb-6 border-b border-slate-200 bg-white/90 px-4 py-2.5 backdrop-blur-sm sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
+          <p className="mb-1.5 hidden text-[11px] text-slate-400 sm:block">
+            Spring naar een onderdeel — alles is direct aan te passen, in elke volgorde.
+          </p>
+          <div className="mx-auto flex max-w-6xl items-center gap-1 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:whitespace-normal [&::-webkit-scrollbar]:hidden">
             <button
               type="button"
               onClick={() => scrollToSection('sectie-beoogde-woning')}
-              className="flex items-center gap-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:text-blue-600"
+              className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-100 hover:text-blue-600"
             >
               <CheckCircle2
                 className={`h-3.5 w-3.5 ${
@@ -2415,31 +2392,50 @@ function MortgageCalculatorForm({ onReset }) {
               />
               Beoogde woning
             </button>
+            <button
+              type="button"
+              onClick={() => scrollToSection('sectie-inkomen')}
+              className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-100 hover:text-blue-600"
+            >
+              <CheckCircle2
+                className={`h-3.5 w-3.5 ${
+                  calc.combinedIncome > 0 ? 'text-emerald-500' : 'text-slate-300'
+                }`}
+              />
+              Inkomen
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollToSection('sectie-schulden')}
+              className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-100 hover:text-blue-600"
+            >
+              <CheckCircle2
+                className={`h-3.5 w-3.5 ${debtsStepDone ? 'text-emerald-500' : 'text-slate-300'}`}
+              />
+              Schulden
+            </button>
             {hasExistingHome && (
-              <>
-                <span className="hidden h-px w-6 flex-shrink-0 bg-slate-200 sm:block" />
-                <button
-                  type="button"
-                  onClick={() => scrollToSection('sectie-huidige-woning')}
-                  className="flex items-center gap-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:text-blue-600"
-                >
-                  <CheckCircle2
-                    className={`h-3.5 w-3.5 ${
-                      safeNum(marketValue) > 0 ? 'text-emerald-500' : 'text-slate-300'
-                    }`}
-                  />
-                  Huidige woning
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => scrollToSection('sectie-huidige-woning')}
+                className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-100 hover:text-blue-600"
+              >
+                <CheckCircle2
+                  className={`h-3.5 w-3.5 ${
+                    safeNum(marketValue) > 0 ? 'text-emerald-500' : 'text-slate-300'
+                  }`}
+                />
+                Huidige woning
+              </button>
             )}
-            <span className="hidden h-px w-6 flex-shrink-0 bg-slate-200 sm:block" />
+            <span className="mx-1 hidden h-4 w-px flex-shrink-0 bg-slate-200 sm:block" />
             <button
               type="button"
               onClick={() => scrollToSection('sectie-resultaat')}
-              className={`flex items-center gap-1.5 text-xs font-semibold transition-all duration-200 ${
+              className={`flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition-all duration-200 ${
                 overallAffordable
-                  ? 'text-emerald-600 hover:text-emerald-700'
-                  : 'text-red-600 hover:text-red-700'
+                  ? 'text-emerald-600 hover:bg-emerald-50'
+                  : 'text-red-600 hover:bg-red-50'
               }`}
             >
               {overallAffordable ? (
@@ -2449,22 +2445,6 @@ function MortgageCalculatorForm({ onReset }) {
               )}
               {overallAffordable ? 'Haalbaar' : 'Nog niet haalbaar'}
             </button>
-          </div>
-          <div className="mx-auto mt-2 h-1 w-full max-w-6xl overflow-hidden rounded-full bg-slate-100">
-            <motion.div
-              className={`h-full rounded-full ${
-                calc.isOverIndebted
-                  ? 'bg-red-500'
-                  : progressPercentage < 100
-                  ? 'bg-blue-500'
-                  : overallAffordable
-                  ? 'bg-emerald-500'
-                  : 'bg-amber-500'
-              }`}
-              initial={false}
-              animate={{ width: `${progressPercentage}%` }}
-              transition={{ duration: 0.3, ease: 'easeOut' }}
-            />
           </div>
         </div>
 
@@ -2496,37 +2476,347 @@ function MortgageCalculatorForm({ onReset }) {
           </button>
         </div>
 
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <div>
-            <span className="text-sm font-medium text-slate-700">Uw situatie</span>
-            <p className="text-xs text-slate-400">
-              Heeft u op dit moment al een eigen woning met hypotheek?
-            </p>
+        <div className="mb-6 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <span className="text-sm font-medium text-slate-700">Uw situatie</span>
+          <p className="mb-4 text-xs text-slate-400">
+            Deze twee keuzes bepalen de vorm van de rest van de berekening.
+          </p>
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-slate-500">
+                Heeft u op dit moment al een eigen woning met hypotheek?
+              </p>
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => setHasExistingHome(true)}
+                  className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    hasExistingHome
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Ja, ik heb al een woning
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHasExistingHome(false)}
+                  className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    !hasExistingHome
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Nee, nog geen woning
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+              <p className="text-xs text-slate-500">Met hoeveel aanvragers vraagt u de hypotheek aan?</p>
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => setHasPartner2(false)}
+                  className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    !hasPartner2
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  1 aanvrager
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHasPartner2(true)}
+                  className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    hasPartner2
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  2 aanvragers
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-            <button
-              type="button"
-              onClick={() => setHasExistingHome(true)}
-              className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
-                hasExistingHome
-                  ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Ja, ik heb al een woning
-            </button>
-            <button
-              type="button"
-              onClick={() => setHasExistingHome(false)}
-              className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
-                !hasExistingHome
-                  ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              Nee, nog geen woning
-            </button>
-          </div>
+        </div>
+
+        <div className="mt-8">
+          <SectionCard id="sectie-beoogde-woning" title="Beoogde woning" icon={<Home className="h-4 w-4" />} accent="emerald">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <Slider
+                id="purchasePrice"
+                label="Aanschafprijs beoogde woning"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={purchasePrice}
+                min={100000}
+                max={2500000}
+                step={5000}
+                onChange={setPurchasePrice}
+                formatValue={formatEuro}
+              />
+              <Slider
+                id="rate"
+                label="Beoogde hypotheekrente"
+                icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
+                value={rate}
+                min={2.0}
+                max={6.0}
+                step={0.01}
+                onChange={setRate}
+                formatValue={formatRate}
+              />
+              <Slider
+                id="fixedRatePeriod"
+                label="Rentevastperiode nieuwe hypotheek"
+                icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+                value={fixedRatePeriod}
+                min={1}
+                max={30}
+                step={1}
+                onChange={setFixedRatePeriod}
+                formatValue={(v) => `${v} jaar`}
+                labelExtra={
+                  <InfoTooltip text={`Bij een rentevastperiode korter dan 10 jaar moet wettelijk met de (hogere) AFM-toetsrente van ${formatRate(TOETSRENTE)} worden getoetst in plaats van uw daadwerkelijke rente, ook al betaalt u die lagere rente gewoon echt.`} />
+                }
+              />
+              <EnergyLabelPicker
+                id="energyLabel"
+                label="Energielabel beoogde woning"
+                icon={<Leaf className="h-3.5 w-3.5 text-slate-400" />}
+                value={energyLabel}
+                onChange={setEnergyLabel}
+              />
+            </div>
+
+            {/* Overdrachtsbelasting: gebruiksdoel bepaalt het tarief (0/1/2/8% of n.v.t.). */}
+            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Type aankoop (overdrachtsbelasting)
+                </span>
+                <div className="inline-flex rounded-lg border border-slate-100 bg-white p-1">
+                  {[
+                    { key: 'zelfbewoning', label: 'Bestaande bouw' },
+                    { key: 'nieuwbouw', label: 'Nieuwbouw' },
+                    { key: 'nietHoofdverblijf', label: 'Niet-hoofdverblijf' },
+                  ].map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setPropertyUsage(option.key)}
+                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        propertyUsage === option.key
+                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {propertyUsage === 'zelfbewoning' && (
+                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:gap-6">
+                  {[
+                    {
+                      label: 'Partner 1',
+                      age: age1,
+                      checked: starterExemption1,
+                      onChange: setStarterExemption1,
+                      id: 'starterExemption1',
+                    },
+                    {
+                      label: 'Partner 2',
+                      age: hasPartner2 ? age2 : 0,
+                      checked: starterExemption2,
+                      onChange: setStarterExemption2,
+                      id: 'starterExemption2',
+                    },
+                  ]
+                    .filter((buyer) => safeNum(buyer.age) > 0)
+                    .map((buyer) => (
+                      <label
+                        key={buyer.id}
+                        htmlFor={buyer.id}
+                        className="flex cursor-pointer items-center gap-2 text-xs text-slate-600"
+                      >
+                        <input
+                          id={buyer.id}
+                          type="checkbox"
+                          checked={buyer.checked}
+                          onChange={(e) => buyer.onChange(e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        {buyer.label} ({buyer.age} jr): startersvrijstelling nog niet gebruikt
+                      </label>
+                    ))}
+                </div>
+              )}
+
+              <StatusBadge status={calc.transferTaxInfo.rate === 0 ? 'success' : 'info'}>
+                Overdrachtsbelasting: {calc.transferTaxInfo.label}
+                {safeNum(purchasePrice) > 0 && calc.transferTaxInfo.rate > 0 && (
+                  <> — {formatEuro(safeNum(purchasePrice) * calc.transferTaxInfo.rate)}</>
+                )}
+                . {calc.transferTaxInfo.explanation}
+              </StatusBadge>
+              {propertyUsage === 'zelfbewoning' &&
+                safeNum(purchasePrice) > STARTER_EXEMPTION_PRICE_CAP &&
+                (safeNum(age1) < 35 || safeNum(age2) < 35) && (
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    De startersvrijstelling vervalt hier volledig omdat de woningwaarde boven de
+                    grens van {formatEuro(STARTER_EXEMPTION_PRICE_CAP)} (2026) ligt.
+                  </p>
+                )}
+            </div>
+
+            <AnimatePresence>
+              {calc.toetsrenteApplies && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.2 }}
+                  className="mt-5"
+                >
+                  <InlineNote className="mt-0">
+                    Bij een rentevastperiode korter dan 10 jaar moet wettelijk met de
+                    AFM-toetsrente van {formatRate(TOETSRENTE)} worden getoetst in plaats van de
+                    daadwerkelijke rente. Uw leencapaciteit is hierop gebaseerd.
+                  </InlineNote>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </SectionCard>
+
+          <SectionCard
+            id="sectie-kosten-koper"
+            title="Kosten koper"
+            icon={<Receipt className="h-4 w-4" />}
+            accent="violet"
+          >
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <CurrencyField
+                id="notaryCosts"
+                label="Notaris"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={notaryCosts}
+                onChange={setNotaryCosts}
+                placeholder="1.200"
+                hint="Leverings- en hypotheekakte, Kadaster"
+              />
+              <CurrencyField
+                id="valuationCosts"
+                label="Taxatie"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={valuationCosts}
+                onChange={setValuationCosts}
+                placeholder="600"
+                hint="Fysiek taxatierapport (desktoptaxatie ~€110)"
+              />
+              <CurrencyField
+                id="advisoryCosts"
+                label="Hypotheekadvies"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={advisoryCosts}
+                onChange={setAdvisoryCosts}
+                placeholder="2.500"
+                hint="Advies- en bemiddelingskosten"
+              />
+            </div>
+
+            <div className="mt-5 space-y-2">
+              {[
+                {
+                  id: 'includeBankGuarantee',
+                  key: 'bankGuarantee',
+                  checked: includeBankGuarantee,
+                  onChange: setIncludeBankGuarantee,
+                  label: 'Bankgarantie',
+                  hint: '~1% van de waarborgsom (10% koopsom)',
+                },
+                {
+                  id: 'includeBuyersAgent',
+                  key: 'buyersAgent',
+                  checked: includeBuyersAgent,
+                  onChange: setIncludeBuyersAgent,
+                  label: 'Aankoopmakelaar (courtage 1,2%)',
+                  hint: 'Optioneel; niet bij aankoop zonder makelaar',
+                },
+                {
+                  id: 'includeNhgFee',
+                  key: 'nhgFee',
+                  checked: includeNhgFee,
+                  onChange: setIncludeNhgFee,
+                  label: 'NHG-borgtochtprovisie (0,4%)',
+                  hint: 'Indicatief; de volledige NHG-toets (kostengrens, lagere rente) zit nog niet in deze calculator',
+                },
+              ].map((row) => {
+                const item = calc.kostenKoper.items.find((i) => i.key === row.key);
+                return (
+                  <div
+                    key={row.id}
+                    className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3"
+                  >
+                    <label
+                      htmlFor={row.id}
+                      className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-700"
+                    >
+                      <input
+                        id={row.id}
+                        type="checkbox"
+                        checked={row.checked}
+                        onChange={(e) => row.onChange(e.target.checked)}
+                        className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>
+                        {row.label}
+                        <span className="block text-xs text-slate-400">{row.hint}</span>
+                      </span>
+                    </label>
+                    <span
+                      className={`text-sm font-semibold ${
+                        row.checked ? 'text-slate-800' : 'text-slate-300 line-through'
+                      }`}
+                    >
+                      {formatEuro(item ? item.amount : 0)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-600">
+                  Overdrachtsbelasting ({calc.transferTaxInfo.shortLabel})
+                </span>
+                <span className="font-semibold text-slate-800">
+                  {formatEuro(calc.transferTax)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                Automatisch bepaald via het type aankoop en de startersvrijstelling in de kaart
+                Beoogde woning.
+              </p>
+              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                <span className="text-sm font-medium text-slate-700">
+                  Totaal kosten koper (eigen geld)
+                </span>
+                <AnimatedEuro
+                  value={calc.kostenKoper.total}
+                  className="text-xl font-bold text-slate-900"
+                />
+              </div>
+              <p className="mt-2 text-xs text-slate-400">
+                Kosten koper kunnen niet worden meegefinancierd en betaalt u uit eigen middelen.
+                Alle bedragen zijn indicatief; werkelijke tarieven verschillen per notaris,
+                taxateur en adviseur.
+              </p>
+            </div>
+          </SectionCard>
         </div>
 
         <AnimatePresence>
@@ -2618,33 +2908,6 @@ function MortgageCalculatorForm({ onReset }) {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-5 lg:items-start">
           <div className="space-y-6 lg:col-span-3 lg:row-start-1">
             <SectionCard id="sectie-inkomen" title="Inkomen" icon={<Euro className="h-4 w-4" />} accent="blue">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-medium text-slate-600">Aantal aanvragers</span>
-                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setHasPartner2(false)}
-                    className={`rounded-md px-3 py-2 text-xs font-semibold transition-all duration-200 sm:py-1.5 ${
-                      !hasPartner2
-                        ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    1 aanvrager
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setHasPartner2(true)}
-                    className={`rounded-md px-3 py-2 text-xs font-semibold transition-all duration-200 sm:py-1.5 ${
-                      hasPartner2
-                        ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    2 aanvragers
-                  </button>
-                </div>
-              </div>
               <div className={`grid grid-cols-1 gap-4 ${hasPartner2 ? 'sm:grid-cols-2' : ''}`}>
                 <PartnerSubCard label={hasPartner2 ? 'Partner 1' : 'Aanvrager'}>
                   <IncomeTypeSelect id="incomeType1" value={incomeType1} onChange={setIncomeType1} />
@@ -3166,284 +3429,6 @@ function MortgageCalculatorForm({ onReset }) {
               </AnimatePresence>
             </div>
           </div>
-        </div>
-
-        <div className="mt-8">
-          <SectionCard id="sectie-beoogde-woning" title="Beoogde woning" icon={<Home className="h-4 w-4" />} accent="emerald">
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-              <Slider
-                id="purchasePrice"
-                label="Aanschafprijs beoogde woning"
-                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                value={purchasePrice}
-                min={100000}
-                max={2500000}
-                step={5000}
-                onChange={setPurchasePrice}
-                formatValue={formatEuro}
-              />
-              <Slider
-                id="rate"
-                label="Beoogde hypotheekrente"
-                icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
-                value={rate}
-                min={2.0}
-                max={6.0}
-                step={0.01}
-                onChange={setRate}
-                formatValue={formatRate}
-              />
-              <Slider
-                id="fixedRatePeriod"
-                label="Rentevastperiode nieuwe hypotheek"
-                icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
-                value={fixedRatePeriod}
-                min={1}
-                max={30}
-                step={1}
-                onChange={setFixedRatePeriod}
-                formatValue={(v) => `${v} jaar`}
-                labelExtra={
-                  <InfoTooltip text={`Bij een rentevastperiode korter dan 10 jaar moet wettelijk met de (hogere) AFM-toetsrente van ${formatRate(TOETSRENTE)} worden getoetst in plaats van uw daadwerkelijke rente, ook al betaalt u die lagere rente gewoon echt.`} />
-                }
-              />
-              <EnergyLabelPicker
-                id="energyLabel"
-                label="Energielabel beoogde woning"
-                icon={<Leaf className="h-3.5 w-3.5 text-slate-400" />}
-                value={energyLabel}
-                onChange={setEnergyLabel}
-              />
-            </div>
-
-            {/* Overdrachtsbelasting: gebruiksdoel bepaalt het tarief (0/1/2/8% of n.v.t.). */}
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Type aankoop (overdrachtsbelasting)
-                </span>
-                <div className="inline-flex rounded-lg border border-slate-100 bg-white p-1">
-                  {[
-                    { key: 'zelfbewoning', label: 'Bestaande bouw' },
-                    { key: 'nieuwbouw', label: 'Nieuwbouw' },
-                    { key: 'nietHoofdverblijf', label: 'Niet-hoofdverblijf' },
-                  ].map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => setPropertyUsage(option.key)}
-                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
-                        propertyUsage === option.key
-                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
-                          : 'text-slate-500 hover:text-slate-700'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {propertyUsage === 'zelfbewoning' && (
-                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:gap-6">
-                  {[
-                    {
-                      label: 'Partner 1',
-                      age: age1,
-                      checked: starterExemption1,
-                      onChange: setStarterExemption1,
-                      id: 'starterExemption1',
-                    },
-                    {
-                      label: 'Partner 2',
-                      age: hasPartner2 ? age2 : 0,
-                      checked: starterExemption2,
-                      onChange: setStarterExemption2,
-                      id: 'starterExemption2',
-                    },
-                  ]
-                    .filter((buyer) => safeNum(buyer.age) > 0)
-                    .map((buyer) => (
-                      <label
-                        key={buyer.id}
-                        htmlFor={buyer.id}
-                        className="flex cursor-pointer items-center gap-2 text-xs text-slate-600"
-                      >
-                        <input
-                          id={buyer.id}
-                          type="checkbox"
-                          checked={buyer.checked}
-                          onChange={(e) => buyer.onChange(e.target.checked)}
-                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        {buyer.label} ({buyer.age} jr): startersvrijstelling nog niet gebruikt
-                      </label>
-                    ))}
-                </div>
-              )}
-
-              <StatusBadge status={calc.transferTaxInfo.rate === 0 ? 'success' : 'info'}>
-                Overdrachtsbelasting: {calc.transferTaxInfo.label}
-                {safeNum(purchasePrice) > 0 && calc.transferTaxInfo.rate > 0 && (
-                  <> — {formatEuro(safeNum(purchasePrice) * calc.transferTaxInfo.rate)}</>
-                )}
-                . {calc.transferTaxInfo.explanation}
-              </StatusBadge>
-              {propertyUsage === 'zelfbewoning' &&
-                safeNum(purchasePrice) > STARTER_EXEMPTION_PRICE_CAP &&
-                (safeNum(age1) < 35 || safeNum(age2) < 35) && (
-                  <p className="mt-2 text-[11px] text-slate-400">
-                    De startersvrijstelling vervalt hier volledig omdat de woningwaarde boven de
-                    grens van {formatEuro(STARTER_EXEMPTION_PRICE_CAP)} (2026) ligt.
-                  </p>
-                )}
-            </div>
-
-            <AnimatePresence>
-              {calc.toetsrenteApplies && (
-                <motion.div
-                  initial={{ opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.2 }}
-                  className="mt-5"
-                >
-                  <InlineNote className="mt-0">
-                    Bij een rentevastperiode korter dan 10 jaar moet wettelijk met de
-                    AFM-toetsrente van {formatRate(TOETSRENTE)} worden getoetst in plaats van de
-                    daadwerkelijke rente. Uw leencapaciteit is hierop gebaseerd.
-                  </InlineNote>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </SectionCard>
-
-          <SectionCard
-            id="sectie-kosten-koper"
-            title="Kosten koper"
-            icon={<Receipt className="h-4 w-4" />}
-            accent="violet"
-          >
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-              <CurrencyField
-                id="notaryCosts"
-                label="Notaris"
-                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                value={notaryCosts}
-                onChange={setNotaryCosts}
-                placeholder="1.200"
-                hint="Leverings- en hypotheekakte, Kadaster"
-              />
-              <CurrencyField
-                id="valuationCosts"
-                label="Taxatie"
-                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                value={valuationCosts}
-                onChange={setValuationCosts}
-                placeholder="600"
-                hint="Fysiek taxatierapport (desktoptaxatie ~€110)"
-              />
-              <CurrencyField
-                id="advisoryCosts"
-                label="Hypotheekadvies"
-                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                value={advisoryCosts}
-                onChange={setAdvisoryCosts}
-                placeholder="2.500"
-                hint="Advies- en bemiddelingskosten"
-              />
-            </div>
-
-            <div className="mt-5 space-y-2">
-              {[
-                {
-                  id: 'includeBankGuarantee',
-                  key: 'bankGuarantee',
-                  checked: includeBankGuarantee,
-                  onChange: setIncludeBankGuarantee,
-                  label: 'Bankgarantie',
-                  hint: '~1% van de waarborgsom (10% koopsom)',
-                },
-                {
-                  id: 'includeBuyersAgent',
-                  key: 'buyersAgent',
-                  checked: includeBuyersAgent,
-                  onChange: setIncludeBuyersAgent,
-                  label: 'Aankoopmakelaar (courtage 1,2%)',
-                  hint: 'Optioneel; niet bij aankoop zonder makelaar',
-                },
-                {
-                  id: 'includeNhgFee',
-                  key: 'nhgFee',
-                  checked: includeNhgFee,
-                  onChange: setIncludeNhgFee,
-                  label: 'NHG-borgtochtprovisie (0,4%)',
-                  hint: 'Indicatief; de volledige NHG-toets (kostengrens, lagere rente) zit nog niet in deze calculator',
-                },
-              ].map((row) => {
-                const item = calc.kostenKoper.items.find((i) => i.key === row.key);
-                return (
-                  <div
-                    key={row.id}
-                    className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3"
-                  >
-                    <label
-                      htmlFor={row.id}
-                      className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-700"
-                    >
-                      <input
-                        id={row.id}
-                        type="checkbox"
-                        checked={row.checked}
-                        onChange={(e) => row.onChange(e.target.checked)}
-                        className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span>
-                        {row.label}
-                        <span className="block text-xs text-slate-400">{row.hint}</span>
-                      </span>
-                    </label>
-                    <span
-                      className={`text-sm font-semibold ${
-                        row.checked ? 'text-slate-800' : 'text-slate-300 line-through'
-                      }`}
-                    >
-                      {formatEuro(item ? item.amount : 0)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-600">
-                  Overdrachtsbelasting ({calc.transferTaxInfo.shortLabel})
-                </span>
-                <span className="font-semibold text-slate-800">
-                  {formatEuro(calc.transferTax)}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-slate-400">
-                Automatisch bepaald via het type aankoop en de startersvrijstelling in de kaart
-                Beoogde woning.
-              </p>
-              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
-                <span className="text-sm font-medium text-slate-700">
-                  Totaal kosten koper (eigen geld)
-                </span>
-                <AnimatedEuro
-                  value={calc.kostenKoper.total}
-                  className="text-xl font-bold text-slate-900"
-                />
-              </div>
-              <p className="mt-2 text-xs text-slate-400">
-                Kosten koper kunnen niet worden meegefinancierd en betaalt u uit eigen middelen.
-                Alle bedragen zijn indicatief; werkelijke tarieven verschillen per notaris,
-                taxateur en adviseur.
-              </p>
-            </div>
-          </SectionCard>
         </div>
 
         {!hasExistingHome && (
