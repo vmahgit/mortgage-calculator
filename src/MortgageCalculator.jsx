@@ -1247,8 +1247,8 @@ function AflossingsvrijMaxToggle({ value, onChange }) {
 function MortgageCalculatorForm({ onReset }) {
   const [income1, setIncome1] = useState(100000);
   const [income2, setIncome2] = useState(100000);
-  const [age1, setAge1] = useState('35');
-  const [age2, setAge2] = useState('34');
+  const [age1, setAge1] = useState('36');
+  const [age2, setAge2] = useState('36');
   const [ownCapital1, setOwnCapital1] = useState(0);
   const [ownCapital2, setOwnCapital2] = useState(0);
   const [rate, setRate] = useState(4.0);
@@ -2659,89 +2659,6 @@ function MortgageCalculatorForm({ onReset }) {
               />
             </div>
 
-            {/* Overdrachtsbelasting: gebruiksdoel bepaalt het tarief (0/1/2/8% of n.v.t.). */}
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Type aankoop (overdrachtsbelasting)
-                </span>
-                <div className="inline-flex rounded-lg border border-slate-100 bg-white p-1">
-                  {[
-                    { key: 'zelfbewoning', label: 'Bestaande bouw' },
-                    { key: 'nieuwbouw', label: 'Nieuwbouw' },
-                    { key: 'nietHoofdverblijf', label: 'Niet-hoofdverblijf' },
-                  ].map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => setPropertyUsage(option.key)}
-                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
-                        propertyUsage === option.key
-                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
-                          : 'text-slate-500 hover:text-slate-700'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {propertyUsage === 'zelfbewoning' && (
-                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:gap-6">
-                  {[
-                    {
-                      label: 'Partner 1',
-                      age: age1,
-                      checked: starterExemption1,
-                      onChange: setStarterExemption1,
-                      id: 'starterExemption1',
-                    },
-                    {
-                      label: 'Partner 2',
-                      age: hasPartner2 ? age2 : 0,
-                      checked: starterExemption2,
-                      onChange: setStarterExemption2,
-                      id: 'starterExemption2',
-                    },
-                  ]
-                    .filter((buyer) => safeNum(buyer.age) > 0)
-                    .map((buyer) => (
-                      <label
-                        key={buyer.id}
-                        htmlFor={buyer.id}
-                        className="flex cursor-pointer items-center gap-2 text-xs text-slate-600"
-                      >
-                        <input
-                          id={buyer.id}
-                          type="checkbox"
-                          checked={buyer.checked}
-                          onChange={(e) => buyer.onChange(e.target.checked)}
-                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        {buyer.label} ({buyer.age} jr): startersvrijstelling nog niet gebruikt
-                      </label>
-                    ))}
-                </div>
-              )}
-
-              <StatusBadge status={calc.transferTaxInfo.rate === 0 ? 'success' : 'info'}>
-                Overdrachtsbelasting: {calc.transferTaxInfo.label}
-                {safeNum(purchasePrice) > 0 && calc.transferTaxInfo.rate > 0 && (
-                  <> — {formatEuro(safeNum(purchasePrice) * calc.transferTaxInfo.rate)}</>
-                )}
-                . {calc.transferTaxInfo.explanation}
-              </StatusBadge>
-              {propertyUsage === 'zelfbewoning' &&
-                safeNum(purchasePrice) > STARTER_EXEMPTION_PRICE_CAP &&
-                (safeNum(age1) < 35 || safeNum(age2) < 35) && (
-                  <p className="mt-2 text-[11px] text-slate-400">
-                    De startersvrijstelling vervalt hier volledig omdat de woningwaarde boven de
-                    grens van {formatEuro(STARTER_EXEMPTION_PRICE_CAP)} (2026) ligt.
-                  </p>
-                )}
-            </div>
-
             <AnimatePresence>
               {calc.toetsrenteApplies && (
                 <motion.div
@@ -2759,133 +2676,6 @@ function MortgageCalculatorForm({ onReset }) {
                 </motion.div>
               )}
             </AnimatePresence>
-          </SectionCard>
-
-          <SectionCard
-            id="sectie-kosten-koper"
-            title="Kosten koper"
-            icon={<Receipt className="h-4 w-4" />}
-            accent="violet"
-          >
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-              <CurrencyField
-                id="notaryCosts"
-                label="Notaris"
-                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                value={notaryCosts}
-                onChange={setNotaryCosts}
-                placeholder="1.200"
-                hint="Leverings- en hypotheekakte, Kadaster"
-              />
-              <CurrencyField
-                id="valuationCosts"
-                label="Taxatie"
-                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                value={valuationCosts}
-                onChange={setValuationCosts}
-                placeholder="600"
-                hint="Fysiek taxatierapport (desktoptaxatie ~€110)"
-              />
-              <CurrencyField
-                id="advisoryCosts"
-                label="Hypotheekadvies"
-                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                value={advisoryCosts}
-                onChange={setAdvisoryCosts}
-                placeholder="2.500"
-                hint="Advies- en bemiddelingskosten"
-              />
-            </div>
-
-            <div className="mt-5 space-y-2">
-              {[
-                {
-                  id: 'includeBankGuarantee',
-                  key: 'bankGuarantee',
-                  checked: includeBankGuarantee,
-                  onChange: setIncludeBankGuarantee,
-                  label: 'Bankgarantie',
-                  hint: '~1% van de waarborgsom (10% koopsom)',
-                },
-                {
-                  id: 'includeBuyersAgent',
-                  key: 'buyersAgent',
-                  checked: includeBuyersAgent,
-                  onChange: setIncludeBuyersAgent,
-                  label: 'Aankoopmakelaar (courtage 1,2%)',
-                  hint: 'Optioneel; niet bij aankoop zonder makelaar',
-                },
-                {
-                  id: 'includeNhgFee',
-                  key: 'nhgFee',
-                  checked: includeNhgFee,
-                  onChange: setIncludeNhgFee,
-                  label: 'NHG-borgtochtprovisie (0,4%)',
-                  hint: 'Indicatief; de volledige NHG-toets (kostengrens, lagere rente) zit nog niet in deze calculator',
-                },
-              ].map((row) => {
-                const item = calc.kostenKoper.items.find((i) => i.key === row.key);
-                return (
-                  <div
-                    key={row.id}
-                    className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3"
-                  >
-                    <label
-                      htmlFor={row.id}
-                      className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-700"
-                    >
-                      <input
-                        id={row.id}
-                        type="checkbox"
-                        checked={row.checked}
-                        onChange={(e) => row.onChange(e.target.checked)}
-                        className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span>
-                        {row.label}
-                        <span className="block text-xs text-slate-400">{row.hint}</span>
-                      </span>
-                    </label>
-                    <span
-                      className={`text-sm font-semibold ${
-                        row.checked ? 'text-slate-800' : 'text-slate-300 line-through'
-                      }`}
-                    >
-                      {formatEuro(item ? item.amount : 0)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-600">
-                  Overdrachtsbelasting ({calc.transferTaxInfo.shortLabel})
-                </span>
-                <span className="font-semibold text-slate-800">
-                  {formatEuro(calc.transferTax)}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-slate-400">
-                Automatisch bepaald via het type aankoop en de startersvrijstelling in de kaart
-                Beoogde woning.
-              </p>
-              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
-                <span className="text-sm font-medium text-slate-700">
-                  Totaal kosten koper (eigen geld)
-                </span>
-                <AnimatedEuro
-                  value={calc.kostenKoper.total}
-                  className="text-xl font-bold text-slate-900"
-                />
-              </div>
-              <p className="mt-2 text-xs text-slate-400">
-                Kosten koper kunnen niet worden meegefinancierd en betaalt u uit eigen middelen.
-                Alle bedragen zijn indicatief; werkelijke tarieven verschillen per notaris,
-                taxateur en adviseur.
-              </p>
-            </div>
           </SectionCard>
         </div>
 
@@ -3018,7 +2808,7 @@ function MortgageCalculatorForm({ onReset }) {
                     icon={<User className="h-3.5 w-3.5 text-slate-400" />}
                     value={age1}
                     onChange={setAge1}
-                    placeholder="35"
+                    placeholder="36"
                     suffix="jaar"
                     min={18}
                     max={100}
@@ -3105,7 +2895,7 @@ function MortgageCalculatorForm({ onReset }) {
                     icon={<User className="h-3.5 w-3.5 text-slate-400" />}
                     value={age2}
                     onChange={setAge2}
-                    placeholder="34"
+                    placeholder="36"
                     suffix="jaar"
                     min={18}
                     max={100}
@@ -3279,6 +3069,215 @@ function MortgageCalculatorForm({ onReset }) {
                 hypotheek.
               </p>
             </SectionCard>
+
+          <SectionCard
+            id="sectie-kosten-koper"
+            title="Kosten koper"
+            icon={<Receipt className="h-4 w-4" />}
+            accent="violet"
+          >
+
+            {/* Overdrachtsbelasting: gebruiksdoel bepaalt het tarief (0/1/2/8% of n.v.t.). */}
+            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Type aankoop (overdrachtsbelasting)
+                </span>
+                <div className="inline-flex rounded-lg border border-slate-100 bg-white p-1">
+                  {[
+                    { key: 'zelfbewoning', label: 'Bestaande bouw' },
+                    { key: 'nieuwbouw', label: 'Nieuwbouw' },
+                    { key: 'nietHoofdverblijf', label: 'Niet-hoofdverblijf' },
+                  ].map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setPropertyUsage(option.key)}
+                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        propertyUsage === option.key
+                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {propertyUsage === 'zelfbewoning' && (
+                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:gap-6">
+                  {[
+                    {
+                      label: 'Partner 1',
+                      age: age1,
+                      checked: starterExemption1,
+                      onChange: setStarterExemption1,
+                      id: 'starterExemption1',
+                    },
+                    {
+                      label: 'Partner 2',
+                      age: hasPartner2 ? age2 : 0,
+                      checked: starterExemption2,
+                      onChange: setStarterExemption2,
+                      id: 'starterExemption2',
+                    },
+                  ]
+                    .filter((buyer) => safeNum(buyer.age) > 0)
+                    .map((buyer) => (
+                      <label
+                        key={buyer.id}
+                        htmlFor={buyer.id}
+                        className="flex cursor-pointer items-center gap-2 text-xs text-slate-600"
+                      >
+                        <input
+                          id={buyer.id}
+                          type="checkbox"
+                          checked={buyer.checked}
+                          onChange={(e) => buyer.onChange(e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        {buyer.label} ({buyer.age} jr): startersvrijstelling nog niet gebruikt
+                      </label>
+                    ))}
+                </div>
+              )}
+
+              <StatusBadge status={calc.transferTaxInfo.rate === 0 ? 'success' : 'info'}>
+                Overdrachtsbelasting: {calc.transferTaxInfo.label}
+                {safeNum(purchasePrice) > 0 && calc.transferTaxInfo.rate > 0 && (
+                  <> — {formatEuro(safeNum(purchasePrice) * calc.transferTaxInfo.rate)}</>
+                )}
+                . {calc.transferTaxInfo.explanation}
+              </StatusBadge>
+              {propertyUsage === 'zelfbewoning' &&
+                safeNum(purchasePrice) > STARTER_EXEMPTION_PRICE_CAP &&
+                (safeNum(age1) < 35 || safeNum(age2) < 35) && (
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    De startersvrijstelling vervalt hier volledig omdat de woningwaarde boven de
+                    grens van {formatEuro(STARTER_EXEMPTION_PRICE_CAP)} (2026) ligt.
+                  </p>
+                )}
+            </div>
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <CurrencyField
+                id="notaryCosts"
+                label="Notaris"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={notaryCosts}
+                onChange={setNotaryCosts}
+                placeholder="1.200"
+                hint="Leverings- en hypotheekakte, Kadaster"
+              />
+              <CurrencyField
+                id="valuationCosts"
+                label="Taxatie"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={valuationCosts}
+                onChange={setValuationCosts}
+                placeholder="600"
+                hint="Fysiek taxatierapport (desktoptaxatie ~€110)"
+              />
+              <CurrencyField
+                id="advisoryCosts"
+                label="Hypotheekadvies"
+                icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                value={advisoryCosts}
+                onChange={setAdvisoryCosts}
+                placeholder="2.500"
+                hint="Advies- en bemiddelingskosten"
+              />
+            </div>
+
+            <div className="mt-5 space-y-2">
+              {[
+                {
+                  id: 'includeBankGuarantee',
+                  key: 'bankGuarantee',
+                  checked: includeBankGuarantee,
+                  onChange: setIncludeBankGuarantee,
+                  label: 'Bankgarantie',
+                  hint: '~1% van de waarborgsom (10% koopsom)',
+                },
+                {
+                  id: 'includeBuyersAgent',
+                  key: 'buyersAgent',
+                  checked: includeBuyersAgent,
+                  onChange: setIncludeBuyersAgent,
+                  label: 'Aankoopmakelaar (courtage 1,2%)',
+                  hint: 'Optioneel; niet bij aankoop zonder makelaar',
+                },
+                {
+                  id: 'includeNhgFee',
+                  key: 'nhgFee',
+                  checked: includeNhgFee,
+                  onChange: setIncludeNhgFee,
+                  label: 'NHG-borgtochtprovisie (0,4%)',
+                  hint: 'Indicatief; de volledige NHG-toets (kostengrens, lagere rente) zit nog niet in deze calculator',
+                },
+              ].map((row) => {
+                const item = calc.kostenKoper.items.find((i) => i.key === row.key);
+                return (
+                  <div
+                    key={row.id}
+                    className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3"
+                  >
+                    <label
+                      htmlFor={row.id}
+                      className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-700"
+                    >
+                      <input
+                        id={row.id}
+                        type="checkbox"
+                        checked={row.checked}
+                        onChange={(e) => row.onChange(e.target.checked)}
+                        className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>
+                        {row.label}
+                        <span className="block text-xs text-slate-400">{row.hint}</span>
+                      </span>
+                    </label>
+                    <span
+                      className={`text-sm font-semibold ${
+                        row.checked ? 'text-slate-800' : 'text-slate-300 line-through'
+                      }`}
+                    >
+                      {formatEuro(item ? item.amount : 0)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-600">
+                  Overdrachtsbelasting ({calc.transferTaxInfo.shortLabel})
+                </span>
+                <span className="font-semibold text-slate-800">
+                  {formatEuro(calc.transferTax)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-slate-400">
+                Automatisch bepaald via het type aankoop en de startersvrijstelling hierboven.
+              </p>
+              <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+                <span className="text-sm font-medium text-slate-700">
+                  Totaal kosten koper (eigen geld)
+                </span>
+                <AnimatedEuro
+                  value={calc.kostenKoper.total}
+                  className="text-xl font-bold text-slate-900"
+                />
+              </div>
+              <p className="mt-2 text-xs text-slate-400">
+                Kosten koper kunnen niet worden meegefinancierd en betaalt u uit eigen middelen.
+                Alle bedragen zijn indicatief; werkelijke tarieven verschillen per notaris,
+                taxateur en adviseur.
+              </p>
+            </div>
+          </SectionCard>
           </div>
 
           <div id="sectie-resultaat" className="lg:sticky lg:top-10 lg:col-span-2 lg:col-start-4 lg:row-start-1">
