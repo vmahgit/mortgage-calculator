@@ -24,11 +24,13 @@ function num(value) {
   return isNaN(n) || !isFinite(n) ? 0 : n;
 }
 
+// De labels bevatten bewust een korte gevolg-aanduiding, zichtbaar zodra je de
+// dropdown openklapt — dus vóórdat je kiest, niet pas erna.
 export const INCOME_TYPES = {
   vast: 'Loondienst, vast contract',
-  flexMet: 'Flexcontract mét intentieverklaring',
-  flexZonder: 'Flexcontract zónder intentieverklaring',
-  zzp: 'ZZP / ondernemer',
+  flexMet: 'Flexcontract mét intentieverklaring (telt volledig mee)',
+  flexZonder: 'Flexcontract zónder intentieverklaring (vraagt 3 jaarcijfers)',
+  zzp: 'ZZP / ondernemer (vraagt 3 jaarcijfers)',
 };
 
 export function getToetsinkomen({

@@ -2323,6 +2323,76 @@ function MortgageCalculatorForm({ onReset }) {
     ? combinedGapCalc.withinCapacity
     : calc.incomeBasedMax >= safeNum(purchasePrice);
 
+  // "Wat bepaalt nu mijn maximum?" — maakt de causaliteit achter het getal zichtbaar
+  // i.p.v. dat een schuif alleen een nieuw bedrag oplevert zonder uitleg waarom. Eén
+  // factor tegelijk, in volgorde van "meest bepalend": een harde blokkade (schulden,
+  // AOW-toets, restschuld, bijleenruimte) weegt zwaarder dan de normale, verwachte
+  // grondslag (woonquote/inkomen of de aanschafprijs als plafond).
+  const bindingFactor = useMemo(() => {
+    if (calc.combinedIncome <= 0) return null;
+    if (calc.isOverIndebted) {
+      return {
+        label: 'Uw schulden',
+        explanation:
+          'De maandlasten van uw bestaande schulden zijn hoger dan de maximale woonlast die uw inkomen toestaat — dat drukt uw hypotheek nu naar beneden.',
+      };
+    }
+    if (calc.pensionBinding) {
+      return {
+        label: 'De AOW-toets',
+        explanation:
+          'Binnen 10 jaar van de AOW-leeftijd telt het (lagere) verwachte pensioeninkomen zwaarder dan uw huidige inkomen.',
+      };
+    }
+    if (hasExistingHome) {
+      if (combinedGapCalc.exceedsLenderCap) {
+        return {
+          label: 'De €1 miljoen-grens',
+          explanation:
+            'Uw totale hypotheek (meegenomen plus aanvullend) komt boven de grens die sommige geldverstrekkers hanteren voor extra acceptatie-eisen.',
+        };
+      }
+      if (currentMortgage.restschuldTekort > 0) {
+        return {
+          label: 'De restschuld bij onderwaarde',
+          explanation:
+            'De verkoopwaarde van uw huidige woning dekt de restschuld niet volledig; dat tekort vergroot het financieringsgat.',
+        };
+      }
+      if (!combinedGapCalc.withinCapacity) {
+        return {
+          label: 'Uw bijleenruimte',
+          explanation:
+            'De aanvullende hypotheek die nodig is voor deze aanschafprijs past niet binnen wat u op basis van inkomen (nog) kunt bijlenen.',
+        };
+      }
+      if (currentMortgage.hasRateRiskOnPortedDebt) {
+        return {
+          label: 'Het renterisico op uw meegenomen hypotheek',
+          explanation:
+            'Een deel van uw huidige hypotheek heeft een rentevastperiode korter dan 10 jaar en wordt daarom getoetst tegen de hogere AFM-toetsrente.',
+        };
+      }
+      return {
+        label: 'Uw woonquote (inkomen)',
+        explanation:
+          'Er speelt op dit moment geen bijzondere beperking — uw inkomen via de Nibud-woonquote is de normale grondslag voor uw bijleenruimte.',
+      };
+    }
+    if (calc.cappedByPropertyValue) {
+      return {
+        label: 'De aanschafprijs',
+        explanation:
+          'Uw inkomen staat een hogere hypotheek toe, maar een hypotheek kan nooit boven de aanschafprijs uitkomen (max. 100% LTV).',
+      };
+    }
+    return {
+      label: 'Uw woonquote (inkomen)',
+      explanation:
+        'Er speelt op dit moment geen bijzondere beperking — uw inkomen via de Nibud-woonquote bepaalt uw maximale hypotheek.',
+    };
+  }, [calc, currentMortgage, combinedGapCalc, hasExistingHome]);
+
   // Dit is bewust GEEN wizard met gating: elke sectie is altijd tegelijk zichtbaar en in
   // elke volgorde te bewerken. De chips hieronder zijn dus anker-navigatie ("spring naar"),
   // geen stappenteller — vandaar geen verbindingslijnen en geen cumulatieve voortgangsbalk.
@@ -3262,6 +3332,29 @@ function MortgageCalculatorForm({ onReset }) {
                   ? 'Begrensd door aanschafprijs'
                   : 'Haalbaar op basis van inkomen'}
               </motion.div>
+
+              <AnimatePresence mode="wait">
+                {bindingFactor && (
+                  <motion.div
+                    key={bindingFactor.label}
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 4 }}
+                    transition={{ duration: 0.2 }}
+                    className="mb-5 rounded-xl bg-white/10 px-4 py-3"
+                  >
+                    <p className="text-[11px] uppercase tracking-wide text-blue-200">
+                      Bepalend voor uw maximum nu
+                    </p>
+                    <p className="mt-0.5 text-sm font-semibold text-white">
+                      {bindingFactor.label}
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-blue-100/80">
+                      {bindingFactor.explanation}
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="space-y-1">
                 <p className="text-sm text-blue-100">
