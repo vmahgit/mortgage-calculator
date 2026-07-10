@@ -33,6 +33,8 @@ import {
   getTransferTaxRate,
   getKostenKoperBreakdown,
   STARTER_EXEMPTION_PRICE_CAP,
+  STARTER_EXEMPTION_MIN_AGE,
+  STARTER_EXEMPTION_MAX_AGE,
   KOSTEN_KOPER_DEFAULTS,
 } from './kostenKoper';
 
@@ -57,7 +59,24 @@ function getEnergyBonus(label) {
 
 const AFLOSVORMEN = ['Annuïteit', 'Lineair', 'Aflossingsvrij'];
 const TERM_MONTHS = 360;
-const HRA_RATE = 0.3756;
+// Hypotheekrenteaftrek 2026: sinds 2023 wettelijk begrensd op maximaal het tarief van de
+// tweede belastingschijf in box 1 (37,56% in 2026) — ook wie in de hoogste schijf
+// (49,50%) valt, trekt dus nooit meer af dan dit plafond. Wie met zijn/haar toetsinkomen
+// echter volledig binnen de eerste schijf blijft, trekt af tegen het (lagere)
+// eerste-schijftarief van 35,70%, niet tegen het plafond.
+// Bron: Belastingdienst/Prinsjesdag 2026, box 1-schijven en aftrektarief eigen woning.
+const HRA_RATE_BRACKET1 = 0.357;
+const HRA_RATE_CAP = 0.3756;
+const HRA_BRACKET1_THRESHOLD = 38883;
+
+// Bepaalt het toepasselijke HRA-tarief op basis van de (toets)inkomens van de
+// aanvrager(s): zodra minstens één aanvrager boven de eerste schijf uitkomt, kan het
+// rentevoordeel aan diegene toegerekend worden tegen het gecapte tarief.
+function getHraRate(...incomes) {
+  const maxIncome = Math.max(0, ...incomes.map((v) => (isNaN(v) ? 0 : v)));
+  return maxIncome > HRA_BRACKET1_THRESHOLD ? HRA_RATE_CAP : HRA_RATE_BRACKET1;
+}
+
 const EWF_RATE = 0.0035;
 const EWF_CAP = 1350000;
 const SCENARIO_PERCENTAGES = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
@@ -1254,7 +1273,7 @@ function MortgageCalculatorForm({ onReset }) {
   const [rate, setRate] = useState(4.0);
   const [fixedRatePeriod, setFixedRatePeriod] = useState(10);
   const [energyLabel, setEnergyLabel] = useState('A');
-  const [purchasePrice, setPurchasePrice] = useState(100000);
+  const [purchasePrice, setPurchasePrice] = useState(1000000);
   // Standaard twee aanvragers; schakelbaar naar één aanvrager (Partner 2 telt dan
   // nergens in de berekening mee, ongeacht wat er nog in die velden staat).
   const [hasPartner2, setHasPartner2] = useState(true);
@@ -1267,8 +1286,11 @@ function MortgageCalculatorForm({ onReset }) {
   // Overdrachtsbelasting: gebruiksdoel van de beoogde woning en, per koper, of de
   // startersvrijstelling nog beschikbaar is (niet eerder gebruikt).
   const [propertyUsage, setPropertyUsage] = useState('zelfbewoning');
-  const [starterExemption1, setStarterExemption1] = useState(true);
-  const [starterExemption2, setStarterExemption2] = useState(true);
+  // Default op "al gebruikt" (dus geen vrijstelling meer): de gebruiker moet actief
+  // aangeven dat de startersvrijstelling nog beschikbaar is, in plaats van dat de tool
+  // dit optimistisch aanneemt.
+  const [starterExemption1, setStarterExemption1] = useState(false);
+  const [starterExemption2, setStarterExemption2] = useState(false);
 
   // Kosten koper: per post aanpasbare bedragen en aan/uit te zetten posten, met
   // realistische 2026-defaults (zie kostenKoper.js).
@@ -1282,6 +1304,9 @@ function MortgageCalculatorForm({ onReset }) {
   const [includeBankGuarantee, setIncludeBankGuarantee] = useState(true);
   const [includeBuyersAgent, setIncludeBuyersAgent] = useState(false);
   const [includeNhgFee, setIncludeNhgFee] = useState(false);
+  // Eigenwoningforfait verlaagt het netto belastingvoordeel, maar staat default uit: de
+  // gebruiker moet deze verfijning bewust aanzetten in de netto-weergave.
+  const [includeEwfInNetCalc, setIncludeEwfInNetCalc] = useState(false);
   // Kosten koper worden altijd berekend en getoond, maar tellen standaard NIET mee in de
   // rest van de berekening (geschat eigen geld, dubbele-lastentoets) - pas na expliciete
   // keuze van de gebruiker.
@@ -1689,8 +1714,9 @@ function MortgageCalculatorForm({ onReset }) {
       0
     );
 
-    const taxBenefit = deductibleInterest * HRA_RATE;
-    const ewfYearly = EWF_RATE * Math.min(safeNum(marketValue), EWF_CAP);
+    const hraRate = getHraRate(calc.toets1.toetsinkomen, calc.toets2.toetsinkomen);
+    const taxBenefit = deductibleInterest * hraRate;
+    const ewfYearly = includeEwfInNetCalc ? EWF_RATE * Math.min(safeNum(marketValue), EWF_CAP) : 0;
     const ewfMonthly = ewfYearly / 12;
     const netTaxBenefit = taxBenefit - ewfMonthly;
     const totalNet = totalGross - netTaxBenefit;
@@ -1757,6 +1783,7 @@ function MortgageCalculatorForm({ onReset }) {
       totalGross,
       totalInterest,
       totalPrincipal,
+      hraRate,
       taxBenefit,
       ewfMonthly,
       netTaxBenefit,
@@ -1777,7 +1804,15 @@ function MortgageCalculatorForm({ onReset }) {
       saleValueForFinancing,
       restschuldTekort,
     };
-  }, [loanParts, startDate, marketValue, saleDiscountPercentage, calc, takeOverMortgage]);
+  }, [
+    loanParts,
+    startDate,
+    marketValue,
+    saleDiscountPercentage,
+    calc,
+    takeOverMortgage,
+    includeEwfInNetCalc,
+  ]);
 
   const newHomeCalc = useMemo(() => {
     const price = safeNum(purchasePrice);
@@ -1867,6 +1902,7 @@ function MortgageCalculatorForm({ onReset }) {
     const basePrice = safeNum(purchasePrice);
     const r = safeNum(rate) / 100 / 12;
     const capFactor = getCapitalizationFactor(safeNum(rate));
+    const hraRate = getHraRate(calc.toets1.toetsinkomen, calc.toets2.toetsinkomen);
 
     const portedDebt = hasExistingHome ? currentMortgage.portedDebt : 0;
     const overwaarde = hasExistingHome ? currentMortgage.usableOverwaarde : 0;
@@ -1895,13 +1931,13 @@ function MortgageCalculatorForm({ onReset }) {
             todayIso
           );
           grossMonthly += result.grossMonthly;
-          if (result.eligibleForHRA) taxBenefit += result.interestMonthly * HRA_RATE;
+          if (result.eligibleForHRA) taxBenefit += result.interestMonthly * hraRate;
         });
         return { grossMonthly, taxBenefit };
       }
       // Nog geen leningdelen ingevuld: generieke annuïteit tegen de hypotheekrente.
       const grossMonthly = capFactor > 0 ? additionalMortgage / capFactor : 0;
-      const taxBenefit = additionalMortgage * r * HRA_RATE;
+      const taxBenefit = additionalMortgage * r * hraRate;
       return { grossMonthly, taxBenefit };
     };
 
@@ -1921,7 +1957,7 @@ function MortgageCalculatorForm({ onReset }) {
       // Eigenwoningforfait geldt één keer, over de waarde van de (ene) woning die u na de
       // verhuizing bezit — dus gebaseerd op de beoogde aanschafprijs, niet (nogmaals) op de
       // marktwaarde van de huidige, dan al verkochte woning.
-      const ewfMonthly = (EWF_RATE * Math.min(price, EWF_CAP)) / 12;
+      const ewfMonthly = includeEwfInNetCalc ? (EWF_RATE * Math.min(price, EWF_CAP)) / 12 : 0;
       const netMonthly = grossMonthly - portedTaxBenefit - newTaxBenefit + ewfMonthly;
 
       const exceedsCapacity = additionalMortgage > extraBorrowCapacity;
@@ -1947,6 +1983,7 @@ function MortgageCalculatorForm({ onReset }) {
     currentMortgage,
     additionalLoanParts,
     todayIso,
+    includeEwfInNetCalc,
   ]);
 
   const additionalLoanCalc = useMemo(() => {
@@ -1962,7 +1999,8 @@ function MortgageCalculatorForm({ onReset }) {
       (sum, p) => sum + (p.eligibleForHRA ? p.interestMonthly : 0),
       0
     );
-    const taxBenefit = deductibleInterest * HRA_RATE;
+    const hraRate = getHraRate(calc.toets1.toetsinkomen, calc.toets2.toetsinkomen);
+    const taxBenefit = deductibleInterest * hraRate;
     const totalNet = totalGross - taxBenefit;
     const netInterestComponent = Math.max(0, totalInterest - taxBenefit);
 
@@ -2025,6 +2063,7 @@ function MortgageCalculatorForm({ onReset }) {
       totalGross,
       totalInterest,
       totalAflossing,
+      hraRate,
       taxBenefit,
       totalNet,
       netInterestComponent,
@@ -2103,7 +2142,8 @@ function MortgageCalculatorForm({ onReset }) {
       (sum, p) => sum + (p.eligibleForHRA ? p.interestMonthly : 0),
       0
     );
-    const taxBenefit = deductibleInterest * HRA_RATE;
+    const hraRate = getHraRate(calc.toets1.toetsinkomen, calc.toets2.toetsinkomen);
+    const taxBenefit = deductibleInterest * hraRate;
     const totalNet = totalGross - taxBenefit;
     const netInterestComponent = Math.max(0, totalInterest - taxBenefit);
 
@@ -2117,12 +2157,17 @@ function MortgageCalculatorForm({ onReset }) {
     const newLtv = priceNum > 0 ? (totalPrincipal / priceNum) * 100 : 0;
     const withinLtvCap = priceNum === 0 || totalPrincipal <= priceNum;
     const matchesRequired = Math.abs(totalPrincipal - starterRequiredMortgage) < 1;
+    // Sommige geldverstrekkers hanteren een interne acceptatiegrens van €1 miljoen voor
+    // de totale hypotheeksom, ongeacht starter of doorstromer (zie ook combinedGapCalc/
+    // additionalLoanCalc hierboven, waar dezelfde grens al gold voor doorstromers).
+    const exceedsLenderCap = totalPrincipal > LENDER_CAP_THRESHOLD;
 
     return {
       totalPrincipal,
       totalGross,
       totalInterest,
       totalAflossing,
+      hraRate,
       taxBenefit,
       totalNet,
       netInterestComponent,
@@ -2132,8 +2177,16 @@ function MortgageCalculatorForm({ onReset }) {
       newLtv,
       withinLtvCap,
       matchesRequired,
+      exceedsLenderCap,
     };
-  }, [starterLoanParts, todayIso, purchasePrice, aflossingsvrijMaxPct, starterRequiredMortgage]);
+  }, [
+    starterLoanParts,
+    todayIso,
+    purchasePrice,
+    aflossingsvrijMaxPct,
+    starterRequiredMortgage,
+    calc,
+  ]);
 
   const autoDistributeStarterLoan = () => {
     const needed = starterRequiredMortgage;
@@ -3178,9 +3231,9 @@ function MortgageCalculatorForm({ onReset }) {
                 </div>
               </div>
 
-              {propertyUsage === 'zelfbewoning' && (
-                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:gap-6">
-                  {[
+              {propertyUsage === 'zelfbewoning' &&
+                (() => {
+                  const buyers = [
                     {
                       label: 'Partner 1',
                       age: age1,
@@ -3195,26 +3248,54 @@ function MortgageCalculatorForm({ onReset }) {
                       onChange: setStarterExemption2,
                       id: 'starterExemption2',
                     },
-                  ]
-                    .filter((buyer) => safeNum(buyer.age) > 0)
-                    .map((buyer) => (
-                      <label
-                        key={buyer.id}
-                        htmlFor={buyer.id}
-                        className="flex cursor-pointer items-center gap-2 text-xs text-slate-600"
-                      >
-                        <input
-                          id={buyer.id}
-                          type="checkbox"
-                          checked={buyer.checked}
-                          onChange={(e) => buyer.onChange(e.target.checked)}
-                          className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        {buyer.label} ({buyer.age} jr): startersvrijstelling nog niet gebruikt
-                      </label>
-                    ))}
-                </div>
-              )}
+                  ].filter((buyer) => safeNum(buyer.age) > 0);
+                  // Startersvrijstelling is afhankelijk van leeftijd (18 t/m 34 jaar): het
+                  // vinkje wordt alleen getoond — en telt dus alleen mee — binnen die
+                  // leeftijdsgrens, in plaats van een inert vinkje te tonen dat toch geen
+                  // effect heeft.
+                  const eligible = buyers.filter(
+                    (b) =>
+                      safeNum(b.age) >= STARTER_EXEMPTION_MIN_AGE &&
+                      safeNum(b.age) <= STARTER_EXEMPTION_MAX_AGE
+                  );
+                  const ineligible = buyers.filter(
+                    (b) =>
+                      safeNum(b.age) < STARTER_EXEMPTION_MIN_AGE ||
+                      safeNum(b.age) > STARTER_EXEMPTION_MAX_AGE
+                  );
+                  return (
+                    <div className="mb-3 space-y-2">
+                      {eligible.length > 0 && (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
+                          {eligible.map((buyer) => (
+                            <label
+                              key={buyer.id}
+                              htmlFor={buyer.id}
+                              className="flex cursor-pointer items-center gap-2 text-xs text-slate-600"
+                            >
+                              <input
+                                id={buyer.id}
+                                type="checkbox"
+                                checked={buyer.checked}
+                                onChange={(e) => buyer.onChange(e.target.checked)}
+                                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              />
+                              {buyer.label} ({buyer.age} jr): startersvrijstelling nog niet
+                              gebruikt
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {ineligible.length > 0 && (
+                        <p className="text-[11px] text-slate-400">
+                          {ineligible.map((b) => `${b.label} (${b.age} jr)`).join(' en ')}{' '}
+                          {ineligible.length === 1 ? 'komt' : 'komen'} door de leeftijd niet in
+                          aanmerking voor de startersvrijstelling (alleen 18 t/m 34 jaar).
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
 
               <StatusBadge status={calc.transferTaxInfo.rate === 0 ? 'success' : 'info'}>
                 Overdrachtsbelasting: {calc.transferTaxInfo.label}
@@ -3651,6 +3732,27 @@ function MortgageCalculatorForm({ onReset }) {
                 </div>
               </div>
 
+              <AnimatePresence>
+                {starterLoanCalc.exceedsLenderCap && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                    transition={{ duration: 0.25, ease: 'easeOut' }}
+                    className="mt-4"
+                  >
+                    <StatusBadge status="warning">
+                      Let op: uw totale hypotheek voor de nieuwe woning komt uit op{' '}
+                      {formatEuro(starterLoanCalc.totalPrincipal)}, boven de{' '}
+                      {formatEuro(LENDER_CAP_THRESHOLD)} grens die sommige geldverstrekkers
+                      hanteren. Dit kan aanvullende acceptatie-eisen of een ander
+                      acceptatietraject betekenen — niet elke geldverstrekker verstrekt
+                      hypotheken boven dit bedrag.
+                    </StatusBadge>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-6">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -3774,8 +3876,9 @@ function MortgageCalculatorForm({ onReset }) {
 
                   {starterViewMode === 'netto' && (
                     <p className="mt-3 text-xs text-slate-400">
-                      Belastingvoordeel HRA (37,56%): {formatEuro(starterLoanCalc.taxBenefit)} per
-                      maand. Eigenwoningforfait is hier niet apart verwerkt.
+                      Belastingvoordeel HRA ({formatRate(starterLoanCalc.hraRate * 100)}):{' '}
+                      {formatEuro(starterLoanCalc.taxBenefit)} per maand. Eigenwoningforfait is
+                      hier niet apart verwerkt.
                     </p>
                   )}
                 </div>
@@ -4035,25 +4138,49 @@ function MortgageCalculatorForm({ onReset }) {
                     )}
 
                     {viewMode === 'netto' && (
-                      <div className="mt-5 grid grid-cols-1 gap-3 rounded-xl border border-slate-100 bg-white p-4 text-xs text-slate-500 sm:grid-cols-3">
-                        <div className="flex items-center justify-between sm:flex-col sm:items-start sm:gap-1">
-                          <span>Belastingvoordeel HRA (37,56%)</span>
-                          <span className="font-semibold text-slate-700">
-                            {formatEuro(currentMortgage.taxBenefit)}
-                          </span>
+                      <div className="mt-5 space-y-3">
+                        <div className="grid grid-cols-1 gap-3 rounded-xl border border-slate-100 bg-white p-4 text-xs text-slate-500 sm:grid-cols-3">
+                          <div className="flex items-center justify-between sm:flex-col sm:items-start sm:gap-1">
+                            <span>
+                              Belastingvoordeel HRA ({formatRate(currentMortgage.hraRate * 100)})
+                            </span>
+                            <span className="font-semibold text-slate-700">
+                              {formatEuro(currentMortgage.taxBenefit)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between sm:flex-col sm:items-start sm:gap-1">
+                            <span>Correctie eigenwoningforfait</span>
+                            <span className="font-semibold text-slate-700">
+                              -{formatEuro(currentMortgage.ewfMonthly)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between sm:flex-col sm:items-start sm:gap-1">
+                            <span>Netto belastingvoordeel</span>
+                            <span className="font-semibold text-slate-700">
+                              {formatEuro(currentMortgage.netTaxBenefit)}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-between sm:flex-col sm:items-start sm:gap-1">
-                          <span>Correctie eigenwoningforfait</span>
-                          <span className="font-semibold text-slate-700">
-                            -{formatEuro(currentMortgage.ewfMonthly)}
+                        <label
+                          htmlFor="includeEwfInNetCalc"
+                          className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3 text-xs text-slate-600"
+                        >
+                          <input
+                            id="includeEwfInNetCalc"
+                            type="checkbox"
+                            checked={includeEwfInNetCalc}
+                            onChange={(e) => setIncludeEwfInNetCalc(e.target.checked)}
+                            className="mt-0.5 h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span>
+                            Eigenwoningforfait meenemen in de netto berekening
+                            <span className="block text-[11px] text-slate-400">
+                              Standaard uit: het eigenwoningforfait is een fiscale bijtelling die
+                              uw netto belastingvoordeel iets verlaagt. Vinkt u dit aan, dan wordt
+                              die correctie hierboven en in de scenario-analyse verwerkt.
+                            </span>
                           </span>
-                        </div>
-                        <div className="flex items-center justify-between sm:flex-col sm:items-start sm:gap-1">
-                          <span>Netto belastingvoordeel</span>
-                          <span className="font-semibold text-slate-700">
-                            {formatEuro(currentMortgage.netTaxBenefit)}
-                          </span>
-                        </div>
+                        </label>
                       </div>
                     )}
 
@@ -4596,8 +4723,9 @@ function MortgageCalculatorForm({ onReset }) {
 
                         {additionalViewMode === 'netto' && (
                           <p className="mt-3 text-xs text-slate-400">
-                            Belastingvoordeel HRA (37,56%): {formatEuro(additionalLoanCalc.taxBenefit)}{' '}
-                            per maand. Eigenwoningforfait is hier niet apart verwerkt, aangezien
+                            Belastingvoordeel HRA ({formatRate(additionalLoanCalc.hraRate * 100)}):{' '}
+                            {formatEuro(additionalLoanCalc.taxBenefit)} per maand.
+                            Eigenwoningforfait is hier niet apart verwerkt, aangezien
                             dat een eigenschap is van de hele woning en niet van dit ene
                             leningdeel.
                           </p>
