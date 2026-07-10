@@ -24,11 +24,14 @@ import {
   Briefcase,
   RotateCcw,
   BookOpen,
+  HardHat,
+  Calculator,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
 import BorderGlow from './BorderGlow';
 import SectionRail, { useScrollSpy } from './SectionRail';
+import { getBouwdepotEstimate } from './bouwdepot';
 import { getIncomeBasedMortgage } from './nibud2026';
 import { getToetsinkomen, INCOME_TYPES } from './toetsinkomen';
 import {
@@ -1294,6 +1297,13 @@ function MortgageCalculatorForm({ onReset }) {
   const [starterExemption1, setStarterExemption1] = useState(false);
   const [starterExemption2, setStarterExemption2] = useState(false);
 
+  // Nieuwbouw: bouwdepot-bedrag (leeg = valt terug op de aanschafprijs) en de verwachte
+  // bouwperiode in maanden, voor de indicatieve rente-tijdens-de-bouw-schatting
+  // (zie bouwdepot.js). Alleen relevant/zichtbaar bij propertyUsage === 'nieuwbouw'.
+  const [bouwdepotAmount, setBouwdepotAmount] = useState('');
+  const [constructionMonths, setConstructionMonths] = useState(12);
+  const [showBouwdepotCard, setShowBouwdepotCard] = useState(true);
+
   // Kosten koper: per post aanpasbare bedragen en aan/uit te zetten posten, met
   // realistische 2026-defaults (zie kostenKoper.js).
   const [notaryCosts, setNotaryCosts] = useState(String(KOSTEN_KOPER_DEFAULTS.notaryCosts));
@@ -1314,6 +1324,7 @@ function MortgageCalculatorForm({ onReset }) {
   // keuze van de gebruiker.
   const [includeKostenKoperInCalc, setIncludeKostenKoperInCalc] = useState(false);
   const [showKostenKoperCard, setShowKostenKoperCard] = useState(false);
+  const [showAuditTrail, setShowAuditTrail] = useState(false);
 
   // Betaalde partneralimentatie per aanvrager (bruto per maand): gaat ×12 van het
   // toetsinkomen af, vóór de woonquote-bepaling (zie toetsinkomen.js).
@@ -1345,6 +1356,8 @@ function MortgageCalculatorForm({ onReset }) {
   const [avgBonus2, setAvgBonus2] = useState('0');
 
   const [showCurrentMortgage, setShowCurrentMortgage] = useState(true);
+  const [showBijleenruimte, setShowBijleenruimte] = useState(true);
+  const [showAanvullendeHypotheek, setShowAanvullendeHypotheek] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
@@ -1446,6 +1459,13 @@ function MortgageCalculatorForm({ onReset }) {
   const updateStarterLoanPart = (id, field, value) => {
     setStarterLoanParts((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
   };
+
+  // Bij nieuwbouw koopt u doorgaans rechtstreeks van de projectontwikkelaar, zonder
+  // aankoopmakelaar — dus zet die kostenpost automatisch uit zodra nieuwbouw wordt
+  // gekozen. Blijft een bewuste, aanpasbare keuze: de gebruiker kan 'm zelf weer aanzetten.
+  useEffect(() => {
+    if (propertyUsage === 'nieuwbouw') setIncludeBuyersAgent(false);
+  }, [propertyUsage]);
 
   const calc = useMemo(() => {
     // Toetsinkomen per aanvrager (toetsinkomen.js): afhankelijk van het inkomenstype
@@ -1635,6 +1655,11 @@ function MortgageCalculatorForm({ onReset }) {
       maxWoonlastMonthly: nibud.maxWoonlastMonthly,
       energyBonus,
       debtDeduction,
+      otherDebtMonthly,
+      studyDebtMonthly,
+      monthlyDebt,
+      availableMonthly: nibud.availableMonthly,
+      annuityFactor: nibud.annuityFactor,
       incomeBasedMax,
       incomeBasedMaxAtActualRate,
       cappedByPropertyValue,
@@ -1700,6 +1725,19 @@ function MortgageCalculatorForm({ onReset }) {
     avgBonus2,
     hasPartner2,
   ]);
+
+  // Bouwdepot (nieuwbouw): puur informatief, telt niet mee in de leencapaciteit. Leeg
+  // bouwdepotAmount valt terug op de aanschafprijs als redelijke default.
+  const bouwdepotCalc = useMemo(() => {
+    if (propertyUsage !== 'nieuwbouw') return null;
+    const effectiveAmount =
+      safeNum(bouwdepotAmount) > 0 ? safeNum(bouwdepotAmount) : safeNum(purchasePrice);
+    return getBouwdepotEstimate({
+      bouwdepotAmount: effectiveAmount,
+      constructionMonths,
+      ratePct: safeNum(rate),
+    });
+  }, [propertyUsage, bouwdepotAmount, purchasePrice, constructionMonths, rate]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
 
@@ -2479,12 +2517,15 @@ function MortgageCalculatorForm({ onReset }) {
       { id: 'sectie-inkomen', label: 'Inkomen' },
       { id: 'sectie-schulden', label: 'Schulden' },
       { id: 'sectie-kosten-koper', label: 'Kosten koper' },
+      ...(propertyUsage === 'nieuwbouw'
+        ? [{ id: 'sectie-bouwdepot', label: 'Bouwdepot' }]
+        : []),
       hasExistingHome
         ? { id: 'sectie-huidige-woning', label: 'Huidige woning' }
         : { id: 'sectie-starter-hypotheek', label: 'Uw hypotheek' },
       { id: 'sectie-resultaat', label: 'Resultaat' },
     ],
-    [hasExistingHome]
+    [hasExistingHome, propertyUsage]
   );
   const railIds = useMemo(() => railSections.map((s) => s.id), [railSections]);
   const { active: activeSectionId, progress: sectionProgress } = useScrollSpy(railIds);
@@ -2802,6 +2843,117 @@ function MortgageCalculatorForm({ onReset }) {
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* Overdrachtsbelasting: gebruiksdoel bepaalt het tarief (0/1/2/8% of n.v.t.). */}
+            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Type aankoop (overdrachtsbelasting)
+                </span>
+                <div className="inline-flex rounded-lg border border-slate-100 bg-white p-1">
+                  {[
+                    { key: 'zelfbewoning', label: 'Bestaande bouw' },
+                    { key: 'nieuwbouw', label: 'Nieuwbouw' },
+                    { key: 'nietHoofdverblijf', label: 'Niet-hoofdverblijf' },
+                  ].map((option) => (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setPropertyUsage(option.key)}
+                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        propertyUsage === option.key
+                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {propertyUsage === 'zelfbewoning' &&
+                (() => {
+                  const buyers = [
+                    {
+                      label: 'Partner 1',
+                      age: age1,
+                      checked: starterExemption1,
+                      onChange: setStarterExemption1,
+                      id: 'starterExemption1',
+                    },
+                    {
+                      label: 'Partner 2',
+                      age: hasPartner2 ? age2 : 0,
+                      checked: starterExemption2,
+                      onChange: setStarterExemption2,
+                      id: 'starterExemption2',
+                    },
+                  ].filter((buyer) => safeNum(buyer.age) > 0);
+                  // Startersvrijstelling is afhankelijk van leeftijd (18 t/m 34 jaar): het
+                  // vinkje wordt alleen getoond — en telt dus alleen mee — binnen die
+                  // leeftijdsgrens, in plaats van een inert vinkje te tonen dat toch geen
+                  // effect heeft.
+                  const eligible = buyers.filter(
+                    (b) =>
+                      safeNum(b.age) >= STARTER_EXEMPTION_MIN_AGE &&
+                      safeNum(b.age) <= STARTER_EXEMPTION_MAX_AGE
+                  );
+                  const ineligible = buyers.filter(
+                    (b) =>
+                      safeNum(b.age) < STARTER_EXEMPTION_MIN_AGE ||
+                      safeNum(b.age) > STARTER_EXEMPTION_MAX_AGE
+                  );
+                  return (
+                    <div className="mb-3 space-y-2">
+                      {eligible.length > 0 && (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
+                          {eligible.map((buyer) => (
+                            <label
+                              key={buyer.id}
+                              htmlFor={buyer.id}
+                              className="flex cursor-pointer items-center gap-2 text-xs text-slate-600"
+                            >
+                              <input
+                                id={buyer.id}
+                                type="checkbox"
+                                checked={buyer.checked}
+                                onChange={(e) => buyer.onChange(e.target.checked)}
+                                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              />
+                              {buyer.label} ({buyer.age} jr): startersvrijstelling nog niet
+                              gebruikt
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {ineligible.length > 0 && (
+                        <p className="text-[11px] text-slate-400">
+                          {ineligible.map((b) => `${b.label} (${b.age} jr)`).join(' en ')}{' '}
+                          {ineligible.length === 1 ? 'komt' : 'komen'} door de leeftijd niet in
+                          aanmerking voor de startersvrijstelling (alleen 18 t/m 34 jaar).
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+              <StatusBadge status={calc.transferTaxInfo.rate === 0 ? 'success' : 'info'}>
+                Overdrachtsbelasting: {calc.transferTaxInfo.label}
+                {safeNum(purchasePrice) > 0 && calc.transferTaxInfo.rate > 0 && (
+                  <> — {formatEuro(safeNum(purchasePrice) * calc.transferTaxInfo.rate)}</>
+                )}
+                . {calc.transferTaxInfo.explanation}
+              </StatusBadge>
+              {propertyUsage === 'zelfbewoning' &&
+                safeNum(purchasePrice) > STARTER_EXEMPTION_PRICE_CAP &&
+                (safeNum(age1) < 35 || safeNum(age2) < 35) && (
+                  <p className="mt-2 text-[11px] text-slate-400">
+                    De startersvrijstelling vervalt hier volledig omdat de woningwaarde boven de
+                    grens van {formatEuro(STARTER_EXEMPTION_PRICE_CAP)} (2026) ligt.
+                  </p>
+                )}
+            </div>
           </SectionCard>
         </div>
 
@@ -3268,117 +3420,6 @@ function MortgageCalculatorForm({ onReset }) {
                 </button>
               </div>
             </div>
-
-            {/* Overdrachtsbelasting: gebruiksdoel bepaalt het tarief (0/1/2/8% of n.v.t.). */}
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Type aankoop (overdrachtsbelasting)
-                </span>
-                <div className="inline-flex rounded-lg border border-slate-100 bg-white p-1">
-                  {[
-                    { key: 'zelfbewoning', label: 'Bestaande bouw' },
-                    { key: 'nieuwbouw', label: 'Nieuwbouw' },
-                    { key: 'nietHoofdverblijf', label: 'Niet-hoofdverblijf' },
-                  ].map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => setPropertyUsage(option.key)}
-                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
-                        propertyUsage === option.key
-                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
-                          : 'text-slate-500 hover:text-slate-700'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {propertyUsage === 'zelfbewoning' &&
-                (() => {
-                  const buyers = [
-                    {
-                      label: 'Partner 1',
-                      age: age1,
-                      checked: starterExemption1,
-                      onChange: setStarterExemption1,
-                      id: 'starterExemption1',
-                    },
-                    {
-                      label: 'Partner 2',
-                      age: hasPartner2 ? age2 : 0,
-                      checked: starterExemption2,
-                      onChange: setStarterExemption2,
-                      id: 'starterExemption2',
-                    },
-                  ].filter((buyer) => safeNum(buyer.age) > 0);
-                  // Startersvrijstelling is afhankelijk van leeftijd (18 t/m 34 jaar): het
-                  // vinkje wordt alleen getoond — en telt dus alleen mee — binnen die
-                  // leeftijdsgrens, in plaats van een inert vinkje te tonen dat toch geen
-                  // effect heeft.
-                  const eligible = buyers.filter(
-                    (b) =>
-                      safeNum(b.age) >= STARTER_EXEMPTION_MIN_AGE &&
-                      safeNum(b.age) <= STARTER_EXEMPTION_MAX_AGE
-                  );
-                  const ineligible = buyers.filter(
-                    (b) =>
-                      safeNum(b.age) < STARTER_EXEMPTION_MIN_AGE ||
-                      safeNum(b.age) > STARTER_EXEMPTION_MAX_AGE
-                  );
-                  return (
-                    <div className="mb-3 space-y-2">
-                      {eligible.length > 0 && (
-                        <div className="flex flex-col gap-2 sm:flex-row sm:gap-6">
-                          {eligible.map((buyer) => (
-                            <label
-                              key={buyer.id}
-                              htmlFor={buyer.id}
-                              className="flex cursor-pointer items-center gap-2 text-xs text-slate-600"
-                            >
-                              <input
-                                id={buyer.id}
-                                type="checkbox"
-                                checked={buyer.checked}
-                                onChange={(e) => buyer.onChange(e.target.checked)}
-                                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                              />
-                              {buyer.label} ({buyer.age} jr): startersvrijstelling nog niet
-                              gebruikt
-                            </label>
-                          ))}
-                        </div>
-                      )}
-                      {ineligible.length > 0 && (
-                        <p className="text-[11px] text-slate-400">
-                          {ineligible.map((b) => `${b.label} (${b.age} jr)`).join(' en ')}{' '}
-                          {ineligible.length === 1 ? 'komt' : 'komen'} door de leeftijd niet in
-                          aanmerking voor de startersvrijstelling (alleen 18 t/m 34 jaar).
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()}
-
-              <StatusBadge status={calc.transferTaxInfo.rate === 0 ? 'success' : 'info'}>
-                Overdrachtsbelasting: {calc.transferTaxInfo.label}
-                {safeNum(purchasePrice) > 0 && calc.transferTaxInfo.rate > 0 && (
-                  <> — {formatEuro(safeNum(purchasePrice) * calc.transferTaxInfo.rate)}</>
-                )}
-                . {calc.transferTaxInfo.explanation}
-              </StatusBadge>
-              {propertyUsage === 'zelfbewoning' &&
-                safeNum(purchasePrice) > STARTER_EXEMPTION_PRICE_CAP &&
-                (safeNum(age1) < 35 || safeNum(age2) < 35) && (
-                  <p className="mt-2 text-[11px] text-slate-400">
-                    De startersvrijstelling vervalt hier volledig omdat de woningwaarde boven de
-                    grens van {formatEuro(STARTER_EXEMPTION_PRICE_CAP)} (2026) ligt.
-                  </p>
-                )}
-            </div>
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
               <CurrencyField
                 id="notaryCosts"
@@ -3419,14 +3460,18 @@ function MortgageCalculatorForm({ onReset }) {
                   label: 'Bankgarantie',
                   hint: '~1% van de waarborgsom (10% koopsom)',
                 },
-                {
-                  id: 'includeBuyersAgent',
-                  key: 'buyersAgent',
-                  checked: includeBuyersAgent,
-                  onChange: setIncludeBuyersAgent,
-                  label: 'Aankoopmakelaar (courtage 1,2%)',
-                  hint: 'Optioneel; niet bij aankoop zonder makelaar',
-                },
+                ...(propertyUsage === 'nieuwbouw'
+                  ? []
+                  : [
+                      {
+                        id: 'includeBuyersAgent',
+                        key: 'buyersAgent',
+                        checked: includeBuyersAgent,
+                        onChange: setIncludeBuyersAgent,
+                        label: 'Aankoopmakelaar (courtage 1,2%)',
+                        hint: 'Optioneel; niet bij aankoop zonder makelaar',
+                      },
+                    ]),
                 {
                   id: 'includeNhgFee',
                   key: 'nhgFee',
@@ -3468,6 +3513,14 @@ function MortgageCalculatorForm({ onReset }) {
                   </div>
                 );
               })}
+              {propertyUsage === 'nieuwbouw' && (
+                <InlineNote>
+                  Geen aankoopmakelaar meegerekend: bij nieuwbouw koopt u doorgaans
+                  rechtstreeks van de projectontwikkelaar. Had u toch een eigen aankoopmakelaar
+                  ingeschakeld, kies dan "Bestaande bouw" of "Niet-hoofdverblijf" hierboven om
+                  die kostenpost weer te kunnen aanzetten.
+                </InlineNote>
+              )}
             </div>
 
             <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
@@ -3502,6 +3555,126 @@ function MortgageCalculatorForm({ onReset }) {
               )}
             </AnimatePresence>
           </div>
+
+          {propertyUsage === 'nieuwbouw' && (
+            <div
+              id="sectie-bouwdepot"
+              className="mt-8 overflow-hidden rounded-2xl border border-l-4 border-slate-100 border-l-orange-400 bg-white shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl"
+            >
+              <button
+                type="button"
+                onClick={() => setShowBouwdepotCard((prev) => !prev)}
+                className="flex w-full items-center justify-between gap-3 p-6 text-left transition-all duration-200 hover:bg-slate-50"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-50 text-orange-600">
+                    <HardHat className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-800">
+                      Bouwdepot (nieuwbouw)
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      {bouwdepotCalc &&
+                        `Gemiddelde rente tijdens de bouw: ${formatEuro(bouwdepotCalc.monthlyInterestAverage)}/mnd`}
+                    </p>
+                  </div>
+                </div>
+                {showBouwdepotCard ? (
+                  <ChevronUp className="h-5 w-5 flex-shrink-0 text-slate-400" />
+                ) : (
+                  <ChevronDown className="h-5 w-5 flex-shrink-0 text-slate-400" />
+                )}
+              </button>
+              <AnimatePresence initial={false}>
+                {showBouwdepotCard && bouwdepotCalc && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3, ease: 'easeOut' }}
+                    className="overflow-hidden"
+                  >
+                    <div className="space-y-5 border-t border-slate-100 p-6">
+                      <p className="text-xs text-slate-500">
+                        Bij nieuwbouw wordt het hypotheekdeel voor de aanneemsom niet in één
+                        keer uitgekeerd, maar in bouwtermijnen opgenomen naarmate de bouw
+                        vordert. U betaalt dan alleen rente over het al opgenomen bedrag — dat
+                        geeft doorgaans lagere maandlasten tijdens de bouwperiode dan na
+                        oplevering.
+                      </p>
+                      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                        <CurrencyField
+                          id="bouwdepotAmount"
+                          label="Bouwdepot bedrag"
+                          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                          value={bouwdepotAmount}
+                          onChange={setBouwdepotAmount}
+                          placeholder={String(Math.round(safeNum(purchasePrice)))}
+                          hint="Standaard de aanschafprijs; pas aan als een deel apart wordt betaald (bijv. grondkosten)"
+                        />
+                        <Slider
+                          id="constructionMonths"
+                          label="Verwachte bouwperiode"
+                          icon={<HardHat className="h-3.5 w-3.5 text-slate-400" />}
+                          value={constructionMonths}
+                          min={3}
+                          max={30}
+                          step={1}
+                          onChange={setConstructionMonths}
+                          formatValue={(v) => `${v} maanden`}
+                        />
+                      </div>
+
+                      <div className="space-y-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-slate-600">Gemiddeld opgenomen bedrag</span>
+                          <span className="font-semibold text-slate-800">
+                            {formatEuro(bouwdepotCalc.averageDrawn)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-slate-600">Gemiddelde rente tijdens de bouw</span>
+                          <span className="font-semibold text-slate-800">
+                            {formatEuro(bouwdepotCalc.monthlyInterestAverage)}/mnd
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-slate-600">Rente bij oplevering (volledig)</span>
+                          <span className="font-semibold text-slate-800">
+                            {formatEuro(bouwdepotCalc.monthlyInterestAtCompletion)}/mnd
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-t border-slate-200 pt-2 text-sm">
+                          <span className="text-slate-600">
+                            Totale rente over de bouwperiode ({bouwdepotCalc.months} mnd)
+                          </span>
+                          <span className="font-semibold text-slate-800">
+                            {formatEuro(bouwdepotCalc.totalInterestDuringConstruction)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-emerald-700">
+                            Rentevoordeel t.o.v. meteen volledig lenen
+                          </span>
+                          <span className="font-semibold text-emerald-700">
+                            {formatEuro(bouwdepotCalc.interestSavedVsImmediate)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <InlineNote>
+                        Indicatief, uitgaande van een gelijkmatige (lineaire) opname van het
+                        bouwdepot — de werkelijke bouwtermijnenstaat verschilt per project. Dit
+                        beïnvloedt uw leencapaciteit niet: die blijft bepaald door de
+                        Nibud-woonquote hierboven.
+                      </InlineNote>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
           </div>
 
           <div id="sectie-resultaat" className="lg:sticky lg:top-10 lg:col-span-2 lg:col-start-4 lg:row-start-1">
@@ -3758,6 +3931,151 @@ function MortgageCalculatorForm({ onReset }) {
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              <div className="mt-6 border-t border-white/15 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowAuditTrail((prev) => !prev)}
+                  className="flex w-full items-center justify-between gap-3 text-left"
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium text-blue-100">
+                    <Calculator className="h-4 w-4" />
+                    Uw rekensom stap voor stap
+                  </span>
+                  {showAuditTrail ? (
+                    <ChevronUp className="h-4 w-4 flex-shrink-0 text-blue-200" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 flex-shrink-0 text-blue-200" />
+                  )}
+                </button>
+                <AnimatePresence initial={false}>
+                  {showAuditTrail && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.3, ease: 'easeOut' }}
+                      className="overflow-hidden"
+                    >
+                      <ol className="mt-4 space-y-3 text-xs text-blue-100">
+                        <li className="rounded-lg bg-white/10 p-3">
+                          <p className="font-semibold text-white">1. Toetsinkomen</p>
+                          <div className="mt-1.5 space-y-1">
+                            <p>
+                              {hasPartner2 ? 'Partner 1' : 'Aanvrager'}: {formatEuro(calc.toets1.base)}
+                              {calc.toets1.structural > 0 && (
+                                <> + {formatEuro(calc.toets1.structural)} structureel</>
+                              )}
+                              {calc.toets1.alimonyDeduction > 0 && (
+                                <> − {formatEuro(calc.toets1.alimonyDeduction)} alimentatie</>
+                              )}{' '}
+                              = {formatEuro(calc.toets1.toetsinkomen)}
+                              {calc.toets1.usesHistory &&
+                                calc.toets1.cappedAtLastYear &&
+                                ' (gemaximeerd op laatste jaar)'}
+                            </p>
+                            {hasPartner2 && (
+                              <p>
+                                Partner 2: {formatEuro(calc.toets2.base)}
+                                {calc.toets2.structural > 0 && (
+                                  <> + {formatEuro(calc.toets2.structural)} structureel</>
+                                )}
+                                {calc.toets2.alimonyDeduction > 0 && (
+                                  <> − {formatEuro(calc.toets2.alimonyDeduction)} alimentatie</>
+                                )}{' '}
+                                = {formatEuro(calc.toets2.toetsinkomen)}
+                                {calc.toets2.usesHistory &&
+                                  calc.toets2.cappedAtLastYear &&
+                                  ' (gemaximeerd op laatste jaar)'}
+                              </p>
+                            )}
+                            <p className="font-medium text-white">
+                              Gezamenlijk toetsinkomen = {formatEuro(calc.combinedIncome)}
+                            </p>
+                          </div>
+                        </li>
+                        <li className="rounded-lg bg-white/10 p-3">
+                          <p className="font-semibold text-white">2. Woonquote</p>
+                          <p className="mt-1.5">
+                            Bij {formatEuro(calc.combinedIncome)} toetsinkomen en{' '}
+                            {formatRate(calc.testRate)} toetsrente
+                            {calc.toetsrenteApplies &&
+                              ' (AFM-toetsrente, hoger dan uw eigen rente)'}
+                            : woonquote = {(calc.woonquote * 100).toFixed(1).replace('.', ',')}%
+                          </p>
+                        </li>
+                        <li className="rounded-lg bg-white/10 p-3">
+                          <p className="font-semibold text-white">3. Maximale bruto woonlast</p>
+                          <p className="mt-1.5">
+                            {(calc.woonquote * 100).toFixed(1).replace('.', ',')}% ×{' '}
+                            {formatEuro(calc.combinedIncome)} ÷ 12 = {formatEuro(calc.maxWoonlastMonthly)}
+                            /mnd
+                          </p>
+                        </li>
+                        {calc.monthlyDebt > 0 && (
+                          <li className="rounded-lg bg-white/10 p-3">
+                            <p className="font-semibold text-white">4. Schulden maandlast</p>
+                            <p className="mt-1.5">
+                              {calc.otherDebtMonthly > 0 && (
+                                <>
+                                  Overige schulden: −{formatEuro(calc.otherDebtMonthly)}/mnd
+                                  <br />
+                                </>
+                              )}
+                              {calc.studyDebtMonthly > 0 && (
+                                <>
+                                  Studieschuld: −{formatEuro(calc.studyDebtMonthly)}/mnd
+                                  <br />
+                                </>
+                              )}
+                              {formatEuro(calc.maxWoonlastMonthly)} − {formatEuro(calc.monthlyDebt)} ={' '}
+                              {formatEuro(calc.availableMonthly)}/mnd beschikbaar
+                            </p>
+                          </li>
+                        )}
+                        <li className="rounded-lg bg-white/10 p-3">
+                          <p className="font-semibold text-white">
+                            {calc.monthlyDebt > 0 ? '5' : '4'}. Kapitaliseren naar hypotheek
+                          </p>
+                          <p className="mt-1.5">
+                            {formatEuro(calc.availableMonthly)}/mnd × annuïteitenfactor{' '}
+                            {calc.annuityFactor.toFixed(1).replace('.', ',')} (360 mnd bij{' '}
+                            {formatRate(calc.testRate)}) ={' '}
+                            {formatEuro(calc.availableMonthly * calc.annuityFactor)}
+                          </p>
+                          {calc.pensionBinding && (
+                            <p className="mt-1 text-amber-200">
+                              De AOW-toets komt met het verwachte pensioeninkomen lager uit (
+                              {formatEuro(calc.pensionScenarioMax)}) en is hier bindend in plaats
+                              van dit bedrag.
+                            </p>
+                          )}
+                        </li>
+                        {calc.energyBonus > 0 && (
+                          <li className="rounded-lg bg-white/10 p-3">
+                            <p className="font-semibold text-white">Energielabelbonus</p>
+                            <p className="mt-1.5">
+                              + {formatEuro(calc.energyBonus)} vanwege energielabel {energyLabel}
+                            </p>
+                          </li>
+                        )}
+                        <li className="rounded-lg bg-white/15 p-3">
+                          <p className="font-semibold text-white">= Hypotheek o.b.v. inkomen</p>
+                          <p className="mt-1.5 text-base font-bold text-white">
+                            {formatEuro(calc.incomeBasedMax)}
+                          </p>
+                          {calc.cappedByPropertyValue && (
+                            <p className="mt-1 text-amber-200">
+                              Begrensd door de aanschafprijs (max. 100% LTV):{' '}
+                              {formatEuro(calc.maxMortgage)}
+                            </p>
+                          )}
+                        </li>
+                      </ol>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
             </BorderGlow>
           </div>
@@ -4298,16 +4616,42 @@ function MortgageCalculatorForm({ onReset }) {
                       )}
                     </AnimatePresence>
                   </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-                  <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-6">
-                    <div className="mb-3 flex items-center gap-2">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600">
-                        <TrendingUp className="h-4 w-4" />
-                      </span>
-                      <h3 className="text-sm font-semibold text-slate-700">
-                        Extra bijleenruimte bij verkoop huidige woning
-                      </h3>
-                    </div>
+        <div id="sectie-bijleenruimte" className="mt-8 overflow-hidden rounded-2xl border border-l-4 border-slate-100 border-l-emerald-400 bg-white shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl">
+          <button
+            type="button"
+            onClick={() => setShowBijleenruimte((prev) => !prev)}
+            className="flex w-full items-center justify-between p-6 text-left transition-all duration-200 hover:bg-slate-50"
+          >
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600">
+                <TrendingUp className="h-4 w-4" />
+              </span>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Extra bijleenruimte bij verkoop huidige woning</h2>
+                <p className="text-xs text-slate-400">Financieringsgat en werkelijke leencapaciteit bij verkoop</p>
+              </div>
+            </div>
+            {showBijleenruimte ? (
+              <ChevronUp className="h-5 w-5 flex-shrink-0 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-5 w-5 flex-shrink-0 text-slate-400" />
+            )}
+          </button>
+          <AnimatePresence initial={false}>
+            {showBijleenruimte && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="space-y-4 border-t border-slate-100 p-6">
                     <p className="mb-4 text-xs text-slate-500">
                       Uitgangspunt: u verkoopt de huidige woning tegen de huidige marktwaarde en
                       zet de volledige verkoopopbrengst, inclusief de overwaarde, in voor de
@@ -4582,32 +4926,59 @@ function MortgageCalculatorForm({ onReset }) {
                       )}
                     </div>
 
-                    <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-6">
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
-                            <Building2 className="h-4 w-4" />
-                          </span>
-                          <h3 className="text-sm font-semibold text-slate-700">
-                            Toetsing aanvullende hypotheek
-                          </h3>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={autoDistributeAdditionalLoan}
-                          className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-600 transition-all duration-200 hover:bg-indigo-50"
-                        >
-                          Automatisch verdelen
-                        </button>
-                      </div>
-                      <p className="mb-4 text-xs text-slate-500">
-                        De resterende aanvullende hypotheek van{' '}
-                        {formatEuro(combinedGapCalc.additionalMortgage)} hierboven kunt u hier
-                        opsplitsen in maximaal 2 nieuwe leningdelen, elk met een eigen aflosvorm,
-                        rekenrente en rentevastperiode, om te toetsen of dit bedrag ook
-                        daadwerkelijk geleend kan worden tegen de huidige normen.
-                      </p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
+        <div id="sectie-aanvullende-hypotheek" className="mt-8 overflow-hidden rounded-2xl border border-l-4 border-slate-100 border-l-indigo-400 bg-white shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl">
+          <button
+            type="button"
+            onClick={() => setShowAanvullendeHypotheek((prev) => !prev)}
+            className="flex w-full items-center justify-between p-6 text-left transition-all duration-200 hover:bg-slate-50"
+          >
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+                <Building2 className="h-4 w-4" />
+              </span>
+              <div>
+                <h2 className="text-base font-semibold text-slate-800">Aanvullende hypotheek</h2>
+                <p className="text-xs text-slate-400">Toets de resterende aanvullende hypotheek in leningdelen</p>
+              </div>
+            </div>
+            {showAanvullendeHypotheek ? (
+              <ChevronUp className="h-5 w-5 flex-shrink-0 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-5 w-5 flex-shrink-0 text-slate-400" />
+            )}
+          </button>
+          <AnimatePresence initial={false}>
+            {showAanvullendeHypotheek && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="space-y-4 border-t border-slate-100 p-6">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <p className="text-xs text-slate-500">
+                      De resterende aanvullende hypotheek van{' '}
+                      {formatEuro(combinedGapCalc.additionalMortgage)} hierboven kunt u hier
+                      opsplitsen in maximaal 2 nieuwe leningdelen, elk met een eigen aflosvorm,
+                      rekenrente en rentevastperiode, om te toetsen of dit bedrag ook
+                      daadwerkelijk geleend kan worden tegen de huidige normen.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={autoDistributeAdditionalLoan}
+                      className="flex-shrink-0 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-600 transition-all duration-200 hover:bg-indigo-50"
+                    >
+                      Automatisch verdelen
+                    </button>
+                  </div>
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Nieuwe leningdelen ({additionalLoanParts.length}/2)
@@ -4861,12 +5232,11 @@ function MortgageCalculatorForm({ onReset }) {
                           </StatusBadge>
                         </div>
                       )}
-                    </div>
-                  </div>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
 
           <div className="mt-8 rounded-2xl border border-l-4 border-slate-100 border-l-blue-400 bg-white p-6 shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl">
             <div className="mb-2 flex items-center gap-2">
@@ -4960,7 +5330,7 @@ function MortgageCalculatorForm({ onReset }) {
                 <TrendingUp className="h-4 w-4" />
               </span>
               <h2 className="text-base font-semibold text-slate-800">
-                Aflossing komende dertig jaar
+                Aflosschema nieuwe situatie
               </h2>
             </div>
             <p className="mb-5 text-sm text-slate-500">
