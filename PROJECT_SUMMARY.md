@@ -1,11 +1,16 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
-**Laatste commit**: `719dcc8` — bekijk `git log --oneline` voor de volledige geschiedenis
-(45+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
+**Laatste commit**: `58a00a3` — bekijk `git log --oneline` voor de volledige geschiedenis
+(65+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
+Working tree is schoon; alles hieronder staat al gepusht naar GitHub
+(`vmahgit/mortgage-calculator`, branch `main`) én live op Vercel.
 
-Live: https://mortgage-calculator-three-drab.vercel.app *(let op: dit is de vorige
-versie — na nieuwe wijzigingen moet je zelf opnieuw `vercel --prod` draaien om de live
-link bij te werken, dat gebeurt niet automatisch)*
+Live: https://mortgage-calculator-three-drab.vercel.app *(dit IS de huidige versie —
+elke sessie tot nu toe eindigde met `git push` + `npx vercel --prod --yes`. Blijf dat
+patroon aanhouden: na wijzigingen pushen naar GitHub en publiceren via
+`npx vercel --prod --yes` in `C:\Users\Vincent\mortgage-calculator`. `vercel`/`gh` staan
+niet standaard in PATH; gebruik `npx vercel` — die logt al in als `vfredriksz-4509` en
+het project is al gelinkt via `.vercel/project.json`, dus geen extra setup nodig.)*
 Repo: `C:\Users\Vincent\mortgage-calculator` (git-repo op je eigen schijf)
 Stack: Vite + React + Tailwind CSS v4 + framer-motion + lucide-react, gehost op Vercel.
 
@@ -88,18 +93,116 @@ Acht kleine fases, elk als eigen commit met browser-verificatie (zie
    van niet-haalbaar naar haalbaar.
 8. "Opnieuw beginnen"-knop (key-remount-patroon) + inklapbare "Bronnen & aannames".
 
+## Workflow- en logica-ronde (na de visuele polish, meest recente werk)
+Gebouwd naar aanleiding van een kritische UX-review ("voelt als een zwarte doos",
+"voortgangsbalk liegt"), daarna verder verfijnd met concrete correcties. Elke stap
+weer een eigen commit + browser-verificatie.
+
+- **Voortgangsbalk is nu eerlijk anker-navigatie, geen pseudo-wizard**: geen
+  verbindingslijnen, geen cumulatieve voortgangsbalk meer (die suggereerden een
+  Volgende/Terug-flow die er nooit was — alles is en blijft altijd tegelijk
+  zichtbaar/bewerkbaar, past bij de landingspagina-tekst "geen knoppen, geen
+  wachten"). Chips zijn losse pills; volgorde matcht nu de fysieke paginavolgorde
+  (zie hieronder). Korte ondertitel maakt expliciet dat je overal naartoe kunt
+  springen.
+- **"Uw situatie" is één paneel geworden**: woningsituatie-toggle (Ja/Nee al een
+  woning) én de aantal-aanvragers-toggle (1/2, was verstopt in de Inkomen-kaart)
+  staan nu samen bovenaan, vóórdat er een bedrag wordt gevraagd.
+- **Paginavolgorde omgedraaid**: Uw situatie → **Beoogde woning** → Inkomen →
+  Schulden → **Kosten koper** (i.p.v. Inkomen/Schulden eerst, Beoogde woning +
+  Kosten koper als los blok erna). Reden: bezoekers hebben meestal al een
+  concreet huis/prijsklasse in gedachten voordat ze hun inkomen intikken. De
+  AOW-pensioenbanner verhuisde mee naar vlak vóór de Inkomen-kaart (waar hij
+  inhoudelijk bij hoort). Puur JSX-herordening via een node-scriptje (cut/paste
+  op exacte regelnummers) — geen calc-logica gewijzigd.
+- **"Type aankoop (overdrachtsbelasting)" verhuisd** van de kaart Beoogde woning
+  náár de kaart Kosten koper (logischer: het bepaalt daar direct een kostenpost).
+- **Kosten koper is nu inklapbaar** (zelfde patroon als "Huidige Hypotheek
+  Analyseren"/"Nibud dubbele-lastentoets": handgerolde collapsible i.p.v.
+  `SectionCard`, met violet accent-linkerrand), **standaard dichtgeklapt**. De
+  header toont altijd het totaalbedrag + of het meetelt, ook dicht.
+- **Kosten koper telt standaard NIET mee in de berekening**: nieuwe
+  `includeKostenKoperInCalc`-toggle ("Ja, meetellen"/"Nee, niet meetellen"),
+  default **uit**. Kosten koper wordt altijd volledig berekend/getoond in de
+  kaart zelf; de toggle bepaalt alleen `calc.ownMoney` (sidebar "Geschat eigen
+  geld") en `doubleCostsCalc.kostenKoper` (dubbele-lastentoets) — de enige twee
+  plekken waar het daadwerkelijk in een berekening werd meegenomen (de
+  financieringsgat-berekening voor doorstromers sloot het al uit). Let op: de
+  knoplabels zijn bewust "meetellen"/"niet meetellen" i.p.v. "meenemen" om
+  verwarring met de bestaande meeneemregeling-toggle (hypotheek meenemen bij
+  verhuizing) te voorkomen — die deelde eerder per ongeluk exact dezelfde
+  knoptekst "Ja, meenemen".
+- **Causaliteit zichtbaar gemaakt**: nieuw blok "Bepalend voor uw maximum nu"
+  bovenaan het resultaatpaneel (sidebar), direct onder de statuspil. Eén
+  geprioriteerde, samenhangende verklaring i.p.v. losse statuslabels: schulden >
+  AOW-toets > (bij bestaande woning) lender-cap/restschuld/bijleenruimte/
+  renterisico op meegenomen hypotheek, anders de normale woonquote, of (bij
+  starter) de aanschafprijs als plafond. Berekend in een eigen `bindingFactor`
+  useMemo die `calc`/`currentMortgage`/`combinedGapCalc` samenvoegt.
+- **Inkomenstype-dropdown toont nu vooruitblik**: de opties zelf bevatten een
+  korte gevolg-hint ("vraagt 3 jaarcijfers", "telt volledig mee"), zichtbaar
+  zodra je de dropdown openklapt — vóór de keuze, niet pas erna
+  (`INCOME_TYPES` in `toetsinkomen.js`).
+- **Sliders ruimer, nieuwe defaults, schakelbare tweede aanvrager**: inkomen tot
+  €300k (was €150k), eigen vermogen tot €400k (was €200k). Nieuwe
+  `hasPartner2`-toggle (1/2 aanvragers, staat nu in "Uw situatie"): bij 1
+  aanvrager telt niets van Partner 2 mee (inkomen, vermogen, schulden, leeftijd,
+  startersvrijstelling), ook niet als er nog oude waarden in die velden staan —
+  gegated via `hasPartner2 ?` op elke plek waar `income2`/`ownCapital2`/`debt2`/
+  `age2`/etc. de `calc` ingaan.
+- **iPhone-invoerfix**: alle tekst-inputs/selects naar 16px lettergrootte (onder
+  16px zoomt Safari automatisch in bij focus — waarschijnlijk de oorzaak van
+  eerdere "werkt niet optimaal"-klachten). Alle 20 wissel-knoppen groter
+  tikoppervlak op mobiel (`py-2` i.p.v. `py-1.5`, ongewijzigd vanaf `sm:`).
+  Slider-track iets dikker (`h-2` → `h-3`) + `touch-none` voor directere
+  sleeprespons.
+- **€1.000.000-grens-waarschuwing nu ook voor starters**: bestond al voor
+  doorstromers (`combinedGapCalc.exceedsLenderCap`, `additionalLoanCalc.
+  exceedsLenderCap`); nu ook `starterLoanCalc.exceedsLenderCap` met dezelfde
+  `StatusBadge`-waarschuwing in de starters-hypotheekkaart.
+- **Startersvrijstelling leeftijdsafhankelijk gemaakt**: het vinkje "nog niet
+  gebruikt" wordt alleen nog getoond (en telt dus alleen nog mee) voor een koper
+  van 18 t/m 34 jaar (`STARTER_EXEMPTION_MIN_AGE`/`MAX_AGE` uit `kostenKoper.js`)
+  — daarbuiten een uitlegzin i.p.v. een inert vinkje. Default nu **false**
+  ("al gebruikt") i.p.v. altijd `true`. Default leeftijd beide personen: **36**
+  jaar (was 35/34) — dit is bewust bóven de startersgrens, dus met de defaults
+  zie je meteen de "niet in aanmerking"-uitlegzin i.p.v. de checkbox.
+- **HRA-tarief (hypotheekrenteaftrek) inkomensafhankelijk gemaakt** — was een
+  vaste 37,56% voor iedereen, wat voor lagere inkomens te hoog is. Sinds 2023 is
+  de aftrek wettelijk begrensd op het tarief van de **tweede** belastingschijf
+  box 1 (37,56% in 2026); wie met zijn/haar toetsinkomen volledig binnen de
+  **eerste** schijf blijft (tot €38.883, 2026) trekt af tegen het lagere
+  eerste-schijftarief van **35,70%**. Nieuwe `getHraRate(...incomes)`-helper
+  (module-level, gebruikt `Math.max` van de toetsinkomens van beide
+  aanvragers) toegepast in `currentMortgage`, `scenarioAnalysis`,
+  `additionalLoanCalc` én `starterLoanCalc` — alle 4 plekken die voorheen de
+  vaste `HRA_RATE`-constante gebruikten. UI-labels tonen nu het daadwerkelijk
+  toegepaste percentage (`formatRate(x.hraRate * 100)`) i.p.v. hardgecodeerde
+  tekst "37,56%".
+- **Eigenwoningforfait (EWF) staat nu default uit**: nieuwe checkbox
+  "Eigenwoningforfait meenemen in de netto berekening" in de doorstromer-netto-
+  weergave (`includeEwfInNetCalc`, default `false`). Dit was de ENE plek waar
+  EWF automatisch werd afgetrokken van het netto belastingvoordeel; de starter-
+  en aanvullende-hypotheek-netto-weergaven sloten het al standaard uit (met een
+  eigen toelichtende tekst) — nu consistent overal default uit, met opt-in.
+
 ## Herbruikbare bouwstenen (ken je deze, dan bouw je sneller mee)
 In `src/MortgageCalculator.jsx`: `SectionCard` (met `accent`-prop: blue/amber/emerald/
-violet/indigo — gekleurde linkerrand + icoon-achtergrond per categorie), `StatusBadge`
-(status="success"|"warning"|"error"|"info", gereserveerd voor verdicts/acties),
-`InlineNote` (rustige grijze tekst + info-icoon, voor puur informatieve toelichtingen),
-`InfoTooltip` (klein (i)-icoon, klik/tik-tooltip, `variant="light"` voor donkere
-achtergronden), `AdvancedFieldsToggle` ("Meer opties"-inklapper, standaard dicht),
-`AnimatedEuro` (count-up-getal + puls bij >5% wijziging), `Slider` (met optionele
-`labelExtra`-node, bijv. voor een InfoTooltip), `CurrencyField`, `EnergyLabelPicker`,
+violet/indigo — gekleurde linkerrand + icoon-achtergrond per categorie; Kosten koper
+gebruikt deze NIET meer, zie hieronder), `StatusBadge` (status=
+"success"|"warning"|"error"|"info", gereserveerd voor verdicts/acties), `InlineNote`
+(rustige grijze tekst + info-icoon, voor puur informatieve toelichtingen), `InfoTooltip`
+(klein (i)-icoon, klik/tik-tooltip, `variant="light"` voor donkere achtergronden),
+`AdvancedFieldsToggle` ("Meer opties"-inklapper, standaard dicht), `AnimatedEuro`
+(count-up-getal + puls bij >5% wijziging), `Slider` (met optionele `labelExtra`-node,
+bijv. voor een InfoTooltip), `CurrencyField`, `EnergyLabelPicker`,
 `AflossingsvrijMaxToggle`, `DonutChart`, `AmortizationChart` (fade-in bij laden),
 `AdditionalLoanPartCard`, `calculateLoanPart()`, `formatEuro()`, `formatRate()`,
-`safeNum()`.
+`safeNum()`, `getHraRate(...incomes)` (inkomensafhankelijk HRA-tarief, zie boven).
+Kosten koper is een **handgerolde** collapsible (geen `SectionCard`) — kopieer dát
+patroon (button-header met chevron + `AnimatePresence`/`motion.div` content) als je
+nóg een inklapbare kaart nodig hebt, zoals ook "Huidige Hypotheek Analyseren" en
+"Nibud dubbele-lastentoets" al deden.
 
 ## Belangrijke lessen / valkuilen (voor vervolgwerk)
 - **Scroll-reveal bug**: een `whileInView`-animatie met `amount: 0.2` op een element dat
@@ -117,6 +220,19 @@ achtergronden), `AdvancedFieldsToggle` ("Meer opties"-inklapper, standaard dicht
   hydration-fouten in `preview_console_logs` staan alsof ze nog optraden. Controleer
   bij twijfel de live DOM direct (bijv. `document.querySelectorAll('p').filter(p =>
   p.querySelector('div'))`) i.p.v. alleen op de logregel te vertrouwen.
+- **Twee knoppen met exact dezelfde tekst**: de nieuwe "meenemen in berekening"-toggle
+  bij Kosten koper kreeg per ongeluk dezelfde labels ("Ja, meenemen"/"Nee, niet
+  meenemen") als de al bestaande meeneemregeling-toggle (hypotheek meenemen bij
+  verhuizing) — twee heel verschillende dingen, verwarrend voor gebruikers én voor
+  tekst-gebaseerde test-selectors. Nu "Ja/Nee, meetellen". Check bij nieuwe
+  Ja/Nee-knoppenparen altijd of de exacte tekst al elders in de app voorkomt
+  (`grep -n "Ja, <label>"`) voordat je 'm hergebruikt.
+- **Grote JSX-blokken verplaatsen**: reorderen van hele secties (Beoogde woning/Kosten
+  koper naar een andere plek, Type aankoop-blok tussen kaarten) deed ik via een klein
+  node-scriptje dat exacte 1-indexed regelnummers (uit de Read-tool) opknipt/plakt,
+  i.p.v. handmatige Edit-calls op zulke grote tekstblokken — sneller en minder
+  foutgevoelig. Reindenteer niet mee (JSX geeft niets om whitespace); check achteraf
+  altijd of open/close-tags weer in balans zijn door de grep/read rond de naad.
 - Elke wijziging deze hele sessie is als aparte git-commit vastgelegd. Werkwijze die
   steeds is aangehouden: (1) research bij officiële bron indien harde cijfers/regels
   nodig zijn, (2) implementeren, (3) verifiëren in de browser via de preview-tool
@@ -169,21 +285,25 @@ makelaarskosten-koppeling nog niet), 10–13 (zie hieronder).
 9. **Nieuwbouw-flow**: bouwdepot met rente, geen makelaarskosten. Het woningtype-toggle
    ("bestaande bouw / nieuwbouw / niet-hoofdverblijf") bestaat al en regelt de
    overdrachtsbelasting; bouwdepot en de koppeling met makelaarskosten ontbreken nog.
-10. **Auditbare toetsopbouw**: toon expliciet, stap voor stap, waarom de max hypotheek X
-    is (woonquote Y × inkomen Z − schulden = ...). `toetsinkomen.js` retourneert al een
-    transparant opbouwobject per aanvrager (basis/structureel/aftrek/cap-vlaggen) —
-    grotendeels UI-werk op basis van al bestaande berekende waarden.
+10. **Auditbare toetsopbouw** — **deels gedaan**: het "Bepalend voor uw maximum nu"-blok
+    (sidebar) toont al wélke ene factor nu bindend is, met uitleg. Nog niet gedaan: de
+    volledige stap-voor-stap rekensom tonen (woonquote Y × toetsinkomen Z − schulden =
+    ...). `toetsinkomen.js` retourneert al een transparant opbouwobject per aanvrager
+    (basis/structureel/aftrek/cap-vlaggen) — grotendeels UI-werk op basis van al
+    bestaande berekende waarden.
 11. **PDF-klantrapport**: export met alle aannames, bronnen en de uitkomst — wat een
     klant normaal van een adviseur meekrijgt.
 12. **Referentie-/unit tests**: tegen bekende Nibud-uitkomsten (bijv. vitest, past
-    natuurlijk bij Vite), zodat een wijziging de rekenkern niet stilletjes breekt.
-13. **Visuele polish-pas**: de hele app bloedmooi, interactief en als logisch geheel
-    afwerken — subtiele verfijning (schaduwen, ritme, iconografie) over de bestaande
-    stijl, geen risicovolle volledige herontwerp.
+    natuurlijk bij Vite), zodat een wijziging de rekenkern niet stilletjes breekt. Nog
+    steeds niet gedaan — met inmiddels een flinke rekenkern (nibud2026.js, kostenKoper.js,
+    toetsinkomen.js, getHraRate) wordt dit met de dag waardevoller.
+13. **Visuele polish-pas** — **grotendeels gedaan**: acht fases visuele/interactie-polish
+    zijn al doorgevoerd (zie hierboven), plus de workflow/logica-ronde daarna. Wat
+    resteert is vooral fijnslijpen op detailniveau, geen grote herontwerp-stap meer.
 
 **Aanbevolen volgorde**: NHG (kostengrens + rente) → erfpacht → verduurzaming >100% LTV
-→ nieuwbouw-flow afmaken (bouwdepot) → auditbare toetsopbouw → PDF-export → tests →
-visuele polish.
+→ nieuwbouw-flow afmaken (bouwdepot) → auditbare toetsopbouw afmaken → PDF-export →
+tests.
 
 ## Hoe verder te werken (voor een nieuwe sessie / beginner-instructies)
 Zie de losse instructies die apart zijn meegegeven bij het delen van dit bestand.
