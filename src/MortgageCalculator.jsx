@@ -1282,6 +1282,11 @@ function MortgageCalculatorForm({ onReset }) {
   const [includeBankGuarantee, setIncludeBankGuarantee] = useState(true);
   const [includeBuyersAgent, setIncludeBuyersAgent] = useState(false);
   const [includeNhgFee, setIncludeNhgFee] = useState(false);
+  // Kosten koper worden altijd berekend en getoond, maar tellen standaard NIET mee in de
+  // rest van de berekening (geschat eigen geld, dubbele-lastentoets) - pas na expliciete
+  // keuze van de gebruiker.
+  const [includeKostenKoperInCalc, setIncludeKostenKoperInCalc] = useState(false);
+  const [showKostenKoperCard, setShowKostenKoperCard] = useState(false);
 
   // Betaalde partneralimentatie per aanvrager (bruto per maand): gaat ×12 van het
   // toetsinkomen af, vóór de woonquote-bepaling (zie toetsinkomen.js).
@@ -1569,7 +1574,7 @@ function MortgageCalculatorForm({ onReset }) {
         includeNhgFee,
       },
     });
-    const ownMoney = kostenKoper.total;
+    const ownMoney = includeKostenKoperInCalc ? kostenKoper.total : 0;
 
     const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly;
     const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
@@ -1653,6 +1658,7 @@ function MortgageCalculatorForm({ onReset }) {
     includeBankGuarantee,
     includeBuyersAgent,
     includeNhgFee,
+    includeKostenKoperInCalc,
     partnerAlimony1,
     partnerAlimony2,
     pensionIncome1,
@@ -2245,7 +2251,7 @@ function MortgageCalculatorForm({ onReset }) {
     // beleggingen zijn, anders dan overwaarde, wél direct beschikbaar en mogen daarom ook
     // tijdens de overbruggingsperiode worden ingezet om de nieuwe hypotheek te verlagen. Dit
     // is expliciet schakelbaar voor een behoudender toets.
-    const kostenKoper = calc.kostenKoper.total;
+    const kostenKoper = includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
     const ownCapitalUsed = includeOwnCapitalInDoubleTest ? calc.totalOwnCapital : 0;
     const newMortgageAmount = Math.max(0, price + kostenKoper - ownCapitalUsed);
 
@@ -2312,6 +2318,7 @@ function MortgageCalculatorForm({ onReset }) {
     oldMortgageStance,
     bridgePeriodMonths,
     includeOwnCapitalInDoubleTest,
+    includeKostenKoperInCalc,
     liquidityBuffer,
   ]);
 
@@ -3070,12 +3077,78 @@ function MortgageCalculatorForm({ onReset }) {
               </p>
             </SectionCard>
 
-          <SectionCard
+          <div
             id="sectie-kosten-koper"
-            title="Kosten koper"
-            icon={<Receipt className="h-4 w-4" />}
-            accent="violet"
+            className="overflow-hidden rounded-2xl border border-l-4 border-slate-100 border-l-violet-400 bg-white shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl"
           >
+            <button
+              type="button"
+              onClick={() => setShowKostenKoperCard((prev) => !prev)}
+              className="flex w-full items-center justify-between gap-3 p-6 text-left transition-all duration-200 hover:bg-slate-50"
+            >
+              <div className="flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-50 text-violet-600">
+                  <Receipt className="h-4 w-4" />
+                </span>
+                <div>
+                  <h2 className="text-base font-semibold text-slate-800">Kosten koper</h2>
+                  <p className="text-xs text-slate-400">
+                    {includeKostenKoperInCalc
+                      ? `Meegenomen in de berekening — ${formatEuro(calc.kostenKoper.total)}`
+                      : `Nog niet meegenomen in de berekening — indicatief ${formatEuro(calc.kostenKoper.total)}`}
+                  </p>
+                </div>
+              </div>
+              {showKostenKoperCard ? (
+                <ChevronUp className="h-5 w-5 flex-shrink-0 text-slate-400" />
+              ) : (
+                <ChevronDown className="h-5 w-5 flex-shrink-0 text-slate-400" />
+              )}
+            </button>
+            <AnimatePresence initial={false}>
+              {showKostenKoperCard && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                  className="overflow-hidden"
+                >
+                  <div className="space-y-5 border-t border-slate-100 p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+              <div>
+                <p className="text-sm font-medium text-slate-700">Meenemen in berekening?</p>
+                <p className="text-xs text-slate-400">
+                  Bepaalt of deze kosten meetellen bij "Geschat eigen geld" en de
+                  dubbele-lastentoets. Kosten koper worden hierboven altijd getoond en
+                  berekend, ongeacht deze keuze.
+                </p>
+              </div>
+              <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => setIncludeKostenKoperInCalc(false)}
+                  className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    !includeKostenKoperInCalc
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Nee, niet meetellen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIncludeKostenKoperInCalc(true)}
+                  className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    includeKostenKoperInCalc
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Ja, meetellen
+                </button>
+              </div>
+            </div>
 
             {/* Overdrachtsbelasting: gebruiksdoel bepaalt het tarief (0/1/2/8% of n.v.t.). */}
             <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
@@ -3277,7 +3350,11 @@ function MortgageCalculatorForm({ onReset }) {
                 taxateur en adviseur.
               </p>
             </div>
-          </SectionCard>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
           </div>
 
           <div id="sectie-resultaat" className="lg:sticky lg:top-10 lg:col-span-2 lg:col-start-4 lg:row-start-1">
@@ -3418,6 +3495,12 @@ function MortgageCalculatorForm({ onReset }) {
                   <p className="text-sm text-blue-100">Geschat eigen geld (kosten koper)</p>
                   <p className="text-lg font-semibold">{formatEuro(calc.ownMoney)}</p>
                 </div>
+                {!includeKostenKoperInCalc && (
+                  <p className="-mt-2.5 text-[11px] text-blue-200/70">
+                    Kosten koper ({formatEuro(calc.kostenKoper.total)}) telt nog niet mee — zet
+                    "Meenemen in berekening" aan in de kaart Kosten koper.
+                  </p>
+                )}
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-blue-100">Ingebracht eigen vermogen</p>
                   <p className="text-sm font-medium">{formatEuro(calc.totalOwnCapital)}</p>
