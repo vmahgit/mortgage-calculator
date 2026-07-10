@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
+import BorderGlow from './BorderGlow';
+import SectionRail, { useScrollSpy } from './SectionRail';
 import { getIncomeBasedMortgage } from './nibud2026';
 import { getToetsinkomen, INCOME_TYPES } from './toetsinkomen';
 import {
@@ -2466,6 +2468,38 @@ function MortgageCalculatorForm({ onReset }) {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // Volledige sectievolgorde voor de rail/scrollspy — matcht de fysieke paginavolgorde,
+  // incl. de secties die de chipbalk (bewust compacter) niet toont zoals "Uw situatie" en
+  // "Kosten koper". Afhankelijk van hasExistingHome is het óf de starters- óf de
+  // doorstromers-hypotheekkaart de voorlaatste stop vóór het resultaat.
+  const railSections = useMemo(
+    () => [
+      { id: 'sectie-situatie', label: 'Uw situatie' },
+      { id: 'sectie-beoogde-woning', label: 'Beoogde woning' },
+      { id: 'sectie-inkomen', label: 'Inkomen' },
+      { id: 'sectie-schulden', label: 'Schulden' },
+      { id: 'sectie-kosten-koper', label: 'Kosten koper' },
+      hasExistingHome
+        ? { id: 'sectie-huidige-woning', label: 'Huidige woning' }
+        : { id: 'sectie-starter-hypotheek', label: 'Uw hypotheek' },
+      { id: 'sectie-resultaat', label: 'Resultaat' },
+    ],
+    [hasExistingHome]
+  );
+  const railIds = useMemo(() => railSections.map((s) => s.id), [railSections]);
+  const { active: activeSectionId, progress: sectionProgress } = useScrollSpy(railIds);
+
+  // Houdt de actieve chip zichtbaar in de horizontaal scrollbare mobiele balk: zonder dit
+  // kan de gemarkeerde chip (bv. "Schulden") buiten beeld vallen zodra je door een lange
+  // sectie scrolt, wat het hele idee van "waar ben ik" weer tenietdoet op mobiel.
+  const chipScrollRef = useRef(null);
+  useEffect(() => {
+    const container = chipScrollRef.current;
+    if (!container) return;
+    const chip = container.querySelector(`[data-rail-id="${activeSectionId}"]`);
+    if (chip) chip.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }, [activeSectionId]);
+
   // Op mobiel staat het volledige resultaatpaneel pas ná Inkomen en Schulden — daarom
   // een compacte samenvatting die vastgepind blijft zolang dat paneel niet in beeld is,
   // zodat er altijd meteen feedback zichtbaar is op de ingevoerde gegevens.
@@ -2504,16 +2538,30 @@ function MortgageCalculatorForm({ onReset }) {
 
   return (
     <div className="w-full px-4 py-10 pb-24 sm:px-6 lg:px-10 lg:pb-10">
+      <SectionRail
+        sections={railSections}
+        activeId={activeSectionId}
+        progress={sectionProgress}
+        onNavigate={scrollToSection}
+      />
       <div className="mx-auto max-w-6xl">
         <div className="sticky top-0 z-40 -mx-4 mb-6 border-b border-slate-200 bg-white/90 px-4 py-2.5 backdrop-blur-sm sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
           <p className="mb-1.5 hidden text-[11px] text-slate-400 sm:block">
             Spring naar een onderdeel — alles is direct aan te passen, in elke volgorde.
           </p>
-          <div className="mx-auto flex max-w-6xl items-center gap-1 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:whitespace-normal [&::-webkit-scrollbar]:hidden">
+          <div
+            ref={chipScrollRef}
+            className="mx-auto flex max-w-6xl items-center gap-1 overflow-x-auto whitespace-nowrap [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:whitespace-normal [&::-webkit-scrollbar]:hidden"
+          >
             <button
               type="button"
+              data-rail-id="sectie-beoogde-woning"
               onClick={() => scrollToSection('sectie-beoogde-woning')}
-              className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-100 hover:text-blue-600"
+              className={`flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-all duration-200 hover:bg-slate-100 hover:text-blue-600 ${
+                activeSectionId === 'sectie-beoogde-woning'
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'text-slate-600'
+              }`}
             >
               <CheckCircle2
                 className={`h-3.5 w-3.5 ${
@@ -2524,8 +2572,11 @@ function MortgageCalculatorForm({ onReset }) {
             </button>
             <button
               type="button"
+              data-rail-id="sectie-inkomen"
               onClick={() => scrollToSection('sectie-inkomen')}
-              className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-100 hover:text-blue-600"
+              className={`flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-all duration-200 hover:bg-slate-100 hover:text-blue-600 ${
+                activeSectionId === 'sectie-inkomen' ? 'bg-blue-50 text-blue-700' : 'text-slate-600'
+              }`}
             >
               <CheckCircle2
                 className={`h-3.5 w-3.5 ${
@@ -2536,8 +2587,11 @@ function MortgageCalculatorForm({ onReset }) {
             </button>
             <button
               type="button"
+              data-rail-id="sectie-schulden"
               onClick={() => scrollToSection('sectie-schulden')}
-              className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-100 hover:text-blue-600"
+              className={`flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-all duration-200 hover:bg-slate-100 hover:text-blue-600 ${
+                activeSectionId === 'sectie-schulden' ? 'bg-blue-50 text-blue-700' : 'text-slate-600'
+              }`}
             >
               <CheckCircle2
                 className={`h-3.5 w-3.5 ${debtsStepDone ? 'text-emerald-500' : 'text-slate-300'}`}
@@ -2547,8 +2601,13 @@ function MortgageCalculatorForm({ onReset }) {
             {hasExistingHome && (
               <button
                 type="button"
+                data-rail-id="sectie-huidige-woning"
                 onClick={() => scrollToSection('sectie-huidige-woning')}
-                className="flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-100 hover:text-blue-600"
+                className={`flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-all duration-200 hover:bg-slate-100 hover:text-blue-600 ${
+                  activeSectionId === 'sectie-huidige-woning'
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-600'
+                }`}
               >
                 <CheckCircle2
                   className={`h-3.5 w-3.5 ${
@@ -2561,12 +2620,13 @@ function MortgageCalculatorForm({ onReset }) {
             <span className="mx-1 hidden h-4 w-px flex-shrink-0 bg-slate-200 sm:block" />
             <button
               type="button"
+              data-rail-id="sectie-resultaat"
               onClick={() => scrollToSection('sectie-resultaat')}
               className={`flex flex-shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition-all duration-200 ${
                 overallAffordable
                   ? 'text-emerald-600 hover:bg-emerald-50'
                   : 'text-red-600 hover:bg-red-50'
-              }`}
+              } ${activeSectionId === 'sectie-resultaat' ? 'ring-1 ring-inset ring-current' : ''}`}
             >
               {overallAffordable ? (
                 <CheckCircle2 className="h-3.5 w-3.5" />
@@ -2575,6 +2635,12 @@ function MortgageCalculatorForm({ onReset }) {
               )}
               {overallAffordable ? 'Haalbaar' : 'Nog niet haalbaar'}
             </button>
+          </div>
+          <div className="mx-auto mt-1.5 h-0.5 max-w-6xl overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-[width] duration-150 ease-linear"
+              style={{ width: `${sectionProgress * 100}%` }}
+            />
           </div>
         </div>
 
@@ -2606,7 +2672,7 @@ function MortgageCalculatorForm({ onReset }) {
           </button>
         </div>
 
-        <div className="mb-6 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <div id="sectie-situatie" className="mb-6 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
           <span className="text-sm font-medium text-slate-700">Uw situatie</span>
           <p className="mb-4 text-xs text-slate-400">
             Deze twee keuzes bepalen de vorm van de rest van de berekening.
@@ -3439,6 +3505,15 @@ function MortgageCalculatorForm({ onReset }) {
           </div>
 
           <div id="sectie-resultaat" className="lg:sticky lg:top-10 lg:col-span-2 lg:col-start-4 lg:row-start-1">
+            <BorderGlow
+              className="w-full"
+              borderRadius={16}
+              backgroundColor="transparent"
+              glowColor="45 90 65"
+              colors={['#fbbf24', '#60a5fa', '#818cf8']}
+              glowIntensity={1.2}
+              animated
+            >
             <div className="rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 p-7 text-white shadow-xl">
               <div className="mb-6 flex items-center gap-2">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/15">
@@ -3684,6 +3759,7 @@ function MortgageCalculatorForm({ onReset }) {
                 )}
               </AnimatePresence>
             </div>
+            </BorderGlow>
           </div>
         </div>
 
