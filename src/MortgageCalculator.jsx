@@ -1417,6 +1417,11 @@ function MortgageCalculatorForm({ onReset }) {
   // de starters-toets (die sluiten elkaar uit via hasExistingHome).
   const [aflossingsvrijMaxPct, setAflossingsvrijMaxPct] = useState(50);
 
+  // Maandelijks aflosschema nieuwe situatie: welk venster van maanden en welke jaarlijkse
+  // waardestijging-aanname worden getoond in de maandtabel bij "Aflosschema nieuwe situatie".
+  const [scheduleWindowStartMonth, setScheduleWindowStartMonth] = useState(0);
+  const [scheduleAppreciationPct, setScheduleAppreciationPct] = useState(0);
+
   const addAdditionalLoanPart = () => {
     setAdditionalLoanParts((prev) => {
       if (prev.length >= 2) return prev;
@@ -2323,6 +2328,78 @@ function MortgageCalculatorForm({ onReset }) {
     }
     return points;
   }, [loanParts, additionalLoanParts, elapsedMonthsSinceStart, takeOverMortgage]);
+
+  // Maandelijks aflosschema nieuwe situatie: zelfde combinatie van meegenomen + nieuwe
+  // leningdelen als amortizationSchedule hierboven, maar per maand (0..360) i.p.v. per jaar,
+  // inclusief rente/aflossing-opsplitsing per leningdeel en een geprojecteerde
+  // onderpandswaarde/LTV bij een instelbare jaarlijkse waardestijging vanaf de aanschafprijs
+  // van de beoogde woning (zelfde grondslag als newLtv hierboven, niet marketValue).
+  const monthlySchedule = useMemo(() => {
+    const portedRemainingMonthsNow = Math.max(
+      0,
+      TERM_MONTHS - Math.max(elapsedMonthsSinceStart, 0)
+    );
+    const priceNum = safeNum(purchasePrice);
+    const monthlyAppreciationRate = Math.pow(1 + scheduleAppreciationPct / 100, 1 / 12) - 1;
+
+    const activeParts = [
+      ...(takeOverMortgage
+        ? loanParts.map((p) => ({ ...p, remainingMonthsNow: portedRemainingMonthsNow }))
+        : []),
+      ...additionalLoanParts.map((p) => ({ ...p, remainingMonthsNow: TERM_MONTHS })),
+    ];
+
+    const balanceOf = (p) =>
+      projectRemainingBalance(p.principal, p.rate, p.type, p.remainingMonthsNow, 0);
+    let prevBalances = activeParts.map(balanceOf);
+
+    const points = [];
+    const pushPoint = (month, interestMonthly, principalMonthly, balance) => {
+      const collateralValue = priceNum * Math.pow(1 + monthlyAppreciationRate, month);
+      const ltv = collateralValue > 0 ? (balance / collateralValue) * 100 : 0;
+      points.push({
+        month,
+        interestMonthly,
+        principalMonthly,
+        totalMonthly: interestMonthly + principalMonthly,
+        balance,
+        collateralValue,
+        ltv,
+      });
+    };
+    pushPoint(
+      0,
+      0,
+      0,
+      prevBalances.reduce((sum, b) => sum + b, 0)
+    );
+
+    for (let month = 1; month <= TERM_MONTHS; month++) {
+      let interestMonthly = 0;
+      let principalMonthly = 0;
+      const nextBalances = activeParts.map((p, i) => {
+        const curr = projectRemainingBalance(p.principal, p.rate, p.type, p.remainingMonthsNow, month);
+        interestMonthly += prevBalances[i] * (safeNum(p.rate) / 100 / 12);
+        principalMonthly += prevBalances[i] - curr;
+        return curr;
+      });
+      prevBalances = nextBalances;
+      pushPoint(
+        month,
+        interestMonthly,
+        principalMonthly,
+        nextBalances.reduce((sum, b) => sum + b, 0)
+      );
+    }
+    return points;
+  }, [
+    loanParts,
+    additionalLoanParts,
+    elapsedMonthsSinceStart,
+    takeOverMortgage,
+    purchasePrice,
+    scheduleAppreciationPct,
+  ]);
 
   // Nibud dubbele-lastentoets (optioneel): kan het huishouden tijdelijk zowel de huidige als
   // de nieuwe hypotheek dragen, voor het geval de huidige woning nog niet is verkocht op het
@@ -5364,6 +5441,90 @@ function MortgageCalculatorForm({ onReset }) {
                 <p className="text-xl font-bold text-slate-900">
                   {formatEuro(amortizationSchedule[30]?.total ?? 0)}
                 </p>
+              </div>
+            </div>
+
+            <div className="mt-8">
+              <h3 className="mb-1 text-sm font-semibold text-slate-700">
+                Maandelijks aflosschema nieuwe situatie
+              </h3>
+              <p className="mb-4 text-xs text-slate-500">
+                Rente, aflossing en de geprojecteerde onderpandswaarde/LTV per maand, voor de
+                meegenomen en nieuwe leningdelen samen. Schuif om verder in de tijd te kijken of
+                om een jaarlijkse waardestijging van de beoogde woning te veronderstellen.
+              </p>
+
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                <Slider
+                  id="scheduleWindowStartMonth"
+                  label="Startmaand van de tabel"
+                  icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+                  value={scheduleWindowStartMonth}
+                  min={0}
+                  max={TERM_MONTHS - 1}
+                  step={1}
+                  onChange={setScheduleWindowStartMonth}
+                  formatValue={(v) => `maand ${v} (jaar ${Math.floor(v / 12)})`}
+                />
+                <Slider
+                  id="scheduleAppreciationPct"
+                  label="Jaarlijkse waardestijging woning"
+                  icon={<TrendingUp className="h-3.5 w-3.5 text-slate-400" />}
+                  value={scheduleAppreciationPct}
+                  min={0}
+                  max={9}
+                  step={0.5}
+                  onChange={setScheduleAppreciationPct}
+                  formatValue={(v) => `${v.toFixed(1).replace('.', ',')}%`}
+                  hint="Toegepast op de aanschafprijs van de beoogde woning, samengesteld per maand."
+                />
+              </div>
+
+              <div className="mt-4 overflow-x-auto rounded-xl border border-slate-100 bg-white">
+                <table className="w-full min-w-[560px] border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50">
+                      <th className="p-2.5 text-left font-semibold text-slate-500">Maand</th>
+                      <th className="p-2.5 text-right font-semibold text-slate-500">Rente</th>
+                      <th className="p-2.5 text-right font-semibold text-slate-500">Aflossing</th>
+                      <th className="p-2.5 text-right font-semibold text-slate-500">Totaal</th>
+                      <th className="p-2.5 text-right font-semibold text-slate-500">
+                        Onderpandswaarde
+                      </th>
+                      <th className="p-2.5 text-right font-semibold text-slate-500">LTV</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlySchedule
+                      .slice(scheduleWindowStartMonth, scheduleWindowStartMonth + 12)
+                      .map((row) => (
+                        <tr key={row.month} className="border-t border-slate-100">
+                          <td className="p-2.5 text-left font-medium text-slate-600">
+                            {row.month}
+                          </td>
+                          <td className="p-2.5 text-right text-slate-700">
+                            {formatEuro(row.interestMonthly)}
+                          </td>
+                          <td className="p-2.5 text-right text-slate-700">
+                            {formatEuro(row.principalMonthly)}
+                          </td>
+                          <td className="p-2.5 text-right font-semibold text-slate-800">
+                            {formatEuro(row.totalMonthly)}
+                          </td>
+                          <td className="p-2.5 text-right text-slate-700">
+                            {formatEuro(row.collateralValue)}
+                          </td>
+                          <td
+                            className={`p-2.5 text-right font-semibold ${
+                              row.ltv > 100 ? 'text-red-600' : 'text-slate-800'
+                            }`}
+                          >
+                            {row.ltv.toFixed(0)}%
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
