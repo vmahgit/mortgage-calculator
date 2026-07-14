@@ -1286,8 +1286,8 @@ function AflossingsvrijMaxToggle({ value, onChange }) {
 }
 
 function MortgageCalculatorForm({ onReset }) {
-  const [income1, setIncome1] = useState(100000);
-  const [income2, setIncome2] = useState(100000);
+  const [income1, setIncome1] = useState(118000);
+  const [income2, setIncome2] = useState(115000);
   const [age1, setAge1] = useState('36');
   const [age2, setAge2] = useState('36');
   const [ownCapital1, setOwnCapital1] = useState(0);
@@ -1295,15 +1295,15 @@ function MortgageCalculatorForm({ onReset }) {
   const [rate, setRate] = useState(4.0);
   const [fixedRatePeriod, setFixedRatePeriod] = useState(10);
   const [energyLabel, setEnergyLabel] = useState('A');
-  const [purchasePrice, setPurchasePrice] = useState(1000000);
+  const [purchasePrice, setPurchasePrice] = useState(1350000);
   // Standaard twee aanvragers; schakelbaar naar één aanvrager (Partner 2 telt dan
   // nergens in de berekening mee, ongeacht wat er nog in die velden staat).
   const [hasPartner2, setHasPartner2] = useState(true);
   const [debt1, setDebt1] = useState('0');
   const [debt2, setDebt2] = useState('0');
-  const [studyDebt1, setStudyDebt1] = useState('0');
+  const [studyDebt1, setStudyDebt1] = useState('14000');
   const [studyDebt2, setStudyDebt2] = useState('0');
-  const [studyDebtRegime, setStudyDebtRegime] = useState('nieuw');
+  const [studyDebtRegime, setStudyDebtRegime] = useState('oud');
 
   // Overdrachtsbelasting: gebruiksdoel van de beoogde woning en, per koper, of de
   // startersvrijstelling nog beschikbaar is (niet eerder gebruikt).
@@ -1425,7 +1425,7 @@ function MortgageCalculatorForm({ onReset }) {
   const [useBridgeLoan, setUseBridgeLoan] = useState(false);
   const [bridgeLoanAmount, setBridgeLoanAmount] = useState('');
   const [bridgeLoanRate, setBridgeLoanRate] = useState(6.0);
-  const [marketValue, setMarketValue] = useState(940000);
+  const [marketValue, setMarketValue] = useState(935000);
   const [saleDiscountPercentage, setSaleDiscountPercentage] = useState(100);
   const [currentEnergyLabel, setCurrentEnergyLabel] = useState('A');
   const [originalDebt, setOriginalDebt] = useState('675000');
@@ -1758,6 +1758,22 @@ function MortgageCalculatorForm({ onReset }) {
       : nibudAtActualRate.maxLoan;
     const incomeBasedMaxAtActualRate = Math.max(0, boundMaxLoanAtActualRate + energyBonus);
 
+    // Drie leencapaciteit-stappen voor de resultaatweergave, zodat zichtbaar is waar de
+    // hypotheek precies kleiner wordt: (1) puur op inkomen, bij de werkelijke rente en
+    // zonder schulden; (2) diezelfde toets met de maandlast van schulden erin
+    // (incomeBasedMaxAtActualRate hierboven); (3) ook nog met de toetsrente-afslag die
+    // geldt zodra een leningdeel korter dan 10 jaar rentevast is (incomeBasedMax verderop,
+    // al inclusief AOW-toets). Ook hier telt het bindende AOW-scenario mee, zodat de eerste
+    // stap consistent blijft met de andere twee.
+    const nibudIncomeOnly = getIncomeBasedMortgage(combinedIncome, safeNum(rate), 0);
+    const boundMaxLoanIncomeOnly = pensionActive
+      ? Math.min(
+          nibudIncomeOnly.maxLoan,
+          getIncomeBasedMortgage(pensionCombinedIncome, safeNum(rate), 0, { aow: true }).maxLoan
+        )
+      : nibudIncomeOnly.maxLoan;
+    const maxLoanIncomeOnly = Math.max(0, boundMaxLoanIncomeOnly + energyBonus);
+
     // Effectieve leenfactor puur ter illustratie (maximale hypotheek gedeeld door inkomen);
     // de daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor.
     const effectiveFactor = combinedIncome > 0 ? incomeBasedMax / combinedIncome : 0;
@@ -1782,6 +1798,7 @@ function MortgageCalculatorForm({ onReset }) {
       monthlyDebt,
       availableMonthly: nibud.availableMonthly,
       annuityFactor: nibud.annuityFactor,
+      maxLoanIncomeOnly,
       incomeBasedMax,
       incomeBasedMaxAtActualRate,
       cappedByPropertyValue,
@@ -4532,6 +4549,47 @@ function MortgageCalculatorForm({ onReset }) {
                     </p>
                   </div>
                   <p className="text-lg font-bold text-amber-50">{formatEuro(calc.maxMortgage)}</p>
+                </div>
+              )}
+
+              {!hasExistingHome && (
+                <div className="mt-4 space-y-2 rounded-xl bg-white/10 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-1.5 text-xs text-blue-100">
+                      Max. o.b.v. inkomen
+                      <InfoTooltip
+                        variant="light"
+                        text="Uw leencapaciteit op basis van de Nibud-woonquote en uw werkelijke rente, zonder rekening te houden met bestaande schulden."
+                      />
+                    </span>
+                    <span className="text-sm font-semibold text-white">
+                      {formatEuro(calc.maxLoanIncomeOnly)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-1.5 text-xs text-blue-100">
+                      + gecorrigeerd voor schulden
+                      <InfoTooltip
+                        variant="light"
+                        text="Hetzelfde bedrag, nu met de maandlast van uw overige schulden en studieschuld erin verwerkt (die verlagen de beschikbare ruimte voor woonlasten)."
+                      />
+                    </span>
+                    <span className="text-sm font-semibold text-white">
+                      {formatEuro(calc.incomeBasedMaxAtActualRate)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-white/15 pt-2">
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-blue-50">
+                      + toetsrente-afslag
+                      <InfoTooltip
+                        variant="light"
+                        text="Definitief bindend bedrag: ook getoetst tegen de (hogere) AFM-toetsrente zodra een leningdeel korter dan 10 jaar rentevast is, en tegen het verwachte pensioeninkomen indien van toepassing. Is uw rente al 10 jaar of langer vast en geen AOW-toets van toepassing, dan is dit gelijk aan de regel hierboven."
+                      />
+                    </span>
+                    <span className="text-base font-bold text-white">
+                      {formatEuro(calc.incomeBasedMax)}
+                    </span>
+                  </div>
                 </div>
               )}
 
