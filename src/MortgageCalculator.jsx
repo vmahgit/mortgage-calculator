@@ -1394,7 +1394,7 @@ function MortgageCalculatorForm({ onReset }) {
   const [useSecondHomeProceeds, setUseSecondHomeProceeds] = useState(true);
   const [secondHomeValue, setSecondHomeValue] = useState('300000');
   const [secondHomeMortgageDebt, setSecondHomeMortgageDebt] = useState('42000');
-  const [secondHomeInterestRate, setSecondHomeInterestRate] = useState(4.0);
+  const [secondHomeInterestRate, setSecondHomeInterestRate] = useState(1.0);
   const [secondHomeRepaymentType, setSecondHomeRepaymentType] = useState('Annuïteit');
   const [secondHomeRemainingYears, setSecondHomeRemainingYears] = useState(20);
   const [secondHomeSaleCostsPct, setSecondHomeSaleCostsPct] = useState(2);
@@ -4076,6 +4076,12 @@ function MortgageCalculatorForm({ onReset }) {
                                   </p>
                                 </div>
                               </div>
+                              <p className="mt-3 text-[11px] text-slate-400">
+                                Dit bedrag rechts is hetzelfde bedrag als "Met afslag schulden" /
+                                "O.b.v. inkomen alleen" elders in het resultaat — deze afslag zit
+                                daar dus al in verwerkt en komt er niet nogmaals bovenop (bijv.
+                                bij de renterisicocorrectie op uw meegenomen hypotheek).
+                              </p>
                             </div>
                           </>
                         )}
