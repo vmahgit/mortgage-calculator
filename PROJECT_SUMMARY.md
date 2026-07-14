@@ -149,6 +149,25 @@ leningdelen-samenstelling). Bestandsnaam: `Hypotheekadvies_<doorstromer|starter>
 <YYYY-MM-DD>.pdf`. Zie `handleExportPdf` in `MortgageCalculator.jsx` voor hoe de (bewust
 beperkte, samengevatte) data aan `exportHypotheekAdviesPdf()` wordt doorgegeven.
 
+## Tweede woning (bijv. geërfd) met eigen hypotheekschuld
+Nieuwe, onafhankelijke inklapbare kaart **"Tweede woning"** (`sectie-tweede-woning`, in de
+scrollspy-rail tussen "Schulden" en "Kosten koper"). Los van de bestaande "Huidige
+Hypotheek Analyseren"/"Extra bijleenruimte"-blokken hierboven (die gaan over de woning die
+u ván verhuist bij een doorstromersaankoop): dit blok is voor een tweede, niet-bewoonde
+woning — bijvoorbeeld geërfd — met een eigen hypotheekschuld, die u wel/niet verkoopt.
+- **Velden**: marktwaarde, hypotheekschuld, en (bij aanhouden) aflosvorm/rente/resterende
+  looptijd, of (bij verkopen) verkoopkosten-percentage.
+- **Aanhouden**: de volledige, werkelijke bruto maandlast (`calculateSimpleMortgagePayment`,
+  losstaande annuïteit/lineair/aflossingsvrij-formule zonder leningdeel-administratie) telt
+  voor 100% mee in `monthlyDebt` — bewust géén 2%-vuistregel zoals bij "Overige schulden",
+  want het exacte bedrag is hier bekend (zelfde principe als de studieschuld-berekening).
+- **Verkopen**: netto-opbrengst (marktwaarde − schuld − verkoopkosten) telt mee in
+  `totalOwnCapital` als extra eigen middelen. Bij een restschuld (negatieve netto-opbrengst)
+  wordt dat bedrag juist van `totalOwnCapital` áfgetrokken, met een waarschuwing dat dit
+  tekort — anders dan bij de eigen woning — niet automatisch meegefinancierd kan worden.
+- Zie `calc.secondHomeMonthly`/`secondHomeNetProceeds`/`secondHomeSaleCosts`/
+  `secondHomeShortfall` in `MortgageCalculator.jsx`.
+
 ## Herbruikbare bouwstenen (ken je deze, dan bouw je sneller mee)
 In `src/MortgageCalculator.jsx`: `SectionCard`, `StatusBadge`, `InlineNote`, `InfoTooltip`,
 `AdvancedFieldsToggle`, `AnimatedEuro`, `Slider`, `CurrencyField`, `EnergyLabelPicker`,

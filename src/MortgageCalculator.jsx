@@ -247,6 +247,20 @@ function calculateLoanPart(part, elapsedMonths, startDate) {
   };
 }
 
+// Losstaande, vereenvoudigde maandlast-berekening voor de tweede woning: geen
+// leningdeel-administratie (ingangsdatum, rentevastperiode) nodig, alleen de huidige
+// bruto maandlast bij de resterende looptijd — dat is alles wat nodig is om 'm als
+// schuld mee te wegen in de Nibud-toets.
+function calculateSimpleMortgagePayment(principal, annualRatePct, type, remainingYears) {
+  const P = safeNum(principal);
+  const r = safeNum(annualRatePct) / 100 / 12;
+  const N = Math.max(1, Math.round(safeNum(remainingYears) * 12));
+  if (type === 'Aflossingsvrij') return P * r;
+  if (type === 'Lineair') return P / N + P * r;
+  if (r === 0) return P / N;
+  return (P * r) / (1 - Math.pow(1 + r, -N));
+}
+
 function safeNum(value) {
   const n = parseFloat(value);
   return isNaN(n) || !isFinite(n) ? 0 : n;
@@ -1362,6 +1376,20 @@ function MortgageCalculatorForm({ onReset }) {
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
+  // Tweede woning (bijv. geërfd) met een eigen, los van de verhuizing staande
+  // hypotheekschuld — onafhankelijk van de "huidige woning" hierboven (die gaat over de
+  // woning die u verlaat bij de verhuizing). secondHomeWillSell bepaalt of de schuld
+  // (aanhouden) blijft meetellen als maandlast, of dat de netto-verkoopopbrengst
+  // (verkopen) vrijkomt als extra eigen middelen.
+  const [showSecondHome, setShowSecondHome] = useState(false);
+  const [hasSecondHome, setHasSecondHome] = useState(false);
+  const [secondHomeWillSell, setSecondHomeWillSell] = useState(true);
+  const [secondHomeValue, setSecondHomeValue] = useState('300000');
+  const [secondHomeMortgageDebt, setSecondHomeMortgageDebt] = useState('150000');
+  const [secondHomeInterestRate, setSecondHomeInterestRate] = useState(4.0);
+  const [secondHomeRepaymentType, setSecondHomeRepaymentType] = useState('Annuïteit');
+  const [secondHomeRemainingYears, setSecondHomeRemainingYears] = useState(20);
+  const [secondHomeSaleCostsPct, setSecondHomeSaleCostsPct] = useState(2);
   // Meeneemregeling: neemt u de bestaande hypotheek mee tegen de huidige voorwaarden
   // (rente, resterende looptijd), of lost u deze af bij verkoop en financiert u de nieuwe
   // woning volledig opnieuw? Default: ja, meenemen (de gangbare route bij een lagere
@@ -1525,7 +1553,32 @@ function MortgageCalculatorForm({ onReset }) {
       safeNum(studyDebt1) + (hasPartner2 ? safeNum(studyDebt2) : 0),
       studyDebtRegime
     );
-    const monthlyDebt = otherDebtMonthly + studyDebtMonthly;
+
+    // Tweede woning (bijv. geërfd) met eigen hypotheekschuld: bij aanhouden telt de
+    // volledige, werkelijke bruto maandlast mee als schuld (geen 2%-vuistregel, want het
+    // exacte bedrag is bekend — net als bij een studieschuld). Bij verkoop komt er geen
+    // maandlast bij, maar wel een eenmalige netto-opbrengst (of -tekort) vrij, zie
+    // totalOwnCapital hieronder.
+    const secondHomeMonthly =
+      hasSecondHome && !secondHomeWillSell
+        ? calculateSimpleMortgagePayment(
+            secondHomeMortgageDebt,
+            secondHomeInterestRate,
+            secondHomeRepaymentType,
+            secondHomeRemainingYears
+          )
+        : 0;
+    const secondHomeSaleCosts =
+      hasSecondHome && secondHomeWillSell
+        ? safeNum(secondHomeValue) * (safeNum(secondHomeSaleCostsPct) / 100)
+        : 0;
+    const secondHomeNetProceeds =
+      hasSecondHome && secondHomeWillSell
+        ? safeNum(secondHomeValue) - safeNum(secondHomeMortgageDebt) - secondHomeSaleCosts
+        : 0;
+    const secondHomeShortfall = secondHomeNetProceeds < 0 ? -secondHomeNetProceeds : 0;
+
+    const monthlyDebt = otherDebtMonthly + studyDebtMonthly + secondHomeMonthly;
 
     // A1-A3: echte Nibud-woonquote-systematiek 2026. De woonquote bij (toetsinkomen,
     // toetsrente) bepaalt de maximale bruto woonlast; de maandlast van bestaande schulden
@@ -1611,7 +1664,11 @@ function MortgageCalculatorForm({ onReset }) {
     });
     const transferTax = kostenKoperBasis * transferTaxInfo.rate;
 
-    const totalOwnCapital = safeNum(ownCapital1) + (hasPartner2 ? safeNum(ownCapital2) : 0);
+    // Netto-opbrengst van de verkochte tweede woning telt mee als extra eigen middelen;
+    // bij een restschuld-tekort (secondHomeNetProceeds < 0) verlaagt dat juist de
+    // beschikbare eigen middelen, want dat tekort moet u alsnog uit eigen zak bijleggen.
+    const totalOwnCapital =
+      safeNum(ownCapital1) + (hasPartner2 ? safeNum(ownCapital2) : 0) + secondHomeNetProceeds;
 
     // Indicatieve hypotheek als basis voor de NHG-borgtochtprovisie: wat er na inzet van
     // het eigen vermogen gefinancierd moet worden, begrensd door de maximale hypotheek.
@@ -1682,6 +1739,10 @@ function MortgageCalculatorForm({ onReset }) {
       debtDeduction,
       otherDebtMonthly,
       studyDebtMonthly,
+      secondHomeMonthly,
+      secondHomeSaleCosts,
+      secondHomeNetProceeds,
+      secondHomeShortfall,
       monthlyDebt,
       availableMonthly: nibud.availableMonthly,
       annuityFactor: nibud.annuityFactor,
@@ -1752,6 +1813,14 @@ function MortgageCalculatorForm({ onReset }) {
     avgBonus1,
     avgBonus2,
     hasPartner2,
+    hasSecondHome,
+    secondHomeWillSell,
+    secondHomeValue,
+    secondHomeMortgageDebt,
+    secondHomeInterestRate,
+    secondHomeRepaymentType,
+    secondHomeRemainingYears,
+    secondHomeSaleCostsPct,
   ]);
 
   // Bouwdepot (nieuwbouw): puur informatief, telt niet mee in de leencapaciteit. Leeg
@@ -2658,6 +2727,7 @@ function MortgageCalculatorForm({ onReset }) {
       { id: 'sectie-beoogde-woning', label: 'Beoogde woning' },
       { id: 'sectie-inkomen', label: 'Inkomen' },
       { id: 'sectie-schulden', label: 'Schulden' },
+      { id: 'sectie-tweede-woning', label: 'Tweede woning' },
       { id: 'sectie-kosten-koper', label: 'Kosten koper' },
       ...(propertyUsage === 'nieuwbouw'
         ? [{ id: 'sectie-bouwdepot', label: 'Bouwdepot' }]
@@ -3560,6 +3630,258 @@ function MortgageCalculatorForm({ onReset }) {
                 hypotheek.
               </p>
             </SectionCard>
+
+          <div
+            id="sectie-tweede-woning"
+            className="overflow-hidden rounded-2xl border border-l-4 border-slate-100 border-l-rose-400 bg-white shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl"
+          >
+            <button
+              type="button"
+              onClick={() => setShowSecondHome((prev) => !prev)}
+              className="flex w-full items-center justify-between gap-3 p-6 text-left transition-all duration-200 hover:bg-slate-50"
+            >
+              <div className="flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 text-rose-600">
+                  <Home className="h-4 w-4" />
+                </span>
+                <div>
+                  <h2 className="text-base font-semibold text-slate-800">Tweede woning</h2>
+                  <p className="text-xs text-slate-400">
+                    {hasSecondHome
+                      ? secondHomeWillSell
+                        ? 'Verkopen — netto-opbrengst als extra eigen middelen'
+                        : `Aanhouden — ${formatEuro(calc.secondHomeMonthly)}/mnd telt mee als schuld`
+                      : 'Bijv. een geërfde woning met een eigen hypotheekschuld'}
+                  </p>
+                </div>
+              </div>
+              {showSecondHome ? (
+                <ChevronUp className="h-5 w-5 flex-shrink-0 text-slate-400" />
+              ) : (
+                <ChevronDown className="h-5 w-5 flex-shrink-0 text-slate-400" />
+              )}
+            </button>
+            <AnimatePresence initial={false}>
+              {showSecondHome && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                  className="overflow-hidden"
+                >
+                  <div className="space-y-4 border-t border-slate-100 p-6">
+                    <p className="text-xs text-slate-500">
+                      Heeft u, los van de woning die u eventueel verlaat bij deze verhuizing, nog
+                      een tweede woning — bijvoorbeeld geërfd — met een eigen hypotheekschuld?
+                      Dat is niet uw eigen woning in box 1: hypotheekrenteaftrek geldt hier niet,
+                      en de manier waarop deze schuld meetelt hangt af van of u de woning aanhoudt
+                      of verkoopt.
+                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                      <div>
+                        <span className="text-xs font-medium text-slate-600">
+                          Ik heb een tweede woning met hypotheekschuld
+                        </span>
+                        <p className="text-xs text-slate-400">
+                          Bijvoorbeeld een geërfde woning die (nog) niet is verkocht.
+                        </p>
+                      </div>
+                      <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                        <button
+                          type="button"
+                          onClick={() => setHasSecondHome(false)}
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                            !hasSecondHome
+                              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          Nee
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setHasSecondHome(true)}
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                            hasSecondHome
+                              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          Ja
+                        </button>
+                      </div>
+                    </div>
+
+                    {hasSecondHome && (
+                      <>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <CurrencyField
+                            id="secondHomeValue"
+                            label="Marktwaarde tweede woning"
+                            icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                            value={secondHomeValue}
+                            onChange={setSecondHomeValue}
+                            placeholder="0"
+                          />
+                          <CurrencyField
+                            id="secondHomeMortgageDebt"
+                            label="Hypotheekschuld tweede woning"
+                            icon={<CreditCard className="h-3.5 w-3.5 text-slate-400" />}
+                            value={secondHomeMortgageDebt}
+                            onChange={setSecondHomeMortgageDebt}
+                            placeholder="0"
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                          <div>
+                            <span className="text-xs font-medium text-slate-600">
+                              Verkoopt u de tweede woning?
+                            </span>
+                            <p className="text-xs text-slate-400">
+                              Bepaalt of de hypotheekschuld als maandlast blijft meetellen, of dat
+                              de netto-opbrengst vrijkomt als extra eigen middelen.
+                            </p>
+                          </div>
+                          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                            <button
+                              type="button"
+                              onClick={() => setSecondHomeWillSell(false)}
+                              className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                                !secondHomeWillSell
+                                  ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                                  : 'text-slate-500 hover:text-slate-700'
+                              }`}
+                            >
+                              Aanhouden
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSecondHomeWillSell(true)}
+                              className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                                secondHomeWillSell
+                                  ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                                  : 'text-slate-500 hover:text-slate-700'
+                              }`}
+                            >
+                              Verkopen
+                            </button>
+                          </div>
+                        </div>
+
+                        {secondHomeWillSell ? (
+                          <>
+                            <Slider
+                              id="secondHomeSaleCostsPct"
+                              label="Verkoopkosten (makelaar, e.d.)"
+                              icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
+                              value={secondHomeSaleCostsPct}
+                              min={0}
+                              max={6}
+                              step={0.1}
+                              onChange={setSecondHomeSaleCostsPct}
+                              formatValue={formatRate}
+                            />
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                              <div>
+                                <span className="text-xs text-slate-400">Verkoopkosten</span>
+                                <p className="text-sm font-semibold text-slate-800">
+                                  {formatEuro(calc.secondHomeSaleCosts)}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-xs text-slate-400">
+                                  Netto {calc.secondHomeNetProceeds < 0 ? 'tekort' : 'opbrengst'}
+                                </span>
+                                <p
+                                  className={`text-sm font-semibold ${
+                                    calc.secondHomeNetProceeds < 0
+                                      ? 'text-red-600'
+                                      : 'text-slate-800'
+                                  }`}
+                                >
+                                  {formatEuro(Math.abs(calc.secondHomeNetProceeds))}
+                                </p>
+                              </div>
+                            </div>
+                            {calc.secondHomeNetProceeds >= 0 ? (
+                              <StatusBadge status="success">
+                                De netto-verkoopopbrengst van{' '}
+                                {formatEuro(calc.secondHomeNetProceeds)} (marktwaarde min
+                                hypotheekschuld min verkoopkosten) telt mee als extra eigen
+                                middelen bij de aankoop van de beoogde woning.
+                              </StatusBadge>
+                            ) : (
+                              <StatusBadge status="warning">
+                                Restschuld: de hypotheekschuld en verkoopkosten zijn samen{' '}
+                                {formatEuro(calc.secondHomeShortfall)} hoger dan de marktwaarde.
+                                Dit tekort moet u bij verkoop uit eigen middelen bijleggen — het
+                                verlaagt daarom uw beschikbare eigen middelen voor de nieuwe
+                                aankoop. Deze restschuld kan, anders dan bij uw eigen woning, niet
+                                automatisch worden meegefinancierd in de nieuwe hypotheek.
+                              </StatusBadge>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                              <SelectField
+                                id="secondHomeRepaymentType"
+                                label="Aflosvorm"
+                                icon={<PiggyBank className="h-3.5 w-3.5 text-slate-400" />}
+                                value={secondHomeRepaymentType}
+                                onChange={setSecondHomeRepaymentType}
+                                options={AFLOSVORMEN}
+                              />
+                              <Slider
+                                id="secondHomeInterestRate"
+                                label="Hypotheekrente tweede woning"
+                                icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
+                                value={secondHomeInterestRate}
+                                min={1.0}
+                                max={8.0}
+                                step={0.01}
+                                onChange={setSecondHomeInterestRate}
+                                formatValue={formatRate}
+                              />
+                            </div>
+                            <Slider
+                              id="secondHomeRemainingYears"
+                              label="Resterende looptijd"
+                              icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+                              value={secondHomeRemainingYears}
+                              min={1}
+                              max={30}
+                              step={1}
+                              onChange={setSecondHomeRemainingYears}
+                              formatValue={(v) => `${v} jaar`}
+                            />
+                            <div className="flex items-center justify-between rounded-xl border-2 border-amber-200 bg-amber-50 px-5 py-4">
+                              <span className="text-sm font-medium text-amber-900">
+                                Maandlast tweede hypotheek
+                              </span>
+                              <span className="text-xl font-bold text-amber-700">
+                                {formatEuro(calc.secondHomeMonthly)}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400">
+                              Deze volledige, werkelijke maandlast (niet de 2%-vuistregel van
+                              "Overige schulden") wordt gekapitaliseerd tegen de toetsrente en
+                              rechtstreeks in mindering gebracht op uw maximale hypotheek — samen
+                              goed voor{' '}
+                              {formatEuro(calc.secondHomeMonthly * calc.annuityFactor)} minder
+                              leencapaciteit.
+                            </p>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
 
           <div
             id="sectie-kosten-koper"
