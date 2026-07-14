@@ -1293,8 +1293,8 @@ function MortgageCalculatorForm({ onReset }) {
   const [income2, setIncome2] = useState(115000);
   const [age1, setAge1] = useState('36');
   const [age2, setAge2] = useState('36');
-  const [ownCapital1, setOwnCapital1] = useState(0);
-  const [ownCapital2, setOwnCapital2] = useState(0);
+  const [ownCapital1, setOwnCapital1] = useState(125000);
+  const [ownCapital2, setOwnCapital2] = useState(25000);
   const [rate, setRate] = useState(4.0);
   const [fixedRatePeriod, setFixedRatePeriod] = useState(10);
   const [energyLabel, setEnergyLabel] = useState('A');
@@ -1389,8 +1389,8 @@ function MortgageCalculatorForm({ onReset }) {
   // ook bij verkoop wilt u een positieve netto-opbrengst misschien niet (volledig)
   // inzetten voor déze aankoop.
   const [showSecondHome, setShowSecondHome] = useState(false);
-  const [hasSecondHome, setHasSecondHome] = useState(false);
-  const [secondHomeWillSell, setSecondHomeWillSell] = useState(true);
+  const [hasSecondHome, setHasSecondHome] = useState(true);
+  const [secondHomeWillSell, setSecondHomeWillSell] = useState(false);
   const [useSecondHomeProceeds, setUseSecondHomeProceeds] = useState(true);
   const [secondHomeValue, setSecondHomeValue] = useState('300000');
   const [secondHomeMortgageDebt, setSecondHomeMortgageDebt] = useState('42000');
@@ -1429,7 +1429,7 @@ function MortgageCalculatorForm({ onReset }) {
   const [bridgeLoanAmount, setBridgeLoanAmount] = useState('');
   const [bridgeLoanRate, setBridgeLoanRate] = useState(6.0);
   const [marketValue, setMarketValue] = useState(935000);
-  const [saleDiscountPercentage, setSaleDiscountPercentage] = useState(100);
+  const [saleDiscountPercentage, setSaleDiscountPercentage] = useState(95);
   const [currentEnergyLabel, setCurrentEnergyLabel] = useState('A');
   const [originalDebt, setOriginalDebt] = useState('675000');
   const [startDate, setStartDate] = useState('2021-01-15');
