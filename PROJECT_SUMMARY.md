@@ -1,18 +1,24 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
-**Laatste commit**: `58a00a3` — bekijk `git log --oneline` voor de volledige geschiedenis
-(65+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
+**Laatste commit**: `db8d944` — bekijk `git log --oneline` voor de volledige geschiedenis
+(80+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
 Working tree is schoon; alles hieronder staat al gepusht naar GitHub
 (`vmahgit/mortgage-calculator`, branch `main`) én live op Vercel.
 
 Live: https://mortgage-calculator-three-drab.vercel.app *(dit IS de huidige versie —
 elke sessie tot nu toe eindigde met `git push` + `npx vercel --prod --yes`. Blijf dat
 patroon aanhouden: na wijzigingen pushen naar GitHub en publiceren via
-`npx vercel --prod --yes` in `C:\Users\Vincent\mortgage-calculator`. `vercel`/`gh` staan
-niet standaard in PATH; gebruik `npx vercel` — die logt al in als `vfredriksz-4509` en
-het project is al gelinkt via `.vercel/project.json`, dus geen extra setup nodig.)*
+`npx vercel --prod --yes` in `C:\Users\Vincent\mortgage-calculator`, maar **vraag de
+gebruiker altijd expliciet om bevestiging voordat je commit/push/deploy uitvoert** — dat
+is dit hele project door zo gedaan, ook al is het "gebruikelijk". `vercel` staat niet
+standaard in PATH; gebruik `npx vercel` — die logt al in als `vfredriksz-4509` en het
+project is al gelinkt via `.vercel/project.json`, dus geen extra setup nodig.
+`git push` werkte de hele sessie gewoon — als de permissie-classifier 'm een keer blokkeert
+met een verwarde reden (zie "Belangrijke lessen" hieronder), vraag de gebruiker om
+bevestiging en probeer opnieuw; werkt dat niet, laat de gebruiker zelf pushen.)*
 Repo: `C:\Users\Vincent\mortgage-calculator` (git-repo op je eigen schijf)
-Stack: Vite + React + Tailwind CSS v4 + framer-motion + lucide-react, gehost op Vercel.
+Stack: Vite + React + Tailwind CSS v4 + framer-motion + lucide-react + jsPDF/autotable
+(dynamisch geïmporteerd), gehost op Vercel.
 
 ## Wat de tool doet
 Indicatieve Nederlandse hypotheekcalculator voor zowel starters (geen bestaande woning)
@@ -22,288 +28,240 @@ met de echte Nibud-woonquote-systematiek 2026, niet met een benaderde leenfactor
 ## Belangrijkste architectuurkeuzes
 - **Rekenkern** (`src/nibud2026.js`): officiële financieringslastpercentages (Tabel 1,
   Wijzigingsregeling hypothecair krediet 2026, Stcrt. 2025, 36471) als ankerpunten, met
-  bilineaire interpolatie tussen inkomens- en toetsrenteschijven.
-- **Hoofdcomponent** (`src/MortgageCalculator.jsx`, ~4900 regels): alle calculator-state
-  en -logica zit in `MortgageCalculatorForm`; de `export default MortgageCalculator` is
-  een dunne wrapper die alleen een `resetKey` bijhoudt en `MortgageCalculatorForm` met
-  die `key` rendert — "Opnieuw beginnen" hoogt de key op en remount't zo de hele vorm met
-  verse defaults, zonder elk los state-veld handmatig te moeten resetten. Bevat o.a.
-  financieringsgat-berekening (meegenomen hypotheek + overwaarde + eigen vermogen +
-  restschuld-tekort bij onderwaarde, schakelbaar via de meeneemregeling-toggle),
-  scenario-analyse, aflossingsgrafiek, starters-maandlastenblok, instelbare
-  aflossingsvrij-norm (30/50/100%).
+  bilineaire interpolatie tussen inkomens- en toetsrenteschijven. `projectRemainingBalance()`
+  (in `MortgageCalculator.jsx`, niet in dit bestand) is een **closed-form** functie die de
+  restschuld van een leningdeel op een willekeurige toekomstige maand berekent voor alle
+  drie aflosvormen — de basis voor zowel de 30-jaars-grafiek als het nieuwe maandschema
+  (zie hieronder), zonder dat er iteratief door de tijd geloopt hoeft te worden.
+- **Hoofdcomponent** (`src/MortgageCalculator.jsx`, ~6200 regels — dit bestand is
+  inmiddels behoorlijk groot, overweeg bij grote nieuwe features een aparte module zoals
+  al gedaan is voor `bouwdepot.js` en `pdfExport.js`): alle calculator-state en -logica
+  zit in `MortgageCalculatorForm`; de `export default MortgageCalculator` is een dunne
+  wrapper die alleen een `resetKey` bijhoudt en `MortgageCalculatorForm` met die `key`
+  rendert — "Opnieuw beginnen" hoogt de key op en remount't zo de hele vorm met verse
+  defaults.
 - **Woninggegevens-opzoeker** (`src/OptionalPropertyDataModule.jsx` +
   `src/housingData.js`): haalt bouwjaar, oppervlakte, perceelgrootte en historische
-  WOZ-waarden (incl. cumulatieve waardeontwikkeling-grafiek en %-wijziging per jaar) op
-  via uitsluitend **gratis, publieke overheids-API's** (PDOK Locatieserver, PDOK
-  BAG-kaartendienst, en de publieke API die wozwaardeloket.nl zelf gebruikt) — geen
-  API-sleutel, geen backend, geen scraping nodig.
+  WOZ-waarden op via uitsluitend **gratis, publieke overheids-API's** (PDOK
+  Locatieserver, PDOK BAG-kaartendienst, wozwaardeloket.nl) — geen API-sleutel, geen
+  backend.
 - **Scenario-analyse** (`src/ScenarioAnalysis.jsx`): "wat als ik X% meer/minder bied"-
-  tabel, gekoppeld aan de daadwerkelijk ingestelde leningdelen (niet een generieke
-  aanname), incl. maandlast van alleen het nieuwe leningdeel apart van het totaal.
+  tabel. Sinds deze sessie ook: bij overbieden (positief %) wordt de taxatiewaarde
+  gelijkgesteld aan de aanschafprijs — het bod daarboven ("Extra eigen inleg boven
+  taxatiewaarde") telt niet mee voor de hypotheek en moet uit eigen geld komen.
 - **Landingspagina** (`src/LandingPage.jsx`): cinematische hero met roterende
-  Nederlandse villafoto's (Unsplash), scroll-parallax, count-up-animaties, titel
-  "Hypotheek Calculator" met gouden gradient.
-- **Kosten koper & overdrachtsbelasting** (`src/kostenKoper.js`): `getTransferTaxRate()`
-  bepaalt het gedifferentieerde tarief (0% startersvrijstelling 18–34 jr onder
-  €555.000, 2% eigen woning, 8% niet-hoofdverblijf, 0%/n.v.t. bij nieuwbouw);
-  `getKostenKoperBreakdown()` splitst kosten koper op in per-post aanpasbare en
-  aan/uit te zetten bedragen (notaris, taxatie, advies, bankgarantie, makelaar,
-  NHG-provisie). `calc` in MortgageCalculator.jsx is de ene gedeelde bron —
-  `newHomeCalc`, `doubleCostsCalc`, de sidebar en het financieringsgatblok lezen
-  er allemaal uit.
-- **Toetsinkomen per aanvrager** (`src/toetsinkomen.js`): `getToetsinkomen()` bouwt
-  het toetsinkomen op uit inkomenstype (vast / flex met of zonder
-  intentieverklaring / ZZP, met 3-jaarsmiddeling gemaximeerd op het laatste jaar),
-  structureel inkomen (13e maand, telt volledig) en incidenteel inkomen (gemiddelde
-  bonus/overwerk), min betaalde partneralimentatie (bruto ×12, vóór de
-  woonquote-bepaling — dus geen kapitalisatie zoals schulden). Retourneert een
-  transparant opbouwobject (basis, structureel, aftrek, cap-vlaggen) — een
-  voorschot op de nog openstaande auditbare-toetsopbouw-taak.
-- **AOW-toets** (`src/nibud2026.js`): tweede financieringslasttabel (Tabel 2, zelfde
-  Stcrt. 2025-36471) voor consumenten die de AOW-leeftijd al bereikt hebben, via de
-  optie `{ aow: true }` op `getWoonquote()`/`getIncomeBasedMortgage()`. Vanaf
-  leeftijd 57 (binnen 10 jaar van AOW-leeftijd 67) toetst `calc` in
-  MortgageCalculator.jsx zowel het huidige inkomen als het ingevoerde verwachte
-  pensioeninkomen; de laagste `maxLoan` is bindend, toegepast vóór de
-  energiebonus/LTV-cap zodat ook de doorstromer-bijleenruimte de toets volgt. Leeg
-  pensioenveld → expliciete waarschuwing, geen toets op €0.
-- **Meeneemregeling schakelbaar** (`takeOverMortgage`, default aan): bij "nee, aflossen"
-  wordt `currentMortgage.portedDebt` 0 en vervalt het renterisico op de oude leningdelen.
-  Dit is de ene plek waar dat wordt bepaald; `combinedGapCalc`, `maxBudgetCalc`,
-  `scenarioAnalysis`, `additionalLoanCalc` en de aflossingsgrafiek lezen er allemaal uit.
+  Nederlandse villafoto's, scroll-parallax, count-up-animaties.
+- **Kosten koper & overdrachtsbelasting** (`src/kostenKoper.js`): `getTransferTaxRate()` /
+  `getKostenKoperBreakdown()`. Sinds deze sessie ook: "Type aankoop"-toggle staat nu in de
+  kaart **Beoogde woning** (niet meer Kosten koper — zie herstructurering hieronder), en
+  er is een nieuw blok "Eenmalig aftrekbare financieringskosten" (advies + taxatie + NHG,
+  notariskosten bewust uitgesloten omdat leverings-/hypotheekakte niet uitgesplitst zijn).
+- **Toetsinkomen per aanvrager** (`src/toetsinkomen.js`): `getToetsinkomen()` — inkomenstype,
+  structureel/incidenteel inkomen, alimentatie-aftrek. Retourneert een transparant
+  opbouwobject; wordt nu volledig benut door de "Uw rekensom stap voor stap"-sectie (zie
+  hieronder).
+- **AOW-toets** (`src/nibud2026.js`): tweede financieringslasttabel voor wie binnen 10 jaar
+  de AOW-leeftijd bereikt.
+- **Meeneemregeling schakelbaar** (`takeOverMortgage`): bepaalt of de bestaande hypotheek
+  meegaat naar de nieuwe woning.
+- **Bouwdepot bij nieuwbouw** (`src/bouwdepot.js`, `getBouwdepotEstimate()`): indicatieve
+  rente-tijdens-de-bouw-schatting bij lineaire opname-aanname. Zie "Nieuwbouw-flow"
+  hieronder.
+- **PDF-export** (`src/pdfExport.js`, `exportHypotheekAdviesPdf()`): genereert een
+  adviesrapport met jsPDF + jspdf-autotable. **Dynamisch geïmporteerd** (`await
+  import('./pdfExport')` in `handleExportPdf`) zodat de ~150kB aan PDF-bibliotheken niet in
+  het hoofdbundle terechtkomen — alleen geladen bij een klik op "Exporteer naar PDF".
 
-## Visuele/UX-polish (op verzoek, na de professionaliseringsronde)
-Acht kleine fases, elk als eigen commit met browser-verificatie (zie
-`git log --oneline` rond de commits ná "Alimentatie..."):
-1. Hero-overlay verlicht (was bijna ondoorzichtig) + Ken Burns-zoom op de villafoto's.
-2. Mobiele voortgangsbalk (horizontaal scrollbaar i.p.v. lelijk wrappen) + een fixed
-   bottom-bar met live resultaat-samenvatting zolang het echte paneel niet in beeld is
-   (`IntersectionObserver` op `sectie-resultaat`).
-3. `AdvancedFieldsToggle` verbergt zelden-gebruikte velden (13e maand, bonus,
-   alimentatie) achter "Meer opties", standaard dicht.
-4. `SectionCard`-accentkleuren per categorie + hover-lift op alle kaarten.
-5. `InfoTooltip` bij vaktermen (toetsinkomen, woonquote, AFM-toetsrente, ...). Let op:
-   een tooltip-popover (div) mag nooit in een `<p>` genest worden — geeft een
-   HTML-nesting/hydration-fout; gebruik `<span>` als wrapper.
-6. `InlineNote` voor puur informatieve toelichtingen; `StatusBadge` alleen nog voor
-   verdicts/acties.
-7. Micro-interacties: puls op `AnimatedEuro` bij >5% wijziging, fade-in op
-   `AmortizationChart`, een "vier het moment"-wiebel op de statuspil bij de overgang
-   van niet-haalbaar naar haalbaar.
-8. "Opnieuw beginnen"-knop (key-remount-patroon) + inklapbare "Bronnen & aannames".
+## Navigatie & visuele polish — ronde 2 (BorderGlow + scrollspy-rail)
+- **BorderGlow** (`src/BorderGlow.jsx` + `.css`, overgenomen van reactbits.dev) rond het
+  Resultaat-paneel: subtiele intro-sweep + cursor-volgende gloed in de merkkleuren.
+- **Scrollspy-navigatie** (`src/SectionRail.jsx`, exporteert `useScrollSpy` hook +
+  `SectionRail`-component): op desktop (xl+) een dunne stippen-rail vast aan de linkerrand;
+  op kleinere schermen is de bestaande chipbalk uitgebreid met auto-highlight,
+  auto-scroll naar de actieve chip, en een vullijn die de voortgang toont.
+  **Belangrijke bug die hier is opgelost**: het sticky Resultaat-paneel deelt zijn grid-rij
+  met "Inkomen", dus zijn vastgeplakte schermpositie (`getBoundingClientRect()`) maakte hem
+  structureel "actief" ongeacht scrollpositie. Opgelost door de sectiepositie te bepalen via
+  `offsetTop` (ongevoelig voor `position: sticky`) i.p.v. `getBoundingClientRect()`, en het
+  Resultaat-paneel pas als actief te markeren zodra je voorbij de hele linkerkolom-inhoud
+  bent gescrold (zie `getDocumentTop`/de "companion"-afhandeling in `useScrollSpy`).
 
-## Workflow- en logica-ronde (na de visuele polish, meest recente werk)
-Gebouwd naar aanleiding van een kritische UX-review ("voelt als een zwarte doos",
-"voortgangsbalk liegt"), daarna verder verfijnd met concrete correcties. Elke stap
-weer een eigen commit + browser-verificatie.
+## Nieuwbouw-flow, auditbare toetsopbouw & herstructurering huidige-woning-blokken
+- **Nieuwbouw-flow**: kiest u "Nieuwbouw" bij Type aankoop, dan verschijnt automatisch een
+  kaart **"Bouwdepot (nieuwbouw)"** (`sectie-bouwdepot`, ook in de scrollspy-rail) met
+  bouwdepotbedrag, bouwperiode en de rente-tijdens-de-bouw-berekening. Tegelijk wordt de
+  "Aankoopmakelaar"-kostenpost bij Kosten koper automatisch uitgezet (met uitleg) — bij
+  nieuwbouw koopt u meestal rechtstreeks van de projectontwikkelaar.
+- **Auditbare toetsopbouw**: nieuwe inklapbare sectie **"Uw rekensom stap voor stap"**
+  onderin het Resultaat-paneel: toetsinkomen per aanvrager → woonquote → max. bruto
+  woonlast → schuldenaftrek → kapitalisatie naar hypotheek → energiebonus → eventuele
+  AOW-/LTV-begrenzing.
+- **Herstructurering "Huidige woning"-blokken** (voorheen alles binnen één collapsible):
+  - "Type aankoop (overdrachtsbelasting)" verplaatst van Kosten koper **náár Beoogde
+    woning** (default blijft "Bestaande bouw").
+  - **"Huidige Hypotheek Analyseren"**, **"Extra bijleenruimte bij verkoop huidige
+    woning"** en **"Aanvullende hypotheek"** zijn nu drie losse, onafhankelijk
+    in-/uitklapbare kaarten i.p.v. geneste content binnen één collapsible.
+  - "Aflossing komende dertig jaar" hernoemd naar **"Aflosschema nieuwe situatie"**.
+  - **Valkuil hierbij**: de buitenste `<div id="sectie-huidige-woning">` omvat NIET alleen
+    de collapsible "Huidige Hypotheek Analyseren" — hij omvat ook de al langer bestaande
+    sibling-kaarten "Maximaal aankoopbudget" en "Aflosschema nieuwe situatie" plus "Nibud
+    dubbele-lastentoets", en sluit pas na die allemaal. Bij het opsplitsen per ongeluk de
+    outer-div te vroeg gesloten (na alleen de eerste collapsible), wat een dubbele-close
+    JSX-fout gaf verderop in het bestand. Zie "Belangrijke lessen" voor hoe dit is
+    opgelost/gedebugd.
 
-- **Voortgangsbalk is nu eerlijk anker-navigatie, geen pseudo-wizard**: geen
-  verbindingslijnen, geen cumulatieve voortgangsbalk meer (die suggereerden een
-  Volgende/Terug-flow die er nooit was — alles is en blijft altijd tegelijk
-  zichtbaar/bewerkbaar, past bij de landingspagina-tekst "geen knoppen, geen
-  wachten"). Chips zijn losse pills; volgorde matcht nu de fysieke paginavolgorde
-  (zie hieronder). Korte ondertitel maakt expliciet dat je overal naartoe kunt
-  springen.
-- **"Uw situatie" is één paneel geworden**: woningsituatie-toggle (Ja/Nee al een
-  woning) én de aantal-aanvragers-toggle (1/2, was verstopt in de Inkomen-kaart)
-  staan nu samen bovenaan, vóórdat er een bedrag wordt gevraagd.
-- **Paginavolgorde omgedraaid**: Uw situatie → **Beoogde woning** → Inkomen →
-  Schulden → **Kosten koper** (i.p.v. Inkomen/Schulden eerst, Beoogde woning +
-  Kosten koper als los blok erna). Reden: bezoekers hebben meestal al een
-  concreet huis/prijsklasse in gedachten voordat ze hun inkomen intikken. De
-  AOW-pensioenbanner verhuisde mee naar vlak vóór de Inkomen-kaart (waar hij
-  inhoudelijk bij hoort). Puur JSX-herordening via een node-scriptje (cut/paste
-  op exacte regelnummers) — geen calc-logica gewijzigd.
-- **"Type aankoop (overdrachtsbelasting)" verhuisd** van de kaart Beoogde woning
-  náár de kaart Kosten koper (logischer: het bepaalt daar direct een kostenpost).
-- **Kosten koper is nu inklapbaar** (zelfde patroon als "Huidige Hypotheek
-  Analyseren"/"Nibud dubbele-lastentoets": handgerolde collapsible i.p.v.
-  `SectionCard`, met violet accent-linkerrand), **standaard dichtgeklapt**. De
-  header toont altijd het totaalbedrag + of het meetelt, ook dicht.
-- **Kosten koper telt standaard NIET mee in de berekening**: nieuwe
-  `includeKostenKoperInCalc`-toggle ("Ja, meetellen"/"Nee, niet meetellen"),
-  default **uit**. Kosten koper wordt altijd volledig berekend/getoond in de
-  kaart zelf; de toggle bepaalt alleen `calc.ownMoney` (sidebar "Geschat eigen
-  geld") en `doubleCostsCalc.kostenKoper` (dubbele-lastentoets) — de enige twee
-  plekken waar het daadwerkelijk in een berekening werd meegenomen (de
-  financieringsgat-berekening voor doorstromers sloot het al uit). Let op: de
-  knoplabels zijn bewust "meetellen"/"niet meetellen" i.p.v. "meenemen" om
-  verwarring met de bestaande meeneemregeling-toggle (hypotheek meenemen bij
-  verhuizing) te voorkomen — die deelde eerder per ongeluk exact dezelfde
-  knoptekst "Ja, meenemen".
-- **Causaliteit zichtbaar gemaakt**: nieuw blok "Bepalend voor uw maximum nu"
-  bovenaan het resultaatpaneel (sidebar), direct onder de statuspil. Eén
-  geprioriteerde, samenhangende verklaring i.p.v. losse statuslabels: schulden >
-  AOW-toets > (bij bestaande woning) lender-cap/restschuld/bijleenruimte/
-  renterisico op meegenomen hypotheek, anders de normale woonquote, of (bij
-  starter) de aanschafprijs als plafond. Berekend in een eigen `bindingFactor`
-  useMemo die `calc`/`currentMortgage`/`combinedGapCalc` samenvoegt.
-- **Inkomenstype-dropdown toont nu vooruitblik**: de opties zelf bevatten een
-  korte gevolg-hint ("vraagt 3 jaarcijfers", "telt volledig mee"), zichtbaar
-  zodra je de dropdown openklapt — vóór de keuze, niet pas erna
-  (`INCOME_TYPES` in `toetsinkomen.js`).
-- **Sliders ruimer, nieuwe defaults, schakelbare tweede aanvrager**: inkomen tot
-  €300k (was €150k), eigen vermogen tot €400k (was €200k). Nieuwe
-  `hasPartner2`-toggle (1/2 aanvragers, staat nu in "Uw situatie"): bij 1
-  aanvrager telt niets van Partner 2 mee (inkomen, vermogen, schulden, leeftijd,
-  startersvrijstelling), ook niet als er nog oude waarden in die velden staan —
-  gegated via `hasPartner2 ?` op elke plek waar `income2`/`ownCapital2`/`debt2`/
-  `age2`/etc. de `calc` ingaan.
-- **iPhone-invoerfix**: alle tekst-inputs/selects naar 16px lettergrootte (onder
-  16px zoomt Safari automatisch in bij focus — waarschijnlijk de oorzaak van
-  eerdere "werkt niet optimaal"-klachten). Alle 20 wissel-knoppen groter
-  tikoppervlak op mobiel (`py-2` i.p.v. `py-1.5`, ongewijzigd vanaf `sm:`).
-  Slider-track iets dikker (`h-2` → `h-3`) + `touch-none` voor directere
-  sleeprespons.
-- **€1.000.000-grens-waarschuwing nu ook voor starters**: bestond al voor
-  doorstromers (`combinedGapCalc.exceedsLenderCap`, `additionalLoanCalc.
-  exceedsLenderCap`); nu ook `starterLoanCalc.exceedsLenderCap` met dezelfde
-  `StatusBadge`-waarschuwing in de starters-hypotheekkaart.
-- **Startersvrijstelling leeftijdsafhankelijk gemaakt**: het vinkje "nog niet
-  gebruikt" wordt alleen nog getoond (en telt dus alleen nog mee) voor een koper
-  van 18 t/m 34 jaar (`STARTER_EXEMPTION_MIN_AGE`/`MAX_AGE` uit `kostenKoper.js`)
-  — daarbuiten een uitlegzin i.p.v. een inert vinkje. Default nu **false**
-  ("al gebruikt") i.p.v. altijd `true`. Default leeftijd beide personen: **36**
-  jaar (was 35/34) — dit is bewust bóven de startersgrens, dus met de defaults
-  zie je meteen de "niet in aanmerking"-uitlegzin i.p.v. de checkbox.
-- **HRA-tarief (hypotheekrenteaftrek) inkomensafhankelijk gemaakt** — was een
-  vaste 37,56% voor iedereen, wat voor lagere inkomens te hoog is. Sinds 2023 is
-  de aftrek wettelijk begrensd op het tarief van de **tweede** belastingschijf
-  box 1 (37,56% in 2026); wie met zijn/haar toetsinkomen volledig binnen de
-  **eerste** schijf blijft (tot €38.883, 2026) trekt af tegen het lagere
-  eerste-schijftarief van **35,70%**. Nieuwe `getHraRate(...incomes)`-helper
-  (module-level, gebruikt `Math.max` van de toetsinkomens van beide
-  aanvragers) toegepast in `currentMortgage`, `scenarioAnalysis`,
-  `additionalLoanCalc` én `starterLoanCalc` — alle 4 plekken die voorheen de
-  vaste `HRA_RATE`-constante gebruikten. UI-labels tonen nu het daadwerkelijk
-  toegepaste percentage (`formatRate(x.hraRate * 100)`) i.p.v. hardgecodeerde
-  tekst "37,56%".
-- **Eigenwoningforfait (EWF) staat nu default uit**: nieuwe checkbox
-  "Eigenwoningforfait meenemen in de netto berekening" in de doorstromer-netto-
-  weergave (`includeEwfInNetCalc`, default `false`). Dit was de ENE plek waar
-  EWF automatisch werd afgetrokken van het netto belastingvoordeel; de starter-
-  en aanvullende-hypotheek-netto-weergaven sloten het al standaard uit (met een
-  eigen toelichtende tekst) — nu consistent overal default uit, met opt-in.
+## Maandelijks aflosschema (tijd-slider + waardestijging-aanname)
+Bij **"Aflosschema nieuwe situatie"** (naast de bestaande 30-jaars-jaargrafiek):
+- Nieuwe **maandtabel** (rente, aflossing, totaal, onderpandswaarde, LTV) voor de
+  meegenomen + nieuwe leningdelen samen, opgebouwd in `monthlySchedule` (useMemo, direct
+  na `amortizationSchedule`).
+- **Tijd-slider** (`scheduleWindowStartMonth`, 0–359): toont een venster van 12
+  opeenvolgende maanden; naar rechts schuiven toont latere maanden.
+- **Waardestijging-slider** (`scheduleAppreciationPct`, 0–9%, stap 0,5%, default 0%): werkt
+  maandelijks samengesteld door in onderpandswaarde/LTV, uitgaande van de **aanschafprijs**
+  van de beoogde woning (niet `marketValue`, dat is de huidige/oude woning — zelfde
+  conventie als de bestaande `newLtv`-berekening).
+- Rente/aflossing per maand wordt **afgeleid uit twee opeenvolgende saldi** via de
+  bestaande `projectRemainingBalance` (géén nieuwe amortisatiewiskunde nodig): `interest(m)
+  = balance(m-1) × maandrente`, `principal(m) = balance(m-1) − balance(m)`. Werkt correct
+  voor alle drie aflosvormen.
+
+## Adviseursverfijningen (hypotheekadviseur-review) + PDF-export
+Op verzoek van de gebruiker (zelf ervaren hypotheekadviseur/aankoopmakelaar) vier
+inhoudelijke correcties doorgevoerd:
+- **Bijleenregeling**: waarschuwing bij "Aanvullende hypotheek" zodra meer geleend wordt
+  dan het financieringsgat vereist terwijl er overwaarde is (`additionalLoanCalc.
+  bijleenregelingRisk`/`excessOverGap`) — eigenwoningreserve niet volledig herinvesteerd
+  → rente over het teveel is niet aftrekbaar.
+- **Taxatiewaarde bij overbieden**: zie ScenarioAnalysis hierboven.
+- **Eenmalig aftrekbare financieringskosten**: zie Kosten koper hierboven
+  (`calc.deductibleFinancingCosts`/`financingCostsTaxBenefit`).
+- **Overbruggingskrediet**: nieuwe toggle bij "Nibud dubbele-lastentoets"
+  (`useBridgeLoan`/`bridgeLoanAmount`/`bridgeLoanRate`) — ontsluit de overwaarde vroegtijdig
+  tegen rente, verlaagt de tijdelijke nieuwe hypotheek maar telt de rente mee in de
+  gecombineerde maandlast (`doubleCostsCalc.bridgeLoanMonthlyInterest`).
+
+**PDF-export**: knop "Exporteer naar PDF" naast "Opnieuw beginnen" (bovenaan de pagina).
+Genereert een adviesrapport (situatie, beoogde woning, inkomen, resultaat met bindende
+factor, kosten koper, en afhankelijk van doorstromer/starter het financieringsgat resp. de
+leningdelen-samenstelling). Bestandsnaam: `Hypotheekadvies_<doorstromer|starter>_<bedrag>_
+<YYYY-MM-DD>.pdf`. Zie `handleExportPdf` in `MortgageCalculator.jsx` voor hoe de (bewust
+beperkte, samengevatte) data aan `exportHypotheekAdviesPdf()` wordt doorgegeven.
 
 ## Herbruikbare bouwstenen (ken je deze, dan bouw je sneller mee)
-In `src/MortgageCalculator.jsx`: `SectionCard` (met `accent`-prop: blue/amber/emerald/
-violet/indigo — gekleurde linkerrand + icoon-achtergrond per categorie; Kosten koper
-gebruikt deze NIET meer, zie hieronder), `StatusBadge` (status=
-"success"|"warning"|"error"|"info", gereserveerd voor verdicts/acties), `InlineNote`
-(rustige grijze tekst + info-icoon, voor puur informatieve toelichtingen), `InfoTooltip`
-(klein (i)-icoon, klik/tik-tooltip, `variant="light"` voor donkere achtergronden),
-`AdvancedFieldsToggle` ("Meer opties"-inklapper, standaard dicht), `AnimatedEuro`
-(count-up-getal + puls bij >5% wijziging), `Slider` (met optionele `labelExtra`-node,
-bijv. voor een InfoTooltip), `CurrencyField`, `EnergyLabelPicker`,
-`AflossingsvrijMaxToggle`, `DonutChart`, `AmortizationChart` (fade-in bij laden),
-`AdditionalLoanPartCard`, `calculateLoanPart()`, `formatEuro()`, `formatRate()`,
-`safeNum()`, `getHraRate(...incomes)` (inkomensafhankelijk HRA-tarief, zie boven).
-Kosten koper is een **handgerolde** collapsible (geen `SectionCard`) — kopieer dát
-patroon (button-header met chevron + `AnimatePresence`/`motion.div` content) als je
-nóg een inklapbare kaart nodig hebt, zoals ook "Huidige Hypotheek Analyseren" en
-"Nibud dubbele-lastentoets" al deden.
+In `src/MortgageCalculator.jsx`: `SectionCard`, `StatusBadge`, `InlineNote`, `InfoTooltip`,
+`AdvancedFieldsToggle`, `AnimatedEuro`, `Slider`, `CurrencyField`, `EnergyLabelPicker`,
+`AflossingsvrijMaxToggle`, `DonutChart`, `AmortizationChart`, `AdditionalLoanPartCard`,
+`calculateLoanPart()`, `projectRemainingBalance()` (closed-form restschuld-projectie, zie
+boven), `formatEuro()`, `formatRate()`, `safeNum()`, `getHraRate(...incomes)`.
+Kosten koper/Huidige Hypotheek Analyseren/Extra bijleenruimte/Aanvullende hypotheek/
+Bouwdepot zijn allemaal **handgerolde** collapsibles (geen `SectionCard`) — kopieer dát
+patroon (button-header met chevron + `AnimatePresence`/`motion.div` content) voor een
+nieuwe inklapbare kaart.
+Losse modules: `src/SectionRail.jsx` (`useScrollSpy` hook + rail-component, zie boven),
+`src/BorderGlow.jsx`, `src/bouwdepot.js`, `src/pdfExport.js`.
 
 ## Belangrijke lessen / valkuilen (voor vervolgwerk)
+- **`node -e "..."` met grote inline scripts kan silent corrupt raken.** Bij een grote
+  JSX-verplaatsing deze sessie gaf een `node -e` met een zeer lange, zwaar ge-escapete
+  string (geneste quotes, template literals) een script dat *leek* te slagen (geen
+  syntaxfout, plausibele console-output) maar waarvan de daadwerkelijke stringinhoud
+  subtiel corrupt was — resultaat: JSX-tags op de verkeerde plek geknipt, twee builds
+  achter elkaar met dezelfde mysterieuze "Adjacent JSX elements"-fout op een regel die er
+  zelf prima uitzag. **Oplossing/les**: schrijf grote of complexe scripts naar een los
+  `.cjs`-bestand (via de Write-tool) en run dat met `node script.cjs`, i.p.v. alles via
+  `node -e "..."` in Bash te proppen. Dit bestandsproject heeft `"type": "module"` in
+  `package.json`, dus gebruik de extensie `.cjs` (niet `.js`) voor CommonJS-scripts met
+  `require()`. Verwijder zulke scratch-scripts na gebruik (`rm restructure.cjs
+  splice.cjs check_pieces.cjs debug_*.txt`).
+- **Bij een JSX-restructurering: verifieer boundaries met een echte depth-finder, niet met
+  handmatig geteld regelnummer.** Gebruik een script dat alle `<div>`/`</div>`-tokens in de
+  hele bestandsstring matcht (niet regel-voor-regel, dat breekt bij multi-line tags) en de
+  nesting-diepte bijhoudt vanaf een gegeven startregel. Verifieer ELKE boundary met een
+  *unieke* tekst-anchor (niet een generieke `"</div>"`-match, die matcht bijna alles).
+  Bij twijfel over een resultaat: knip het beoogde segment naar een los `.txt`-bestand en
+  inspecteer het geïsoleerd, vóórdat je het terugplakt in het hoofdbestand.
+- **Bij twijfel over een grote structuurwijziging: ga terug naar de laatste schone commit**
+  (`git show HEAD:pad/naar/bestand.jsx > tmp.jsx`) als bron van waarheid voor het
+  ONGEWIJZIGDE deel, i.p.v. verder te patchen op een intermediair, mogelijk al corrupt
+  bestand. Bereken de nieuwe structuur tegen die schone versie, splice daarna het resultaat
+  terug het huidige (met andere, wél-gewenste wijzigingen) werkbestand in.
+- **Browser-automation: layout-shifts van ANDERE kaarten kunnen cached refs/coördinaten
+  ongeldig maken.** Een `ref_N` of coördinaat verkregen vóór het in-/uitklappen van een
+  andere kaart kan na die actie op een verschoven, verkeerd element landen (bijv. een klik
+  die bedoeld was voor een input, landt op de collapsible's eigen toggle-knop en klapt de
+  hele kaart dicht). **Les**: vlak vóór een kritieke test-actie altijd vers
+  `document.querySelector`/`read_page` opnieuw opvragen i.p.v. een eerder verkregen ref te
+  hergebruiken, zeker na tussenliggende interacties met andere delen van de pagina.
+- **Voor tekst-inputs (`type="text"`, gestuurd via React `onChange`) is de betrouwbaarste
+  automation-aanpak**: `element.focus()` gevolgd door de echte `computer`-tool `type`-actie
+  (simuleert keystrokes), of de native-setter+`dispatchEvent('input', {bubbles:true})`-truc
+  — maar test dit áltijd door het gerenderde resultaat te checken (niet alleen
+  `input.value`, want dat kan een schijnbare "succesvolle" waarde tonen terwijl de
+  onderliggende React-state niet is bijgewerkt als de kaart zelf niet zichtbaar/actief is).
+- **Zware libraries (jsPDF, ~150kB) altijd dynamisch importeren** (`await
+  import('./module')` binnen de click-handler) i.p.v. statisch bovenaan het bestand, tenzij
+  de functionaliteit op elke paginalading nodig is. Scheelt in dit project een verdubbeling
+  van het hoofdbundle voor een puur op-aanvraag-feature.
+- **De permissie-classifier van de auto-mode kan een `git push` een keer blokkeren met een
+  verwarde reden** (deze sessie: dacht dat de repo `vmahgit/tonik` was — een compleet
+  ander, ouder project — ook al bevestigde `git remote -v` gewoon
+  `vmahgit/mortgage-calculator`). Nogmaals bevestigen loste het niet meteen op; een tweede
+  poging even later werkte wel. Als dit weer gebeurt: leg het aan de gebruiker uit, vraag
+  om een Bash-permissieregel of laat de gebruiker zelf pushen — probeer het niet te
+  omzeilen.
 - **Scroll-reveal bug**: een `whileInView`-animatie met `amount: 0.2` op een element dat
-  veel hoger is dan het scherm (zoals de hele calculator) triggert nooit. Los element
-  amount={0} geven.
-- **WOZ-zoekbug**: de vrije-tekstzoeker van wozwaardeloket indexeert niet elke straat
-  betrouwbaar; de straatnaam-zoeker (`?straat=`) werkt wel consistent.
-- **Twee gap-berekeningen** (`newHomeCalc` en `combinedGapCalc`) bestaan naast elkaar in
-  de code — `combinedGapCalc` is de actief gebruikte/UI-tonende variant.
-- **div-in-p hydration-bug**: een framer-motion-popover (rendert een `<div>`) genest in
-  een `<p>`-label gaf een "cannot be a descendant of p"-hydration-fout — de browser
-  sluit `<p>` stilletjes af zodra hij een blok-element tegenkomt. Gebruik `<span>` als
-  wrapper voor labels die een popover/tooltip bevatten, nooit `<p>`.
-- **Console-logs uit de preview-tool kunnen stale zijn**: na een reload bleven oude
-  hydration-fouten in `preview_console_logs` staan alsof ze nog optraden. Controleer
-  bij twijfel de live DOM direct (bijv. `document.querySelectorAll('p').filter(p =>
-  p.querySelector('div'))`) i.p.v. alleen op de logregel te vertrouwen.
-- **Twee knoppen met exact dezelfde tekst**: de nieuwe "meenemen in berekening"-toggle
-  bij Kosten koper kreeg per ongeluk dezelfde labels ("Ja, meenemen"/"Nee, niet
-  meenemen") als de al bestaande meeneemregeling-toggle (hypotheek meenemen bij
-  verhuizing) — twee heel verschillende dingen, verwarrend voor gebruikers én voor
-  tekst-gebaseerde test-selectors. Nu "Ja/Nee, meetellen". Check bij nieuwe
-  Ja/Nee-knoppenparen altijd of de exacte tekst al elders in de app voorkomt
-  (`grep -n "Ja, <label>"`) voordat je 'm hergebruikt.
-- **Grote JSX-blokken verplaatsen**: reorderen van hele secties (Beoogde woning/Kosten
-  koper naar een andere plek, Type aankoop-blok tussen kaarten) deed ik via een klein
-  node-scriptje dat exacte 1-indexed regelnummers (uit de Read-tool) opknipt/plakt,
-  i.p.v. handmatige Edit-calls op zulke grote tekstblokken — sneller en minder
-  foutgevoelig. Reindenteer niet mee (JSX geeft niets om whitespace); check achteraf
-  altijd of open/close-tags weer in balans zijn door de grep/read rond de naad.
-- Elke wijziging deze hele sessie is als aparte git-commit vastgelegd. Werkwijze die
-  steeds is aangehouden: (1) research bij officiële bron indien harde cijfers/regels
-  nodig zijn, (2) implementeren, (3) verifiëren in de browser via de preview-tool
-  (console-errors checken, functioneel testen, kort mobiel-formaat checken), (4) pas dan
-  committen. Hou dit vol — het is de reden dat alles tot nu toe stabiel is gebleven.
-- Een eerdere poging om dit werk 's nachts autonoom door een achtergrond-agent te laten
-  doen is **gecrasht zonder iets af te maken** (proces stopte voortijdig). Niets ging
-  verloren omdat er nog niets gecommit was, maar: laat groot werk liever gewoon in een
-  gewone, actieve sessie doen in plaats van in de achtergrond terwijl niemand kijkt.
-
-## Afgeronde uitbreidingen (professionaliseringsronde, punten 2/3/4/6/7)
-In deze sessie gebouwd, elk als eigen commit met browser-verificatie:
-- **Kosten koper realistisch uitgesplitst** (`src/kostenKoper.js`,
-  `getKostenKoperBreakdown()`): notaris, taxatie, advies (aanpasbaar), bankgarantie,
-  makelaarscourtage, NHG-provisie (aan/uit).
-- **Overdrachtsbelasting gedifferentieerd** (`getTransferTaxRate()`): 0%
-  startersvrijstelling, 2% eigen woning, 8% niet-hoofdverblijf, 0%/n.v.t. bij
-  nieuwbouw. Vereenvoudiging bij twee kopers: één vrijgesteld → indicatief 1% via
-  50/50-aandeel (uitgelegd in de UI).
-- **AOW/pensioen als echte dubbele toets** (`nibud2026.js` Tabel 2 + `calc` in
-  MortgageCalculator.jsx): huidig inkomen vs. verwacht pensioeninkomen, laagste
-  bindend, met scenariovergelijking in de UI i.p.v. alleen een waarschuwing.
-- **Alimentatie** (`src/toetsinkomen.js`): betaalde partneralimentatie bruto ×12 van
-  het toetsinkomen af; ontvangen alimentatie en kinderalimentatie tellen niet mee
-  (infotekst).
-- **Flexibel/variabel inkomen** (`toetsinkomen.js`): inkomenstype-keuze per
-  aanvrager (vast/flexMet/flexZonder/ZZP) met 3-jaarsmiddeling gemaximeerd op het
-  laatste jaar, plus structureel (13e maand) en incidenteel (gem. bonus) inkomen.
-
-Nog niet aangeraakt: punt 1 (NHG — de NHG-borgtochtprovisie is wél als optionele
-kostenpost toegevoegd, maar de kostengrens en lagere NHG-rente ontbreken nog), 5
-(erfpacht), 8 (verduurzaming >100% LTV), 9 (volledige nieuwbouw-flow — het
-woningtype-onderscheid bestaat al voor overdrachtsbelasting, maar bouwdepot/
-makelaarskosten-koppeling nog niet), 10–13 (zie hieronder).
+  veel hoger is dan het scherm triggert nooit — geef zulke elementen `amount={0}`.
+- **div-in-p hydration-bug**: een popover/tooltip (rendert een `<div>`) genest in een
+  `<p>`-label geeft een hydration-fout — gebruik `<span>` als wrapper, nooit `<p>`.
+- **Console-logs uit de preview-tool kunnen stale zijn** na een serverherstart met veel
+  voorgaande fouten — bij twijfel de dev-server hard herstarten (`preview_stop` +
+  `preview_start` opnieuw) i.p.v. te vertrouwen op een lange foutenlijst die niet meer klopt.
+- Elke wijziging is als aparte git-commit vastgelegd, na browserverificatie. Werkwijze:
+  (1) research bij officiële bron indien nodig, (2) implementeren, (3) verifiëren in de
+  browser (console-errors, functioneel testen, mobiel-formaat), (4) pas dan committen —
+  en **altijd expliciet aan de gebruiker vragen** vóór commit/push/deploy, ook al is dat
+  "de gewoonte" in dit project.
 
 ## Openstaande taken (bijgewerkte lijst)
 1. **NHG (Nationale Hypotheek Garantie)**: kostengrens (jaarlijks geïndexeerd, hoger bij
-   verduurzaming), lagere NHG-rente. De 0,4% borgtochtprovisie zit al als optionele post
-   in de Kosten koper-kaart. **Zoek actuele 2026-cijfers op bij nhg.nl voordat je iets
-   hardcodet.**
-2. ~~Kosten koper realistisch uitgesplitst~~ — **gedaan**.
-3. ~~Overdrachtsbelasting gedifferentieerd~~ — **gedaan**.
-4. ~~AOW/pensioen als echte toets~~ — **gedaan**.
-5. **Erfpacht (canon)** als maandlast die de leencapaciteit verlaagt (kapitaliseren tegen
+   verduurzaming), lagere NHG-rente. De 0,4% borgtochtprovisie zit al als optionele post.
+   **Zoek actuele 2026-cijfers op bij nhg.nl voordat je iets hardcodet.**
+2. **Erfpacht (canon)** als maandlast die de leencapaciteit verlaagt (kapitaliseren tegen
    de toetsrente, net als overige schulden nu al gebeurt).
-6. ~~Alimentatie~~ — **gedaan**.
-7. ~~Flexibel/variabel inkomen~~ — **gedaan**.
-8. **Verduurzaming boven 100% LTV**: energiebesparende maatregelen mogen tot ~106%
+3. **Verduurzaming boven 100% LTV**: energiebesparende maatregelen mogen tot ~106%
    meegefinancierd worden; nu is het een platte bonus zonder LTV-verhoging.
-9. **Nieuwbouw-flow**: bouwdepot met rente, geen makelaarskosten. Het woningtype-toggle
-   ("bestaande bouw / nieuwbouw / niet-hoofdverblijf") bestaat al en regelt de
-   overdrachtsbelasting; bouwdepot en de koppeling met makelaarskosten ontbreken nog.
-10. **Auditbare toetsopbouw** — **deels gedaan**: het "Bepalend voor uw maximum nu"-blok
-    (sidebar) toont al wélke ene factor nu bindend is, met uitleg. Nog niet gedaan: de
-    volledige stap-voor-stap rekensom tonen (woonquote Y × toetsinkomen Z − schulden =
-    ...). `toetsinkomen.js` retourneert al een transparant opbouwobject per aanvrager
-    (basis/structureel/aftrek/cap-vlaggen) — grotendeels UI-werk op basis van al
-    bestaande berekende waarden.
-11. **PDF-klantrapport**: export met alle aannames, bronnen en de uitkomst — wat een
-    klant normaal van een adviseur meekrijgt.
-12. **Referentie-/unit tests**: tegen bekende Nibud-uitkomsten (bijv. vitest, past
-    natuurlijk bij Vite), zodat een wijziging de rekenkern niet stilletjes breekt. Nog
-    steeds niet gedaan — met inmiddels een flinke rekenkern (nibud2026.js, kostenKoper.js,
-    toetsinkomen.js, getHraRate) wordt dit met de dag waardevoller.
-13. **Visuele polish-pas** — **grotendeels gedaan**: acht fases visuele/interactie-polish
-    zijn al doorgevoerd (zie hierboven), plus de workflow/logica-ronde daarna. Wat
-    resteert is vooral fijnslijpen op detailniveau, geen grote herontwerp-stap meer.
+4. **Referentie-/unit tests**: tegen bekende Nibud-uitkomsten (vitest, past bij Vite).
+   Met inmiddels een flinke rekenkern (nibud2026.js, kostenKoper.js, toetsinkomen.js,
+   bouwdepot.js, pdfExport.js, `projectRemainingBalance`, `getHraRate`) wordt dit met de
+   dag waardevoller — nog steeds niet gedaan.
+5. **Nieuwbouw-flow verder afmaken**: bouwdepot + makelaarskosten-koppeling zijn gedaan;
+   nog niet gedaan is de koppeling met de daadwerkelijke bouwtermijnen-staat (nu een
+   vereenvoudigde lineaire opname-aanname) en eventuele oplevering-specifieke
+   maandlasten-overgang.
+6. Kleinere UX-fijnslijping: de scrollspy-rail/mobiele chipbalk toont "Bouwdepot" al als
+   sectie, maar niet de nieuwe losse blokken "Extra bijleenruimte"/"Aanvullende
+   hypotheek" — zou voor consistentie ook in de rail-navigatie kunnen.
 
-**Aanbevolen volgorde**: NHG (kostengrens + rente) → erfpacht → verduurzaming >100% LTV
-→ nieuwbouw-flow afmaken (bouwdepot) → auditbare toetsopbouw afmaken → PDF-export →
-tests.
+**Afgerond deze sessie** (stonden eerder op deze lijst): Nieuwbouw-flow (bouwdepot +
+makelaarskosten), auditbare toetsopbouw (stap-voor-stap rekensom), PDF-klantrapport,
+BorderGlow/scrollspy-navigatie, herstructurering huidige-woning-blokken, maandelijks
+aflosschema met tijd-/waardestijging-sliders, en vier adviseursverfijningen (bijleen-
+regeling, taxatiewaarde bij overbieden, aftrekbare financieringskosten,
+overbruggingskrediet).
 
-## Hoe verder te werken (voor een nieuwe sessie / beginner-instructies)
-Zie de losse instructies die apart zijn meegegeven bij het delen van dit bestand.
+**Aanbevolen volgorde voor vervolgwerk**: NHG (kostengrens + rente) → erfpacht →
+verduurzaming >100% LTV → unit tests (nu de rekenkern groot genoeg is om echt van te
+profiteren) → rail-navigatie uitbreiden met de nieuwe losse blokken.
+
+## Hoe verder te werken (voor een nieuwe sessie)
+1. Open Claude Code in `C:\Users\Vincent\mortgage-calculator` (niet in het gelijknamige
+   maar totaal andere "ClaudeMortgageCalculator"-mapje — dat is een onafhankelijke
+   gitaar-akkoorden-app genaamd Tonik, zie eerder in deze sessie ontdekt).
+2. Laat Claude dit bestand (`PROJECT_SUMMARY.md`) lezen voor volledige context — dat is
+   precies wat dit bestand is: een levend overdrachtsdocument, elke sessie bijgewerkt.
+3. Werkwijze aanhouden: research (indien nodig) → implementeren → verifiëren in de browser
+   via de preview-tool → **expliciet aan de gebruiker vragen** vóór commit/push/deploy.
+4. `npm run dev` (of de preview-tool) om lokaal te testen; `npx vite build` + `npx oxlint`
+   vóór elke commit als snelle sanity-check.
