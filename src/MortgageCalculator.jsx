@@ -50,12 +50,15 @@ function getEnergyBonus(label) {
   if (['G', 'F', 'E'].includes(label)) return 0;
   if (['D', 'C'].includes(label)) return 5000;
   if (['B', 'A'].includes(label)) return 10000;
+  if (['A+', 'A++'].includes(label)) return 20000;
   // 2026 Nibud-bijstelling: door de terugleverkosten en het afbouwen van de
   // salderingsregeling leveren zonnepanelen minder op, waardoor het Nibud het extra
-  // hypotheekbedrag voor zeer energiezuinige woningen (A+ en hoger) heeft verlaagd
-  // ten opzichte van eerdere jaren.
-  if (['A+', 'A++'].includes(label)) return 15000;
-  if (['A+++', 'A++++'].includes(label)) return 20000;
+  // hypotheekbedrag voor de zeer energiezuinige labels A+++ (€30.000 in 2025 → €25.000)
+  // en A++++ (€40.000 → €30.000) heeft verlaagd t.o.v. 2025. A++++ met een 10-jaar
+  // energieprestatiegarantie mag €40.000 blijven, maar die garantie wordt hier niet apart
+  // uitgevraagd, dus rekenen we met het bedrag zonder garantie.
+  if (label === 'A+++') return 25000;
+  if (label === 'A++++') return 30000;
   return 0;
 }
 
@@ -1339,7 +1342,7 @@ function MortgageCalculatorForm({ onReset }) {
   // Kosten koper worden altijd berekend en getoond, maar tellen standaard NIET mee in de
   // rest van de berekening (geschat eigen geld, dubbele-lastentoets) - pas na expliciete
   // keuze van de gebruiker.
-  const [includeKostenKoperInCalc, setIncludeKostenKoperInCalc] = useState(false);
+  const [includeKostenKoperInCalc, setIncludeKostenKoperInCalc] = useState(true);
   const [showKostenKoperCard, setShowKostenKoperCard] = useState(false);
   const [showAuditTrail, setShowAuditTrail] = useState(false);
 
@@ -1390,7 +1393,7 @@ function MortgageCalculatorForm({ onReset }) {
   const [secondHomeWillSell, setSecondHomeWillSell] = useState(true);
   const [useSecondHomeProceeds, setUseSecondHomeProceeds] = useState(true);
   const [secondHomeValue, setSecondHomeValue] = useState('300000');
-  const [secondHomeMortgageDebt, setSecondHomeMortgageDebt] = useState('150000');
+  const [secondHomeMortgageDebt, setSecondHomeMortgageDebt] = useState('42000');
   const [secondHomeInterestRate, setSecondHomeInterestRate] = useState(4.0);
   const [secondHomeRepaymentType, setSecondHomeRepaymentType] = useState('Annuïteit');
   const [secondHomeRemainingYears, setSecondHomeRemainingYears] = useState(20);
@@ -4556,10 +4559,10 @@ function MortgageCalculatorForm({ onReset }) {
                 <div className="mt-4 space-y-2 rounded-xl bg-white/10 px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex items-center gap-1.5 text-xs text-blue-100">
-                      Max. o.b.v. inkomen
+                      Leencapaciteit zonder afslagen
                       <InfoTooltip
                         variant="light"
-                        text="Uw leencapaciteit op basis van de Nibud-woonquote en uw werkelijke rente, zonder rekening te houden met bestaande schulden."
+                        text="Uw leencapaciteit op basis van de Nibud-woonquote en uw werkelijke rente, zonder rekening te houden met bestaande schulden of renterisico."
                       />
                     </span>
                     <span className="text-sm font-semibold text-white">
@@ -4568,7 +4571,7 @@ function MortgageCalculatorForm({ onReset }) {
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="flex items-center gap-1.5 text-xs text-blue-100">
-                      + gecorrigeerd voor schulden
+                      Met afslag schulden
                       <InfoTooltip
                         variant="light"
                         text="Hetzelfde bedrag, nu met de maandlast van uw overige schulden en studieschuld erin verwerkt (die verlagen de beschikbare ruimte voor woonlasten)."
@@ -4580,7 +4583,7 @@ function MortgageCalculatorForm({ onReset }) {
                   </div>
                   <div className="flex items-center justify-between gap-3 border-t border-white/15 pt-2">
                     <span className="flex items-center gap-1.5 text-xs font-medium text-blue-50">
-                      + toetsrente-afslag
+                      Met afslag schulden + renterisico
                       <InfoTooltip
                         variant="light"
                         text="Definitief bindend bedrag: ook getoetst tegen de (hogere) AFM-toetsrente zodra een leningdeel korter dan 10 jaar rentevast is, en tegen het verwachte pensioeninkomen indien van toepassing. Is uw rente al 10 jaar of langer vast en geen AOW-toets van toepassing, dan is dit gelijk aan de regel hierboven."
@@ -5461,22 +5464,35 @@ function MortgageCalculatorForm({ onReset }) {
                       zet de volledige verkoopopbrengst, inclusief de overwaarde, in voor de
                       aankoop van de beoogde woning.
                     </p>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                       <div>
-                        <span className="text-xs text-slate-400">Leencapaciteit o.b.v. inkomen</span>
+                        <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                          Leencapaciteit zonder afslagen
+                          <InfoTooltip text="Uw leencapaciteit op basis van de Nibud-woonquote en uw werkelijke rente, zonder rekening te houden met bestaande schulden of renterisico." />
+                        </span>
                         <p className="text-lg font-semibold text-slate-800">
-                          {formatEuro(calc.incomeBasedMax)}
+                          {formatEuro(calc.maxLoanIncomeOnly)}
                         </p>
                       </div>
                       <div>
-                        <span className="text-xs text-slate-400">
-                          Werkelijke leencapaciteit
+                        <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                          Met afslag schulden
+                          <InfoTooltip text="Hetzelfde bedrag, nu met de maandlast van uw overige schulden en studieschuld erin verwerkt." />
+                        </span>
+                        <p className="text-lg font-semibold text-slate-800">
+                          {formatEuro(calc.incomeBasedMaxAtActualRate)}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                          Met afslag schulden + renterisico
+                          <InfoTooltip text="Definitief bindend bedrag: ook getoetst tegen de AFM-toetsrente zodra een leningdeel — nieuw of meegenomen — korter dan 10 jaar rentevast is." />
                         </span>
                         <p
-                          className={`text-lg font-semibold ${
+                          className={`text-lg font-bold ${
                             currentMortgage.hasRateRiskOnPortedDebt
                               ? 'text-amber-600'
-                              : 'text-slate-800'
+                              : 'text-slate-900'
                           }`}
                         >
                           {formatEuro(currentMortgage.effectiveMaxMortgage)}
@@ -5485,6 +5501,8 @@ function MortgageCalculatorForm({ onReset }) {
                           <span className="text-[11px] text-amber-600">Na renterisicocorrectie</span>
                         )}
                       </div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
                         <span className="text-xs text-slate-400">Huidige hypotheekschuld</span>
                         <p className="text-lg font-semibold text-slate-800">
