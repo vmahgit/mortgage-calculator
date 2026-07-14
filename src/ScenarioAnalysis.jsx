@@ -30,6 +30,8 @@ export default function ScenarioAnalysis({
 }) {
   const [expanded, setExpanded] = useState(false);
   const anyExceeds = scenarios.some((s) => s.exceedsCapacity);
+  const anyOverbid = scenarios.some((s) => s.overbidExtra > 0);
+  const anyInsufficientCashForOverbid = scenarios.some((s) => s.insufficientCashForOverbid);
 
   return (
     <div className="mt-8 overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 shadow-sm">
@@ -91,8 +93,22 @@ export default function ScenarioAnalysis({
                   <p className="text-xs text-red-700">
                     Rood gemarkeerde biedingen vereisen aanvullend lenen boven uw
                     {hasExistingHome ? ' resterende bijleenruimte' : ' leencapaciteit o.b.v. inkomen'}{' '}
-                    ({formatEuro(extraBorrowCapacity)}) en zijn naar verwachting niet (volledig) te
-                    financieren.
+                    ({formatEuro(extraBorrowCapacity)}){anyInsufficientCashForOverbid ? ',' : ' en'}{' '}
+                    {anyInsufficientCashForOverbid &&
+                      'hebben onvoldoende eigen geld voor het overbiedingsdeel, en '}
+                    zijn naar verwachting niet (volledig) te financieren.
+                  </p>
+                </div>
+              )}
+
+              {anyOverbid && (
+                <div className="flex items-start gap-2 rounded-xl border border-amber-100 bg-amber-50 p-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+                  <p className="text-xs text-amber-700">
+                    Bij overbieden financiert een geldverstrekker doorgaans niet meer dan de
+                    getaxeerde marktwaarde, aangenomen gelijk aan de aanschafprijs. Het bedrag
+                    boven de aanschafprijs ("Extra eigen inleg boven taxatiewaarde" hieronder)
+                    moet dus volledig uit eigen geld komen, bovenop uw overige eigen inbreng.
                   </p>
                 </div>
               )}
@@ -132,6 +148,27 @@ export default function ScenarioAnalysis({
                         </td>
                       ))}
                     </tr>
+                    {anyOverbid && (
+                      <tr className="border-t border-slate-100">
+                        <td className="sticky left-0 z-10 bg-white p-2.5 font-medium text-slate-600">
+                          Extra eigen inleg boven taxatiewaarde
+                        </td>
+                        {scenarios.map((s) => (
+                          <td
+                            key={s.pct}
+                            className={`p-2.5 text-right ${
+                              s.pct === 0 ? 'border-x-2 border-blue-300 bg-blue-50/60' : ''
+                            } ${
+                              s.insufficientCashForOverbid
+                                ? 'bg-red-50 font-semibold text-red-700'
+                                : 'text-slate-700'
+                            }`}
+                          >
+                            {s.overbidExtra > 0 ? formatEuro(s.overbidExtra) : '—'}
+                          </td>
+                        ))}
+                      </tr>
+                    )}
                     {hasExistingHome && (
                       <tr className="border-t border-slate-100">
                         <td className="sticky left-0 z-10 bg-white p-2.5 font-medium text-slate-600">
@@ -222,7 +259,9 @@ export default function ScenarioAnalysis({
                   ? 'De totale maandlast is de meegenomen hypotheek (tegen de huidige voorwaarden, ongewijzigd per scenario) plus de maandlast van het nieuwe/aanvullende leningdeel (annuïteit, huidige hypotheekrente, 30 jaar), uitgaande van verkoop van uw huidige woning tegen de ingevoerde marktwaarde en uw ingebrachte eigen vermogen. De maandlast van het nieuwe leningdeel is exclusief eigenwoningforfait: dat geldt één keer over de hele woning en zit uitsluitend in de totaalregels.'
                   : 'Bruto/netto maandlast o.b.v. annuïteit, de huidige hypotheekrente en 30 jaar looptijd, uitgaande van uw ingebrachte eigen vermogen.'}{' '}
                 Netto is inclusief hypotheekrenteaftrek (HRA){hasExistingHome ? '' : ' en het eigenwoningforfait'}.
-                Indicatief.
+                Bij overbieden (positief percentage) wordt de taxatiewaarde gelijkgesteld aan de
+                aanschafprijs; het bod daarboven telt niet mee voor de hypotheek en moet uit
+                eigen geld komen. Indicatief.
               </p>
             </div>
           </motion.div>

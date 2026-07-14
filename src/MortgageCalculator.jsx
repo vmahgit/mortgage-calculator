@@ -26,6 +26,7 @@ import {
   BookOpen,
   HardHat,
   Calculator,
+  FileDown,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
@@ -1370,6 +1371,12 @@ function MortgageCalculatorForm({ onReset }) {
   const [bridgePeriodMonths, setBridgePeriodMonths] = useState(6);
   const [includeOwnCapitalInDoubleTest, setIncludeOwnCapitalInDoubleTest] = useState(true);
   const [liquidityBuffer, setLiquidityBuffer] = useState('0');
+  // Overbruggingskrediet: ontsluit de overwaarde van de huidige woning al vóór de
+  // daadwerkelijke verkoop, tegen rente. Leeg bedrag valt terug op de volledige bruikbare
+  // overwaarde als redelijke default (zie doubleCostsCalc).
+  const [useBridgeLoan, setUseBridgeLoan] = useState(false);
+  const [bridgeLoanAmount, setBridgeLoanAmount] = useState('');
+  const [bridgeLoanRate, setBridgeLoanRate] = useState(6.0);
   const [marketValue, setMarketValue] = useState(940000);
   const [saleDiscountPercentage, setSaleDiscountPercentage] = useState(100);
   const [currentEnergyLabel, setCurrentEnergyLabel] = useState('A');
@@ -1628,6 +1635,19 @@ function MortgageCalculatorForm({ onReset }) {
     });
     const ownMoney = includeKostenKoperInCalc ? kostenKoper.total : 0;
 
+    // Eenmalig aftrekbare financieringskosten (box 1, jaar van aankoop): hypotheekadvies,
+    // taxatie (voor de financiering) en de NHG-borgtochtprovisie zijn eenmalig aftrekbaar.
+    // Overdrachtsbelasting en de leveringsakte zijn dat niet. Notariskosten worden hier
+    // bewust buiten beschouwing gelaten: dat bedrag dekt zowel de niet-aftrekbare
+    // leveringsakte als de wél aftrekbare hypotheekakte, en dit veld splitst die twee niet
+    // uit — een verkeerde precisie zou hier misleidender zijn dan een duidelijke uitsluiting.
+    const deductibleFinancingCostKeys = ['advisory', 'valuation', 'nhgFee'];
+    const deductibleFinancingCosts = kostenKoper.items
+      .filter((item) => deductibleFinancingCostKeys.includes(item.key) && item.included)
+      .reduce((sum, item) => sum + item.amount, 0);
+    const financingCostsHraRate = getHraRate(toets1.toetsinkomen, toets2.toetsinkomen);
+    const financingCostsTaxBenefit = deductibleFinancingCosts * financingCostsHraRate;
+
     const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly;
     const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
     const purchasingPower = maxMortgage + totalOwnCapital;
@@ -1673,6 +1693,9 @@ function MortgageCalculatorForm({ onReset }) {
       transferTax,
       kostenKoper,
       ownMoney,
+      deductibleFinancingCosts,
+      financingCostsHraRate,
+      financingCostsTaxBenefit,
       isOverIndebted,
       showSustainability,
       pensionApplies,
@@ -1988,8 +2011,18 @@ function MortgageCalculatorForm({ onReset }) {
 
     const scenarios = SCENARIO_PERCENTAGES.map((pct) => {
       const price = basePrice * (1 + pct / 100);
-      const gap = price - portedDebt - overwaarde;
+      // Een geldverstrekker financiert nooit meer dan de getaxeerde marktwaarde — bij
+      // overbieden (positief pct) is die taxatiewaarde in de praktijk vrijwel altijd de
+      // vraagprijs/aanschafprijs (basePrice), niet de hogere bieding. Het verschil moet dus
+      // volledig uit eigen geld komen, bovenop wat er al aan eigen middelen wordt ingezet
+      // voor het gewone financieringsgat.
+      const financeablePrice = Math.min(price, basePrice);
+      const overbidExtra = Math.max(0, price - basePrice);
+      const gap = financeablePrice - portedDebt - overwaarde;
+      const ownCapitalForGap = Math.min(calc.totalOwnCapital, Math.max(0, gap));
       const additionalMortgage = Math.max(0, gap - calc.totalOwnCapital);
+      const remainingOwnCapital = calc.totalOwnCapital - ownCapitalForGap;
+      const insufficientCashForOverbid = overbidExtra > remainingOwnCapital;
 
       const { grossMonthly: newGrossMonthly, taxBenefit: newTaxBenefit } =
         computeNewPartMonthly(additionalMortgage);
@@ -2005,16 +2038,19 @@ function MortgageCalculatorForm({ onReset }) {
       const ewfMonthly = includeEwfInNetCalc ? (EWF_RATE * Math.min(price, EWF_CAP)) / 12 : 0;
       const netMonthly = grossMonthly - portedTaxBenefit - newTaxBenefit + ewfMonthly;
 
-      const exceedsCapacity = additionalMortgage > extraBorrowCapacity;
+      const exceedsCapacity =
+        additionalMortgage > extraBorrowCapacity || insufficientCashForOverbid;
       return {
         pct,
         price,
+        overbidExtra,
         additionalMortgage,
         newGrossMonthly,
         newNetMonthly,
         grossMonthly,
         netMonthly,
         exceedsCapacity,
+        insufficientCashForOverbid,
       };
     });
 
@@ -2103,6 +2139,13 @@ function MortgageCalculatorForm({ onReset }) {
     const matchesRequiredAmount =
       Math.abs(totalPrincipal - combinedGapCalc.additionalMortgage) < 1;
 
+    // Bijleenregeling (eigenwoningreserve): als u meer leent dan het financieringsgat
+    // vereist terwijl er overwaarde is, herinvesteert u die overwaarde niet volledig in de
+    // nieuwe woning. De rente over het te veel geleende deel is dan niet aftrekbaar via de
+    // hypotheekrenteaftrek.
+    const excessOverGap = Math.max(0, totalPrincipal - combinedGapCalc.additionalMortgage);
+    const bijleenregelingRisk = excessOverGap > 1 && currentMortgage.overwaarde > 0;
+
     return {
       totalPrincipal,
       totalGross,
@@ -2129,6 +2172,8 @@ function MortgageCalculatorForm({ onReset }) {
       withinAflossingsvrijCap,
       withinCapacity,
       matchesRequiredAmount,
+      excessOverGap,
+      bijleenregelingRisk,
     };
   }, [
     additionalLoanParts,
@@ -2423,7 +2468,20 @@ function MortgageCalculatorForm({ onReset }) {
     // is expliciet schakelbaar voor een behoudender toets.
     const kostenKoper = includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
     const ownCapitalUsed = includeOwnCapitalInDoubleTest ? calc.totalOwnCapital : 0;
-    const newMortgageAmount = Math.max(0, price + kostenKoper - ownCapitalUsed);
+
+    // Overbruggingskrediet: ontsluit de overwaarde van de huidige woning al vóór de
+    // daadwerkelijke verkoop, tegen rente (aflossing ineens bij verkoop). Verlaagt de
+    // tijdelijk benodigde nieuwe hypotheek, maar de rente erover komt bovenop de
+    // gecombineerde maandlast — het is geen gratis liquiditeit. Nooit hoger dan de
+    // bruikbare overwaarde, want daarop is het krediet gezekerd.
+    const bridgeLoanAmountRaw =
+      safeNum(bridgeLoanAmount) > 0 ? safeNum(bridgeLoanAmount) : currentMortgage.usableOverwaarde;
+    const bridgeLoanPrincipal = useBridgeLoan
+      ? Math.min(Math.max(0, bridgeLoanAmountRaw), currentMortgage.usableOverwaarde)
+      : 0;
+    const bridgeLoanMonthlyInterest = bridgeLoanPrincipal * (safeNum(bridgeLoanRate) / 100 / 12);
+
+    const newMortgageAmount = Math.max(0, price + kostenKoper - ownCapitalUsed - bridgeLoanPrincipal);
 
     // Consistent met de rest van de tool: bij een rentevastperiode korter dan 10 jaar geldt
     // de AFM-toetsrente, niet de daadwerkelijke rente.
@@ -2435,7 +2493,8 @@ function MortgageCalculatorForm({ onReset }) {
     };
     const newMortgageResult = calculateLoanPart(newMortgagePart, 0, todayIso);
     const newMortgageBruto = newMortgageResult.grossMonthly;
-    const combinedBruto = oldMortgageBruto + newMortgageBruto;
+    const combinedBruto = oldMortgageBruto + newMortgageBruto + bridgeLoanMonthlyInterest;
+    const bridgeLoanTotalInterest = bridgeLoanMonthlyInterest * Math.max(0, safeNum(bridgePeriodMonths));
 
     // Impliciete maximale bruto maandlast: de inkomensgebaseerde leencapaciteit (die zelf al
     // met de toetsrente rekening houdt) teruggerekend naar een maandbedrag met dezelfde
@@ -2466,6 +2525,9 @@ function MortgageCalculatorForm({ onReset }) {
       oldMortgageBruto,
       kostenKoper,
       ownCapitalUsed,
+      bridgeLoanPrincipal,
+      bridgeLoanMonthlyInterest,
+      bridgeLoanTotalInterest,
       newMortgageAmount,
       newMortgageBruto,
       combinedBruto,
@@ -2490,6 +2552,9 @@ function MortgageCalculatorForm({ onReset }) {
     includeOwnCapitalInDoubleTest,
     includeKostenKoperInCalc,
     liquidityBuffer,
+    useBridgeLoan,
+    bridgeLoanAmount,
+    bridgeLoanRate,
   ]);
 
   // Eén samenvattend eindoordeel voor de voortgangsbalk: haalbaar zonder bestaande woning
@@ -2654,6 +2719,67 @@ function MortgageCalculatorForm({ onReset }) {
     return undefined;
   }, [isAffordableNow]);
 
+  // PDF-export: een bewust beperkte, samengevatte set gegevens (niet de volledige interne
+  // calc-objecten) wordt doorgegeven aan pdfExport.js, zodat dat bestand losstaat van de
+  // interne structuur van dit component.
+  // Dynamische import: jsPDF/autotable wegen samen ~150kB en zijn alleen nodig zodra iemand
+  // daadwerkelijk exporteert, dus niet in het hoofdbundle laden bij elke paginabezoek.
+  const handleExportPdf = async () => {
+    const { exportHypotheekAdviesPdf } = await import('./pdfExport');
+    const propertyUsageLabels = {
+      zelfbewoning: 'Bestaande bouw',
+      nieuwbouw: 'Nieuwbouw',
+      nietHoofdverblijf: 'Niet-hoofdverblijf',
+    };
+    exportHypotheekAdviesPdf({
+      generatedAt: new Date(),
+      hasExistingHome,
+      hasPartner2,
+      purchasePrice: safeNum(purchasePrice),
+      rate: safeNum(rate),
+      fixedRatePeriod,
+      energyLabel,
+      propertyUsageLabel: propertyUsageLabels[propertyUsage] || propertyUsage,
+      toets1: calc.toets1,
+      toets2: calc.toets2,
+      combinedIncome: calc.combinedIncome,
+      woonquote: calc.woonquote,
+      maxWoonlastMonthly: calc.maxWoonlastMonthly,
+      monthlyDebt: calc.monthlyDebt,
+      bindingFactor,
+      resultLabel: hasExistingHome ? 'Maximaal aankoopbudget' : 'Maximale hypotheek',
+      resultValue: hasExistingHome ? maxBudgetCalc.maxBudget : calc.maxMortgage,
+      kostenKoperTotal: calc.kostenKoper.total,
+      transferTaxLabel: calc.transferTaxInfo.shortLabel,
+      kostenKoperItems: calc.kostenKoper.items.filter((item) => item.included),
+      current: hasExistingHome
+        ? {
+            marketValue: safeNum(marketValue),
+            currentDebtBalance: currentMortgage.currentDebtBalance,
+            overwaarde: currentMortgage.overwaarde,
+            ltv: currentMortgage.ltv,
+          }
+        : null,
+      gap: hasExistingHome
+        ? {
+            portedDebt: combinedGapCalc.portedDebt,
+            ownCapitalApplied: combinedGapCalc.ownCapitalApplied,
+            additionalMortgage: combinedGapCalc.additionalMortgage,
+          }
+        : null,
+      maxBudget: hasExistingHome
+        ? { maxBudget: maxBudgetCalc.maxBudget, remainingRoom: maxBudgetCalc.remainingRoom }
+        : null,
+      starter: !hasExistingHome
+        ? {
+            parts: starterLoanParts,
+            totalGross: starterLoanCalc.totalGross,
+            totalNet: starterLoanCalc.totalNet,
+          }
+        : null,
+    });
+  };
+
   return (
     <div className="w-full px-4 py-10 pb-24 sm:px-6 lg:px-10 lg:pb-10">
       <SectionRail
@@ -2772,22 +2898,32 @@ function MortgageCalculatorForm({ onReset }) {
               aan deze uitkomst worden ontleend.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (
-                window.confirm(
-                  'Weet u zeker dat u opnieuw wilt beginnen? Alle ingevoerde gegevens gaan verloren.'
-                )
-              ) {
-                onReset();
-              }
-            }}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 transition-all duration-200 hover:border-slate-300 hover:text-slate-700"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Opnieuw beginnen
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              className="flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition-all duration-200 hover:border-blue-300 hover:bg-blue-100"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              Exporteer naar PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    'Weet u zeker dat u opnieuw wilt beginnen? Alle ingevoerde gegevens gaan verloren.'
+                  )
+                ) {
+                  onReset();
+                }
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 transition-all duration-200 hover:border-slate-300 hover:text-slate-700"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Opnieuw beginnen
+            </button>
+          </div>
         </div>
 
         <div id="sectie-situatie" className="mb-6 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
@@ -3627,6 +3763,34 @@ function MortgageCalculatorForm({ onReset }) {
                 taxateur en adviseur.
               </p>
             </div>
+
+            {calc.deductibleFinancingCosts > 0 && (
+              <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-1.5 text-slate-600">
+                    Eenmalig aftrekbare financieringskosten
+                    <InfoTooltip text="Hypotheekadvies, taxatie en de NHG-borgtochtprovisie zijn eenmalig aftrekbaar in box 1, in het jaar van aankoop. Overdrachtsbelasting en notariskosten (leverings-/hypotheekakte) zijn hier bewust buiten beschouwing gelaten." />
+                  </span>
+                  <span className="font-semibold text-slate-800">
+                    {formatEuro(calc.deductibleFinancingCosts)}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-sm">
+                  <span className="text-slate-600">
+                    Eenmalig fiscaal voordeel ({formatRate(calc.financingCostsHraRate * 100)})
+                  </span>
+                  <span className="font-semibold text-emerald-700">
+                    {formatEuro(calc.financingCostsTaxBenefit)}
+                  </span>
+                </div>
+                <p className="mt-2 text-xs text-slate-400">
+                  Alleen hypotheekadvies, taxatie en NHG-provisie (voor zover meegeteld
+                  hierboven) zijn hier meegenomen. Vraag uw notaris om een specificatie: alleen
+                  het hypotheekakte-deel van de notariskosten is eveneens eenmalig aftrekbaar,
+                  de leveringsakte niet.
+                </p>
+              </div>
+            )}
                   </div>
                 </motion.div>
               )}
@@ -5091,6 +5255,18 @@ function MortgageCalculatorForm({ onReset }) {
                           benodigde {formatEuro(combinedGapCalc.additionalMortgage)}.
                         </p>
                       )}
+                      {additionalLoanCalc.bijleenregelingRisk && (
+                        <div className="mt-3">
+                          <StatusBadge status="warning">
+                            Bijleenregeling: u leent {formatEuro(additionalLoanCalc.excessOverGap)}{' '}
+                            meer dan het financieringsgat vereist, terwijl er overwaarde is. Uw
+                            eigenwoningreserve wordt dan niet volledig herinvesteerd — de rente
+                            over dit extra geleende deel is naar verwachting niet aftrekbaar via
+                            de hypotheekrenteaftrek. Vraag uw adviseur naar de exacte gevolgen
+                            voor uw situatie.
+                          </StatusBadge>
+                        </div>
+                      )}
 
                       <div className="mt-5 rounded-xl border border-slate-100 bg-white p-4">
                         <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -5671,6 +5847,68 @@ function MortgageCalculatorForm({ onReset }) {
                       hint="Dit bedrag verlaagt de hypotheek niet, maar kan een tijdelijk maandelijks tekort tijdens de overbrugging opvangen."
                     />
 
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                      <div>
+                        <span className="text-xs font-medium text-slate-600">
+                          Overbruggingskrediet gebruiken?
+                        </span>
+                        <p className="text-xs text-slate-400">
+                          Ontsluit de overwaarde van uw huidige woning al vóór de verkoop, tegen
+                          rente. Verlaagt de tijdelijk benodigde nieuwe hypotheek, maar de rente
+                          hierover komt bovenop uw gecombineerde maandlast.
+                        </p>
+                      </div>
+                      <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                        <button
+                          type="button"
+                          onClick={() => setUseBridgeLoan(false)}
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                            !useBridgeLoan
+                              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          Nee
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setUseBridgeLoan(true)}
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                            useBridgeLoan
+                              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          Ja
+                        </button>
+                      </div>
+                    </div>
+
+                    {useBridgeLoan && (
+                      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                        <CurrencyField
+                          id="bridgeLoanAmount"
+                          label="Bedrag overbruggingskrediet"
+                          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                          value={bridgeLoanAmount}
+                          onChange={setBridgeLoanAmount}
+                          placeholder={String(Math.round(currentMortgage.usableOverwaarde))}
+                          hint="Standaard de volledige bruikbare overwaarde; nooit hoger, want daarop is het krediet gezekerd."
+                        />
+                        <Slider
+                          id="bridgeLoanRate"
+                          label="Rente overbruggingskrediet"
+                          icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
+                          value={bridgeLoanRate}
+                          min={2}
+                          max={9}
+                          step={0.1}
+                          onChange={setBridgeLoanRate}
+                          formatValue={formatRate}
+                        />
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                       <div>
                         <span className="text-xs text-slate-400">
@@ -5706,8 +5944,10 @@ function MortgageCalculatorForm({ onReset }) {
                           {formatEuro(doubleCostsCalc.newMortgageAmount)}
                         </p>
                         <span className="text-[11px] text-slate-400">
-                          Incl. {formatEuro(doubleCostsCalc.kostenKoper)} kosten koper, zonder
-                          overwaarde
+                          Incl. {formatEuro(doubleCostsCalc.kostenKoper)} kosten koper
+                          {doubleCostsCalc.bridgeLoanPrincipal > 0
+                            ? `, na aftrek ${formatEuro(doubleCostsCalc.bridgeLoanPrincipal)} overbruggingskrediet`
+                            : ', zonder overwaarde'}
                         </span>
                       </div>
                       <div>
@@ -5723,6 +5963,21 @@ function MortgageCalculatorForm({ onReset }) {
                           </span>
                         )}
                       </div>
+                      {doubleCostsCalc.bridgeLoanPrincipal > 0 && (
+                        <div>
+                          <span className="text-xs text-slate-400">
+                            Rente overbruggingskrediet p/mnd
+                          </span>
+                          <p className="text-sm font-semibold text-amber-600">
+                            {formatEuro(doubleCostsCalc.bridgeLoanMonthlyInterest)}
+                          </p>
+                          <span className="text-[11px] text-slate-400">
+                            {formatEuro(doubleCostsCalc.bridgeLoanTotalInterest)} totaal over{' '}
+                            {doubleCostsCalc.months}{' '}
+                            {doubleCostsCalc.months === 1 ? 'maand' : 'maanden'}
+                          </span>
+                        </div>
+                      )}
                       <div>
                         <span className="text-xs text-slate-400">Toegestane maandlast o.b.v. inkomen</span>
                         <p className="text-sm font-semibold text-slate-800">
@@ -5734,7 +5989,9 @@ function MortgageCalculatorForm({ onReset }) {
                     <div>
                       <div className="mb-3 flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-4 py-3">
                         <span className="text-sm text-slate-600">
-                          Gecombineerde bruto maandlast (beide hypotheken)
+                          Gecombineerde bruto maandlast (beide hypotheken
+                          {doubleCostsCalc.bridgeLoanPrincipal > 0 ? ' + overbruggingskrediet' : ''}
+                          )
                         </span>
                         <span className="text-xl font-bold text-slate-900">
                           {formatEuro(doubleCostsCalc.combinedBruto)}
@@ -5776,8 +6033,9 @@ function MortgageCalculatorForm({ onReset }) {
                         totaal tekort van {formatEuro(doubleCostsCalc.cumulativeShortfall)}.
                         {doubleCostsCalc.buffer > 0 &&
                           ` Uw buffer van ${formatEuro(doubleCostsCalc.buffer)} dekt hiervan een deel, met nog ${formatEuro(doubleCostsCalc.bufferShortfall)} ongedekt.`}{' '}
-                        Overweeg eerst te verkopen, een overbruggingskrediet, of extra eigen
-                        inbreng.
+                        {useBridgeLoan
+                          ? 'Overweeg een hoger overbruggingskrediet, eerst te verkopen, of extra eigen inbreng.'
+                          : 'Overweeg eerst te verkopen, een overbruggingskrediet, of extra eigen inbreng.'}
                       </StatusBadge>
                     )}
                   </div>
