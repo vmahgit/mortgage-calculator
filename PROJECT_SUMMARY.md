@@ -149,24 +149,72 @@ leningdelen-samenstelling). Bestandsnaam: `Hypotheekadvies_<doorstromer|starter>
 <YYYY-MM-DD>.pdf`. Zie `handleExportPdf` in `MortgageCalculator.jsx` voor hoe de (bewust
 beperkte, samengevatte) data aan `exportHypotheekAdviesPdf()` wordt doorgegeven.
 
-## Tweede woning (bijv. geërfd) met eigen hypotheekschuld
+## Tweede woning met eigen hypotheekschuld
 Nieuwe, onafhankelijke inklapbare kaart **"Tweede woning"** (`sectie-tweede-woning`, in de
 scrollspy-rail tussen "Schulden" en "Kosten koper"). Los van de bestaande "Huidige
 Hypotheek Analyseren"/"Extra bijleenruimte"-blokken hierboven (die gaan over de woning die
 u ván verhuist bij een doorstromersaankoop): dit blok is voor een tweede, niet-bewoonde
-woning — bijvoorbeeld geërfd — met een eigen hypotheekschuld, die u wel/niet verkoopt.
+woning met een eigen hypotheekschuld, die u wel/niet verkoopt. (Bewust generiek geformuleerd
+in de UI-teksten, geen "bijv. geërfd"-voorbeeld meer — de gebruiker gaf aan dit specifieke
+voorbeeld uit de tekst te willen, ook al is het wel de eigen situatie.)
 - **Velden**: marktwaarde, hypotheekschuld, en (bij aanhouden) aflosvorm/rente/resterende
   looptijd, of (bij verkopen) verkoopkosten-percentage.
 - **Aanhouden**: de volledige, werkelijke bruto maandlast (`calculateSimpleMortgagePayment`,
   losstaande annuïteit/lineair/aflossingsvrij-formule zonder leningdeel-administratie) telt
   voor 100% mee in `monthlyDebt` — bewust géén 2%-vuistregel zoals bij "Overige schulden",
   want het exacte bedrag is hier bekend (zelfde principe als de studieschuld-berekening).
+  Toont ook een expliciet "vóór/na"-blok (`secondHomeCapacityReduction`) met de
+  leencapaciteit zónder en mét deze last, zodat het Nibud-effect direct zichtbaar is.
 - **Verkopen**: netto-opbrengst (marktwaarde − schuld − verkoopkosten) telt mee in
-  `totalOwnCapital` als extra eigen middelen. Bij een restschuld (negatieve netto-opbrengst)
-  wordt dat bedrag juist van `totalOwnCapital` áfgetrokken, met een waarschuwing dat dit
-  tekort — anders dan bij de eigen woning — niet automatisch meegefinancierd kan worden.
+  `totalOwnCapital` als extra eigen middelen, mits de schakelaar **"Netto-opbrengst inzetten
+  voor déze aankoop?"** (`useSecondHomeProceeds`) aan staat — anders telt een positieve
+  opbrengst niet mee (`secondHomeProceedsApplied`). Bij een restschuld (negatieve
+  netto-opbrengst) wordt dat bedrag altijd van `totalOwnCapital` afgetrokken, ongeacht die
+  schakelaar — dat tekort is geen keuze en kan, anders dan bij de eigen woning, niet
+  automatisch meegefinancierd worden.
 - Zie `calc.secondHomeMonthly`/`secondHomeNetProceeds`/`secondHomeSaleCosts`/
-  `secondHomeShortfall` in `MortgageCalculator.jsx`.
+  `secondHomeShortfall`/`secondHomeCapacityReduction`/`secondHomeProceedsApplied` in
+  `MortgageCalculator.jsx`.
+
+## Financieringsgat: geldverstrekkersmaximum, eigen-inleg-limiet en familielening
+Uitbreiding van `combinedGapCalc` (de doorstromers-financieringsgat-berekening, kaart "Extra
+bijleenruimte bij verkoop huidige woning") voor het scenario: een hard bankplafond, een
+gewenst maximum aan eigen inleg, en een tijdelijke onderhandse familielening om een
+resterend gat te overbruggen (bv. omdat een tweede woning nog niet verkocht is en daar geen
+overbruggingskrediet op mogelijk is).
+- **Geldverstrekkersmaximum** (`lenderCapThreshold`, state i.p.v. de oude vaste
+  `LENDER_CAP_THRESHOLD`-constante, default €1.000.000): instelbaar veld in de kaart "Uw
+  situatie". Werkt als een harde derde grens naast de Nibud-inkomenstoets en de LTV-cap, in
+  `combinedGapCalc`/`additionalLoanCalc`/`starterLoanCalc`. `combinedGapCalc.lenderCapRoom`
+  = plafond min meegenomen hypotheek; `additionalMortgageCapacity` = laagste van Nibud-
+  capaciteit en die lenderCapRoom; `bindingCapIsLender` geeft aan wélke van de twee knelt
+  (ook verwerkt in `bindingFactor`, de "Bepalend voor uw maximum nu"-uitleg).
+- **Eigen-inleg-limiet** (`limitOwnContribution`/`desiredMaxOwnContribution`, default uit,
+  €100.000): schakelaar in de "Extra bijleenruimte"-kaart. Begrenst hoeveel van het
+  beschikbare eigen vermogen daadwerkelijk wordt ingezet om het financieringsgat te dichten
+  (`ownContributionCap`) — de rest van het gat schuift door naar de aanvullende hypotheek,
+  ook al zou er meer eigen vermogen beschikbaar zijn.
+- **Familielening** (`useFamilyLoan`/`familyLoanAmount`/`familyLoanRate`, default uit):
+  losstaand van het bestaande overbruggingskrediet (dat is gekoppeld aan de overwaarde van
+  de hoofdwoning). Springt in ná Nibud- én geldverstrekkerscapaciteit
+  (`shortfallBeforeFamilyLoan`), gekapt op wat daadwerkelijk nodig is
+  (`familyLoanApplied`), met een indicatieve renteweergave
+  (`familyLoanMonthlyInterest`, alleen rente, geen aflossingsaanname) en een disclaimer
+  over BKR/schenkbelasting-aandachtspunten. `withinCapacityAfterFamilyLoan`/
+  `remainingShortfall` bepalen het uiteindelijke haalbaarheidsoordeel; `overallAffordable`
+  (het "Haalbaar"/"Nog niet haalbaar"-label bovenaan) gebruikt nu deze mét-familielening-
+  uitkomst in plaats van de kale bijleenruimte.
+- **Belangrijke les uit deze sessie**: de `AnimatePresence mode="wait"`/`key={bindingFactor
+  .label}`-animatie op het "Bepalend voor uw maximum nu"-blok lijkt in de preview-browser-
+  tool soms vast te lopen op een oude tekst na meerdere snelle statuswijzigingen (bevestigd
+  met een tijdelijke `console.log` in de `bindingFactor`-`useMemo`: de berekende waarde
+  klopte bij elke render, alleen de DOM-tekst bleef hangen). Het verwijderen van
+  `mode="wait"` liet zelfs BEIDE oude én nieuwe tekst tegelijk zien — een teken dat exit-
+  animaties in deze specifieke preview-tool niet altijd afronden (waarschijnlijk
+  `requestAnimationFrame`-throttling van een niet-actief geschilderde tab), niet een echte
+  app-bug. Bij twijfel over een geanimeerde tekst die niet lijkt te verversen: verifieer de
+  onderliggende berekening eerst los met een `console.log`/debug-waarde vóórdat je de
+  animatiecode zelf verdenkt.
 
 ## Herbruikbare bouwstenen (ken je deze, dan bouw je sneller mee)
 In `src/MortgageCalculator.jsx`: `SectionCard`, `StatusBadge`, `InlineNote`, `InfoTooltip`,

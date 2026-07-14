@@ -92,9 +92,11 @@ const SCENARIO_PERCENTAGES = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
 // AFM-toetsrente 2026 (elk kwartaal vastgesteld, tot nu toe steeds 5%). Verplicht te
 // gebruiken zodra de rentevastperiode van de nieuwe hypotheek korter is dan 10 jaar.
 const TOETSRENTE = 5.0;
-// Sommige geldverstrekkers hanteren een interne acceptatiegrens van €1 miljoen voor de
-// totale hypotheeksom, waarboven aanvullende eisen of een ander acceptatietraject gelden.
-const LENDER_CAP_THRESHOLD = 1000000;
+// Sommige geldverstrekkers hanteren een interne acceptatiegrens voor de totale
+// hypotheeksom, waarboven aanvullende eisen of een ander acceptatietraject gelden. Dit is
+// een redelijke default; gebruikers met een afwijkend maximum bij hun eigen
+// geldverstrekker kunnen dit zelf aanpassen (zie lenderCapThreshold state).
+const LENDER_CAP_THRESHOLD_DEFAULT = 1000000;
 // Wegingsfactor overige schulden: 2% per maand van het schuldbedrag, de gangbare norm
 // voor consumptief krediet (doorlopend krediet, persoonlijke lening).
 const OTHER_DEBT_MONTHLY_WEIGHT = 0.02;
@@ -1376,20 +1378,38 @@ function MortgageCalculatorForm({ onReset }) {
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [hasExistingHome, setHasExistingHome] = useState(true);
-  // Tweede woning (bijv. geërfd) met een eigen, los van de verhuizing staande
-  // hypotheekschuld — onafhankelijk van de "huidige woning" hierboven (die gaat over de
-  // woning die u verlaat bij de verhuizing). secondHomeWillSell bepaalt of de schuld
-  // (aanhouden) blijft meetellen als maandlast, of dat de netto-verkoopopbrengst
-  // (verkopen) vrijkomt als extra eigen middelen.
+  // Tweede woning met een eigen, los van de verhuizing staande hypotheekschuld —
+  // onafhankelijk van de "huidige woning" hierboven (die gaat over de woning die u
+  // verlaat bij de verhuizing). secondHomeWillSell bepaalt of de schuld (aanhouden)
+  // blijft meetellen als maandlast, of dat de netto-verkoopopbrengst (verkopen)
+  // vrijkomt als extra eigen middelen. useSecondHomeProceeds is een aparte schakelaar:
+  // ook bij verkoop wilt u een positieve netto-opbrengst misschien niet (volledig)
+  // inzetten voor déze aankoop.
   const [showSecondHome, setShowSecondHome] = useState(false);
   const [hasSecondHome, setHasSecondHome] = useState(false);
   const [secondHomeWillSell, setSecondHomeWillSell] = useState(true);
+  const [useSecondHomeProceeds, setUseSecondHomeProceeds] = useState(true);
   const [secondHomeValue, setSecondHomeValue] = useState('300000');
   const [secondHomeMortgageDebt, setSecondHomeMortgageDebt] = useState('150000');
   const [secondHomeInterestRate, setSecondHomeInterestRate] = useState(4.0);
   const [secondHomeRepaymentType, setSecondHomeRepaymentType] = useState('Annuïteit');
   const [secondHomeRemainingYears, setSecondHomeRemainingYears] = useState(20);
   const [secondHomeSaleCostsPct, setSecondHomeSaleCostsPct] = useState(2);
+
+  // Maximale hypotheek bij uw eigen geldverstrekker: los van de Nibud-inkomenstoets en de
+  // LTV-cap kan een bank een eigen, absoluut plafond hanteren. Instelbaar i.p.v. vast, zodat
+  // dit een bindende derde grens kan zijn naast Nibud en LTV.
+  const [lenderCapThreshold, setLenderCapThreshold] = useState(String(LENDER_CAP_THRESHOLD_DEFAULT));
+  // Gewenste maximale eigen inleg (ex kosten koper) bij het dichten van het financieringsgat:
+  // een voorkeursplafond, los van hoeveel eigen vermogen daadwerkelijk beschikbaar is.
+  const [limitOwnContribution, setLimitOwnContribution] = useState(false);
+  const [desiredMaxOwnContribution, setDesiredMaxOwnContribution] = useState('100000');
+  // Familielening: een onderhandse, tijdelijke lening (bv. van familie) om het resterende
+  // gat te dichten dat na eigen middelen én bancaire leencapaciteit overblijft — bijvoorbeeld
+  // omdat de tweede woning nog niet verkocht is en daar geen overbruggingskrediet op mogelijk is.
+  const [useFamilyLoan, setUseFamilyLoan] = useState(false);
+  const [familyLoanAmount, setFamilyLoanAmount] = useState('');
+  const [familyLoanRate, setFamilyLoanRate] = useState(0);
   // Meeneemregeling: neemt u de bestaande hypotheek mee tegen de huidige voorwaarden
   // (rente, resterende looptijd), of lost u deze af bij verkoop en financiert u de nieuwe
   // woning volledig opnieuw? Default: ja, meenemen (de gangbare route bij een lagere
@@ -1554,9 +1574,9 @@ function MortgageCalculatorForm({ onReset }) {
       studyDebtRegime
     );
 
-    // Tweede woning (bijv. geërfd) met eigen hypotheekschuld: bij aanhouden telt de
-    // volledige, werkelijke bruto maandlast mee als schuld (geen 2%-vuistregel, want het
-    // exacte bedrag is bekend — net als bij een studieschuld). Bij verkoop komt er geen
+    // Tweede woning met eigen hypotheekschuld: bij aanhouden telt de volledige,
+    // werkelijke bruto maandlast mee als schuld (geen 2%-vuistregel, want het exacte
+    // bedrag is bekend — net als bij een studieschuld). Bij verkoop komt er geen
     // maandlast bij, maar wel een eenmalige netto-opbrengst (of -tekort) vrij, zie
     // totalOwnCapital hieronder.
     const secondHomeMonthly =
@@ -1589,6 +1609,11 @@ function MortgageCalculatorForm({ onReset }) {
     // Ter weergave: hoeveel maximale hypotheek er wegvalt door de schulden (de
     // gekapitaliseerde waarde van de schuldmaandlast tegen de toetsrente).
     const debtDeduction = monthlyDebt * nibud.annuityFactor;
+
+    // Ter weergave: het specifieke aandeel van de tweede-woning-hypotheek in die
+    // afslag op de leencapaciteit (dezelfde kapitalisatie, alleen voor dit ene deel van
+    // monthlyDebt) — zodat de Nibud-impact van "aanhouden" apart zichtbaar is.
+    const secondHomeCapacityReduction = secondHomeMonthly * nibud.annuityFactor;
 
     // AOW-toets (Stcrt. 2025-36471): wie binnen 10 jaar de AOW-leeftijd (67) bereikt,
     // wordt óók getoetst op het verwachte pensioeninkomen, tegen de aparte
@@ -1664,11 +1689,20 @@ function MortgageCalculatorForm({ onReset }) {
     });
     const transferTax = kostenKoperBasis * transferTaxInfo.rate;
 
-    // Netto-opbrengst van de verkochte tweede woning telt mee als extra eigen middelen;
-    // bij een restschuld-tekort (secondHomeNetProceeds < 0) verlaagt dat juist de
-    // beschikbare eigen middelen, want dat tekort moet u alsnog uit eigen zak bijleggen.
+    // Netto-opbrengst van de verkochte tweede woning: een positieve opbrengst telt
+    // alleen mee als extra eigen middelen als u die ook daadwerkelijk voor déze aankoop
+    // wilt inzetten (useSecondHomeProceeds). Een restschuld-tekort is geen keuze — dat
+    // moet u sowieso uit eigen zak bijleggen bij verkoop — en verlaagt dus altijd de
+    // beschikbare eigen middelen, ongeacht die schakelaar.
+    const secondHomeProceedsApplied =
+      hasSecondHome && secondHomeWillSell && useSecondHomeProceeds
+        ? Math.max(0, secondHomeNetProceeds)
+        : 0;
     const totalOwnCapital =
-      safeNum(ownCapital1) + (hasPartner2 ? safeNum(ownCapital2) : 0) + secondHomeNetProceeds;
+      safeNum(ownCapital1) +
+      (hasPartner2 ? safeNum(ownCapital2) : 0) +
+      secondHomeProceedsApplied -
+      secondHomeShortfall;
 
     // Indicatieve hypotheek als basis voor de NHG-borgtochtprovisie: wat er na inzet van
     // het eigen vermogen gefinancierd moet worden, begrensd door de maximale hypotheek.
@@ -1743,6 +1777,8 @@ function MortgageCalculatorForm({ onReset }) {
       secondHomeSaleCosts,
       secondHomeNetProceeds,
       secondHomeShortfall,
+      secondHomeCapacityReduction,
+      secondHomeProceedsApplied,
       monthlyDebt,
       availableMonthly: nibud.availableMonthly,
       annuityFactor: nibud.annuityFactor,
@@ -1815,6 +1851,7 @@ function MortgageCalculatorForm({ onReset }) {
     hasPartner2,
     hasSecondHome,
     secondHomeWillSell,
+    useSecondHomeProceeds,
     secondHomeValue,
     secondHomeMortgageDebt,
     secondHomeInterestRate,
@@ -1994,30 +2031,87 @@ function MortgageCalculatorForm({ onReset }) {
     // overwaarde maar juist een restschuld-tekort dat na verkoop moet worden afgelost; dat
     // vergroot het gat (symmetrisch aan hoe overwaarde het gat verkleint).
     const gap = price - portedDebt - overwaarde + restschuldTekort;
-    const ownCapitalApplied = Math.min(calc.totalOwnCapital, Math.max(0, gap));
-    const additionalMortgage = Math.max(0, gap - calc.totalOwnCapital);
-    const capacityMargin = currentMortgage.extraBorrowCapacity - additionalMortgage;
-    const withinCapacity = capacityMargin >= 0;
+    // Eigen inleg: standaard wordt zoveel mogelijk eigen vermogen ingezet om het gat te
+    // dichten (zoals voorheen). Met limitOwnContribution geeft u aan zélf niet meer dan een
+    // bepaald bedrag te willen inleggen (ex kosten koper, die lopen via de kaart Kosten
+    // koper) — het restant van het gat moet dan via de hypotheek of andere bronnen komen.
+    const ownContributionCap = limitOwnContribution
+      ? Math.max(0, safeNum(desiredMaxOwnContribution))
+      : Infinity;
+    const ownCapitalApplied = Math.min(
+      calc.totalOwnCapital,
+      Math.max(0, gap),
+      ownContributionCap
+    );
+    // Wat er nog gefinancierd moet worden nadat de (eventueel beperkte) eigen inleg is
+    // toegepast — dit is het bedrag waarvoor hieronder aanvullende leningdelen worden
+    // opgesplitst, ongeacht of dit daadwerkelijk geleend kán worden (zie capaciteitstoets).
+    const additionalMortgage = Math.max(0, gap - ownCapitalApplied);
     const surplus = gap < 0 ? -gap : 0;
-    // Sommige geldverstrekkers hanteren een interne grens van €1 miljoen voor de totale
-    // hypotheek (meegenomen plus nieuw), waarboven aanvullende acceptatie-eisen gelden.
+
+    // Twee onafhankelijke, bindende grenzen op de aanvullende hypotheek: de Nibud-
+    // inkomenstoets (extraBorrowCapacity) én het absolute plafond van de geldverstrekker
+    // (lenderCapThreshold, hierboven al meegenomen in de bepaling van de bank; hier het
+    // resterende bedrag onder dat plafond na de meegenomen hypotheek).
+    const lenderCapRoom = Math.max(0, safeNum(lenderCapThreshold) - portedDebt);
+    const additionalMortgageCapacity = Math.min(
+      currentMortgage.extraBorrowCapacity,
+      lenderCapRoom
+    );
+    const bindingCapIsLender = lenderCapRoom < currentMortgage.extraBorrowCapacity;
+    const capacityMargin = additionalMortgageCapacity - additionalMortgage;
+    const withinCapacity = capacityMargin >= 0;
+    // Sommige geldverstrekkers hanteren een interne grens voor de totale hypotheek
+    // (meegenomen plus nieuw), waarboven aanvullende acceptatie-eisen gelden.
     const totalMortgageAfterMove = portedDebt + additionalMortgage;
-    const exceedsLenderCap = totalMortgageAfterMove > LENDER_CAP_THRESHOLD;
+    const exceedsLenderCap = totalMortgageAfterMove > safeNum(lenderCapThreshold);
+
+    // Resterend gat na bank- en Nibud-capaciteit: hier kan een tijdelijke, onderhandse
+    // familielening inspringen — bijvoorbeeld omdat de tweede woning nog niet verkocht is
+    // en daar (anders dan bij de eigen woning) geen overbruggingskrediet op mogelijk is.
+    const shortfallBeforeFamilyLoan = Math.max(0, -capacityMargin);
+    const familyLoanApplied = useFamilyLoan
+      ? Math.min(Math.max(0, safeNum(familyLoanAmount)), shortfallBeforeFamilyLoan)
+      : 0;
+    const familyLoanMonthlyInterest = (familyLoanApplied * (safeNum(familyLoanRate) / 100)) / 12;
+    const netCapacityMargin = capacityMargin + familyLoanApplied;
+    const remainingShortfall = Math.max(0, -netCapacityMargin);
+    const withinCapacityAfterFamilyLoan = netCapacityMargin >= 0;
 
     return {
       portedDebt,
       overwaarde,
       restschuldTekort,
       gap,
+      ownContributionCap,
       ownCapitalApplied,
       additionalMortgage,
+      lenderCapRoom,
+      additionalMortgageCapacity,
+      bindingCapIsLender,
       capacityMargin,
       withinCapacity,
       surplus,
       totalMortgageAfterMove,
       exceedsLenderCap,
+      shortfallBeforeFamilyLoan,
+      familyLoanApplied,
+      familyLoanMonthlyInterest,
+      netCapacityMargin,
+      remainingShortfall,
+      withinCapacityAfterFamilyLoan,
     };
-  }, [purchasePrice, calc, currentMortgage]);
+  }, [
+    purchasePrice,
+    calc,
+    currentMortgage,
+    lenderCapThreshold,
+    limitOwnContribution,
+    desiredMaxOwnContribution,
+    useFamilyLoan,
+    familyLoanAmount,
+    familyLoanRate,
+  ]);
 
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
@@ -2180,7 +2274,7 @@ function MortgageCalculatorForm({ onReset }) {
     const totalDebtAfterMove = currentMortgage.portedDebt + totalPrincipal;
     const capacityMargin = effectiveCapacity - totalDebtAfterMove;
     const withinIncomeCapacity = capacityMargin >= 0;
-    const exceedsLenderCap = totalDebtAfterMove > LENDER_CAP_THRESHOLD;
+    const exceedsLenderCap = totalDebtAfterMove > safeNum(lenderCapThreshold);
 
     // B10-stijl: de totale hypotheek (meegenomen plus nieuw) kan nooit boven de aanschafprijs
     // van de beoogde woning uitkomen (maximale LTV van 100%).
@@ -2254,6 +2348,7 @@ function MortgageCalculatorForm({ onReset }) {
     combinedGapCalc,
     aflossingsvrijMaxPct,
     takeOverMortgage,
+    lenderCapThreshold,
   ]);
 
   const autoDistributeAdditionalLoan = () => {
@@ -2319,7 +2414,7 @@ function MortgageCalculatorForm({ onReset }) {
     // Sommige geldverstrekkers hanteren een interne acceptatiegrens van €1 miljoen voor
     // de totale hypotheeksom, ongeacht starter of doorstromer (zie ook combinedGapCalc/
     // additionalLoanCalc hierboven, waar dezelfde grens al gold voor doorstromers).
-    const exceedsLenderCap = totalPrincipal > LENDER_CAP_THRESHOLD;
+    const exceedsLenderCap = totalPrincipal > safeNum(lenderCapThreshold);
 
     return {
       totalPrincipal,
@@ -2345,6 +2440,7 @@ function MortgageCalculatorForm({ onReset }) {
     aflossingsvrijMaxPct,
     starterRequiredMortgage,
     calc,
+    lenderCapThreshold,
   ]);
 
   const autoDistributeStarterLoan = () => {
@@ -2631,7 +2727,7 @@ function MortgageCalculatorForm({ onReset }) {
   // bestaande woning betekent het dat het financieringsgat (indien van toepassing) binnen de
   // bijleenruimte past.
   const overallAffordable = hasExistingHome
-    ? combinedGapCalc.withinCapacity
+    ? combinedGapCalc.withinCapacityAfterFamilyLoan
     : calc.incomeBasedMax >= safeNum(purchasePrice);
 
   // "Wat bepaalt nu mijn maximum?" — maakt de causaliteit achter het getal zichtbaar
@@ -2658,9 +2754,10 @@ function MortgageCalculatorForm({ onReset }) {
     if (hasExistingHome) {
       if (combinedGapCalc.exceedsLenderCap) {
         return {
-          label: 'De €1 miljoen-grens',
-          explanation:
-            'Uw totale hypotheek (meegenomen plus aanvullend) komt boven de grens die sommige geldverstrekkers hanteren voor extra acceptatie-eisen.',
+          label: 'Uw maximum bij de geldverstrekker',
+          explanation: `Uw totale hypotheek (meegenomen plus aanvullend) komt boven de ${formatEuro(
+            safeNum(lenderCapThreshold)
+          )} die u heeft ingesteld als maximum bij uw geldverstrekker.`,
         };
       }
       if (currentMortgage.restschuldTekort > 0) {
@@ -2670,11 +2767,16 @@ function MortgageCalculatorForm({ onReset }) {
             'De verkoopwaarde van uw huidige woning dekt de restschuld niet volledig; dat tekort vergroot het financieringsgat.',
         };
       }
-      if (!combinedGapCalc.withinCapacity) {
+      if (!combinedGapCalc.withinCapacityAfterFamilyLoan) {
         return {
-          label: 'Uw bijleenruimte',
-          explanation:
-            'De aanvullende hypotheek die nodig is voor deze aanschafprijs past niet binnen wat u op basis van inkomen (nog) kunt bijlenen.',
+          label: combinedGapCalc.bindingCapIsLender
+            ? 'Uw geldverstrekkersmaximum'
+            : 'Uw bijleenruimte',
+          explanation: combinedGapCalc.bindingCapIsLender
+            ? `De aanvullende hypotheek die nodig is past niet binnen het ingestelde maximum van ${formatEuro(
+                safeNum(lenderCapThreshold)
+              )} bij uw geldverstrekker.`
+            : 'De aanvullende hypotheek die nodig is voor deze aanschafprijs past niet binnen wat u op basis van inkomen (nog) kunt bijlenen — ook niet met een eventuele familielening.',
         };
       }
       if (currentMortgage.hasRateRiskOnPortedDebt) {
@@ -2702,7 +2804,7 @@ function MortgageCalculatorForm({ onReset }) {
       explanation:
         'Er speelt op dit moment geen bijzondere beperking — uw inkomen via de Nibud-woonquote bepaalt uw maximale hypotheek.',
     };
-  }, [calc, currentMortgage, combinedGapCalc, hasExistingHome]);
+  }, [calc, currentMortgage, combinedGapCalc, hasExistingHome, lenderCapThreshold]);
 
   // Dit is bewust GEEN wizard met gating: elke sectie is altijd tegelijk zichtbaar en in
   // elke volgorde te bewerken. De chips hieronder zijn dus anker-navigatie ("spring naar"),
@@ -3057,6 +3159,17 @@ function MortgageCalculatorForm({ onReset }) {
                   2 aanvragers
                 </button>
               </div>
+            </div>
+            <div className="border-t border-slate-100 pt-3">
+              <CurrencyField
+                id="lenderCapThreshold"
+                label="Maximale hypotheek bij uw geldverstrekker (optioneel)"
+                icon={<Building2 className="h-3.5 w-3.5 text-slate-400" />}
+                value={lenderCapThreshold}
+                onChange={setLenderCapThreshold}
+                placeholder={String(LENDER_CAP_THRESHOLD_DEFAULT)}
+                hint={`Standaard ${formatEuro(LENDER_CAP_THRESHOLD_DEFAULT)} — pas aan als uw eigen geldverstrekker een ander maximum hanteert. Werkt als een harde grens naast de Nibud-inkomenstoets.`}
+              />
             </div>
           </div>
         </div>
@@ -3651,7 +3764,7 @@ function MortgageCalculatorForm({ onReset }) {
                       ? secondHomeWillSell
                         ? 'Verkopen — netto-opbrengst als extra eigen middelen'
                         : `Aanhouden — ${formatEuro(calc.secondHomeMonthly)}/mnd telt mee als schuld`
-                      : 'Bijv. een geërfde woning met een eigen hypotheekschuld'}
+                      : 'Een tweede woning met een eigen hypotheekschuld'}
                   </p>
                 </div>
               </div>
@@ -3673,10 +3786,9 @@ function MortgageCalculatorForm({ onReset }) {
                   <div className="space-y-4 border-t border-slate-100 p-6">
                     <p className="text-xs text-slate-500">
                       Heeft u, los van de woning die u eventueel verlaat bij deze verhuizing, nog
-                      een tweede woning — bijvoorbeeld geërfd — met een eigen hypotheekschuld?
-                      Dat is niet uw eigen woning in box 1: hypotheekrenteaftrek geldt hier niet,
-                      en de manier waarop deze schuld meetelt hangt af van of u de woning aanhoudt
-                      of verkoopt.
+                      een tweede woning met een eigen hypotheekschuld? Dat is niet uw eigen woning
+                      in box 1: hypotheekrenteaftrek geldt hier niet, en de manier waarop deze
+                      schuld meetelt hangt af van of u de woning aanhoudt of verkoopt.
                     </p>
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
                       <div>
@@ -3684,7 +3796,7 @@ function MortgageCalculatorForm({ onReset }) {
                           Ik heb een tweede woning met hypotheekschuld
                         </span>
                         <p className="text-xs text-slate-400">
-                          Bijvoorbeeld een geërfde woning die (nog) niet is verkocht.
+                          Bijvoorbeeld een woning die u niet zelf bewoont.
                         </p>
                       </div>
                       <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
@@ -3806,20 +3918,64 @@ function MortgageCalculatorForm({ onReset }) {
                               </div>
                             </div>
                             {calc.secondHomeNetProceeds >= 0 ? (
-                              <StatusBadge status="success">
-                                De netto-verkoopopbrengst van{' '}
-                                {formatEuro(calc.secondHomeNetProceeds)} (marktwaarde min
-                                hypotheekschuld min verkoopkosten) telt mee als extra eigen
-                                middelen bij de aankoop van de beoogde woning.
-                              </StatusBadge>
+                              <>
+                                <StatusBadge status="success">
+                                  De netto-verkoopopbrengst van{' '}
+                                  {formatEuro(calc.secondHomeNetProceeds)} (marktwaarde min
+                                  hypotheekschuld min verkoopkosten) kan meetellen als extra eigen
+                                  middelen bij de aankoop van de beoogde woning.
+                                </StatusBadge>
+                                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                                  <div>
+                                    <span className="text-xs font-medium text-slate-600">
+                                      Netto-opbrengst inzetten voor déze aankoop?
+                                    </span>
+                                    <p className="text-xs text-slate-400">
+                                      Zet uit als u dit geld apart wilt houden (bv. sparen, ander
+                                      doel) — dan telt het niet mee als eigen middelen hieronder.
+                                    </p>
+                                  </div>
+                                  <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setUseSecondHomeProceeds(false)}
+                                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                                        !useSecondHomeProceeds
+                                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                                          : 'text-slate-500 hover:text-slate-700'
+                                      }`}
+                                    >
+                                      Nee
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setUseSecondHomeProceeds(true)}
+                                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                                        useSecondHomeProceeds
+                                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                                          : 'text-slate-500 hover:text-slate-700'
+                                      }`}
+                                    >
+                                      Ja
+                                    </button>
+                                  </div>
+                                </div>
+                                {!useSecondHomeProceeds && (
+                                  <p className="text-xs text-slate-400">
+                                    De opbrengst van {formatEuro(calc.secondHomeNetProceeds)} telt
+                                    nu niet mee in uw eigen middelen hieronder.
+                                  </p>
+                                )}
+                              </>
                             ) : (
                               <StatusBadge status="warning">
                                 Restschuld: de hypotheekschuld en verkoopkosten zijn samen{' '}
                                 {formatEuro(calc.secondHomeShortfall)} hoger dan de marktwaarde.
                                 Dit tekort moet u bij verkoop uit eigen middelen bijleggen — het
-                                verlaagt daarom uw beschikbare eigen middelen voor de nieuwe
-                                aankoop. Deze restschuld kan, anders dan bij uw eigen woning, niet
-                                automatisch worden meegefinancierd in de nieuwe hypotheek.
+                                verlaagt daarom altijd uw beschikbare eigen middelen voor de nieuwe
+                                aankoop, ongeacht bovenstaande schakelaar. Deze restschuld kan,
+                                anders dan bij uw eigen woning, niet automatisch worden
+                                meegefinancierd in de nieuwe hypotheek.
                               </StatusBadge>
                             )}
                           </>
@@ -3868,11 +4024,39 @@ function MortgageCalculatorForm({ onReset }) {
                             <p className="text-xs text-slate-400">
                               Deze volledige, werkelijke maandlast (niet de 2%-vuistregel van
                               "Overige schulden") wordt gekapitaliseerd tegen de toetsrente en
-                              rechtstreeks in mindering gebracht op uw maximale hypotheek — samen
-                              goed voor{' '}
-                              {formatEuro(calc.secondHomeMonthly * calc.annuityFactor)} minder
-                              leencapaciteit.
+                              rechtstreeks in mindering gebracht op uw maximale hypotheek.
                             </p>
+                            <div className="rounded-xl border border-slate-100 bg-white p-4">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Effect op leencapaciteit (Nibud-toets)
+                              </span>
+                              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <div>
+                                  <span className="text-xs text-slate-400">
+                                    Leencapaciteit zónder deze last
+                                  </span>
+                                  <p className="text-sm font-semibold text-slate-800">
+                                    {formatEuro(calc.incomeBasedMax + calc.secondHomeCapacityReduction)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-slate-400">
+                                    Afslag door tweede hypotheek
+                                  </span>
+                                  <p className="text-sm font-semibold text-red-600">
+                                    −{formatEuro(calc.secondHomeCapacityReduction)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-slate-400">
+                                    Leencapaciteit mét deze last
+                                  </span>
+                                  <p className="text-sm font-semibold text-slate-800">
+                                    {formatEuro(calc.incomeBasedMax)}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
                           </>
                         )}
                       </>
@@ -4700,11 +4884,10 @@ function MortgageCalculatorForm({ onReset }) {
                   >
                     <StatusBadge status="warning">
                       Let op: uw totale hypotheek voor de nieuwe woning komt uit op{' '}
-                      {formatEuro(starterLoanCalc.totalPrincipal)}, boven de{' '}
-                      {formatEuro(LENDER_CAP_THRESHOLD)} grens die sommige geldverstrekkers
-                      hanteren. Dit kan aanvullende acceptatie-eisen of een ander
-                      acceptatietraject betekenen — niet elke geldverstrekker verstrekt
-                      hypotheken boven dit bedrag.
+                      {formatEuro(starterLoanCalc.totalPrincipal)}, boven het ingestelde
+                      maximum van {formatEuro(safeNum(lenderCapThreshold))} bij uw
+                      geldverstrekker (in te stellen bij "Uw situatie"). Dit kan aanvullende
+                      acceptatie-eisen of een ander acceptatietraject betekenen.
                     </StatusBadge>
                   </motion.div>
                 )}
@@ -5316,6 +5499,54 @@ function MortgageCalculatorForm({ onReset }) {
                       )}
                     </AnimatePresence>
 
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                      <div>
+                        <span className="text-xs font-medium text-slate-600">
+                          Eigen inleg voor dit financieringsgat limiteren?
+                        </span>
+                        <p className="text-xs text-slate-400">
+                          Standaard wordt al uw beschikbare eigen vermogen ingezet om het gat
+                          te dichten. Zet aan als u zelf niet meer dan een bepaald bedrag wilt
+                          inleggen (excl. kosten koper) — het restant moet dan via een hogere
+                          aanvullende hypotheek of andere bron komen.
+                        </p>
+                      </div>
+                      <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                        <button
+                          type="button"
+                          onClick={() => setLimitOwnContribution(false)}
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                            !limitOwnContribution
+                              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          Nee
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLimitOwnContribution(true)}
+                          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                            limitOwnContribution
+                              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          Ja
+                        </button>
+                      </div>
+                    </div>
+                    {limitOwnContribution && (
+                      <CurrencyField
+                        id="desiredMaxOwnContribution"
+                        label="Gewenste maximale eigen inleg (ex kosten koper)"
+                        icon={<PiggyBank className="h-3.5 w-3.5 text-slate-400" />}
+                        value={desiredMaxOwnContribution}
+                        onChange={setDesiredMaxOwnContribution}
+                        placeholder="0"
+                      />
+                    )}
+
                     <div className="mt-5 rounded-xl border border-slate-100 bg-white p-4">
                       <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Financieringsgat beoogde woning
@@ -5430,6 +5661,13 @@ function MortgageCalculatorForm({ onReset }) {
                             <p className="text-sm font-semibold text-slate-800">
                               {formatEuro(combinedGapCalc.ownCapitalApplied)}
                             </p>
+                            {limitOwnContribution &&
+                              combinedGapCalc.ownCapitalApplied >= combinedGapCalc.ownContributionCap && (
+                                <span className="text-[11px] text-slate-400">
+                                  Begrensd op uw ingestelde maximum van{' '}
+                                  {formatEuro(combinedGapCalc.ownContributionCap)}
+                                </span>
+                              )}
                           </div>
 
                           <div className="mt-3 flex items-center justify-between rounded-xl border-2 border-indigo-200 bg-indigo-50 px-5 py-4">
@@ -5446,33 +5684,194 @@ function MortgageCalculatorForm({ onReset }) {
                               <StatusBadge status="warning">
                                 Let op: uw totale hypotheek na verhuizing (meegenomen plus
                                 aanvullend) komt uit op{' '}
-                                {formatEuro(combinedGapCalc.totalMortgageAfterMove)}, boven de{' '}
-                                {formatEuro(LENDER_CAP_THRESHOLD)} grens die sommige
-                                geldverstrekkers hanteren. Dit kan aanvullende acceptatie-eisen
-                                of een ander acceptatietraject betekenen.
+                                {formatEuro(combinedGapCalc.totalMortgageAfterMove)}, boven het
+                                door u ingestelde maximum van{' '}
+                                {formatEuro(safeNum(lenderCapThreshold))} bij uw geldverstrekker
+                                (aan te passen bij "Uw situatie").
                               </StatusBadge>
                             </div>
                           )}
 
+                          <div className="mt-4 rounded-xl border border-slate-100 bg-white p-4">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Ruimte voor de aanvullende hypotheek
+                            </span>
+                            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                              <div>
+                                <span className="text-xs text-slate-400">O.b.v. inkomen (Nibud)</span>
+                                <p className="text-sm font-semibold text-slate-800">
+                                  {formatEuro(currentMortgage.extraBorrowCapacity)}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-xs text-slate-400">
+                                  O.b.v. uw geldverstrekkersmaximum
+                                </span>
+                                <p className="text-sm font-semibold text-slate-800">
+                                  {formatEuro(combinedGapCalc.lenderCapRoom)}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-xs text-slate-400">
+                                  Bindend (laagste van de twee)
+                                </span>
+                                <p
+                                  className={`text-sm font-semibold ${
+                                    combinedGapCalc.bindingCapIsLender
+                                      ? 'text-amber-600'
+                                      : 'text-slate-800'
+                                  }`}
+                                >
+                                  {formatEuro(combinedGapCalc.additionalMortgageCapacity)}
+                                </p>
+                                {combinedGapCalc.bindingCapIsLender && (
+                                  <span className="text-[11px] text-amber-600">
+                                    Uw geldverstrekkersmaximum knelt hier, niet uw inkomen
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
                           {combinedGapCalc.withinCapacity ? (
                             <div className="mt-4">
                               <StatusBadge status="success">
-                                Haalbaar: de aanvullende hypotheek past, uitgaande van uw
-                                werkelijke leencapaciteit van{' '}
-                                {formatEuro(currentMortgage.effectiveMaxMortgage)}, binnen uw
-                                bijleenruimte, met nog {formatEuro(combinedGapCalc.capacityMargin)}{' '}
-                                marge.
+                                Haalbaar: de aanvullende hypotheek past binnen{' '}
+                                {combinedGapCalc.bindingCapIsLender
+                                  ? 'uw ingestelde geldverstrekkersmaximum'
+                                  : 'uw bijleenruimte o.b.v. inkomen'}
+                                , met nog {formatEuro(combinedGapCalc.capacityMargin)} marge.
                               </StatusBadge>
                             </div>
                           ) : (
-                            <div className="mt-4">
-                              <StatusBadge status="error">
-                                Nog niet haalbaar: uitgaande van uw werkelijke leencapaciteit van{' '}
-                                {formatEuro(currentMortgage.effectiveMaxMortgage)} overschrijdt de
-                                aanvullende hypotheek uw bijleenruimte met{' '}
-                                {formatEuro(-combinedGapCalc.capacityMargin)}. Verhoog de inbreng
-                                eigen vermogen hierboven om dit te overbruggen.
+                            <div className="mt-4 space-y-3">
+                              <StatusBadge status={combinedGapCalc.withinCapacityAfterFamilyLoan ? 'warning' : 'error'}>
+                                {combinedGapCalc.bindingCapIsLender
+                                  ? 'Uw ingestelde geldverstrekkersmaximum'
+                                  : 'Uw bijleenruimte o.b.v. inkomen'}{' '}
+                                is {formatEuro(combinedGapCalc.shortfallBeforeFamilyLoan)} te
+                                krap voor deze aanvullende hypotheek.
+                                {combinedGapCalc.familyLoanApplied > 0
+                                  ? ` Met de familielening hieronder van ${formatEuro(
+                                      combinedGapCalc.familyLoanApplied
+                                    )} is dit ${
+                                      combinedGapCalc.withinCapacityAfterFamilyLoan
+                                        ? 'wel haalbaar.'
+                                        : `nog steeds ${formatEuro(
+                                            combinedGapCalc.remainingShortfall
+                                          )} te weinig.`
+                                    }`
+                                  : ' Verhoog de inbreng eigen vermogen, verlaag de gewenste aanschafprijs, of vul het gat met een tijdelijke familielening hieronder.'}
                               </StatusBadge>
+
+                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
+                                <div>
+                                  <span className="text-xs font-medium text-slate-600">
+                                    Tijdelijke familielening gebruiken?
+                                  </span>
+                                  <p className="text-xs text-slate-400">
+                                    Een onderhandse, tijdelijke lening (bv. van familie) om dit
+                                    gat te overbruggen — bijvoorbeeld totdat uw tweede woning
+                                    verkocht is en u daar (anders dan bij uw huidige woning) geen
+                                    bancair overbruggingskrediet op kunt krijgen. Leg rente en
+                                    aflossing altijd schriftelijk vast (zie toelichting hieronder).
+                                  </p>
+                                </div>
+                                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setUseFamilyLoan(false)}
+                                    className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                                      !useFamilyLoan
+                                        ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                                        : 'text-slate-500 hover:text-slate-700'
+                                    }`}
+                                  >
+                                    Nee
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setUseFamilyLoan(true)}
+                                    className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                                      useFamilyLoan
+                                        ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                                        : 'text-slate-500 hover:text-slate-700'
+                                    }`}
+                                  >
+                                    Ja
+                                  </button>
+                                </div>
+                              </div>
+
+                              {useFamilyLoan && (
+                                <>
+                                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                                    <CurrencyField
+                                      id="familyLoanAmount"
+                                      label="Bedrag familielening"
+                                      icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                                      value={familyLoanAmount}
+                                      onChange={setFamilyLoanAmount}
+                                      placeholder={String(
+                                        Math.round(combinedGapCalc.shortfallBeforeFamilyLoan)
+                                      )}
+                                      hint="Standaard genoeg om het resterende gat te dichten; meer heeft geen extra effect hier."
+                                    />
+                                    <Slider
+                                      id="familyLoanRate"
+                                      label="Rente familielening"
+                                      icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
+                                      value={familyLoanRate}
+                                      min={0}
+                                      max={6}
+                                      step={0.1}
+                                      onChange={setFamilyLoanRate}
+                                      formatValue={formatRate}
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <div>
+                                      <span className="text-xs text-slate-400">
+                                        Toegepast op het gat
+                                      </span>
+                                      <p className="text-sm font-semibold text-slate-800">
+                                        {formatEuro(combinedGapCalc.familyLoanApplied)}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <span className="text-xs text-slate-400">
+                                        Maandlast familielening (indicatief)
+                                      </span>
+                                      <p className="text-sm font-semibold text-slate-800">
+                                        {formatEuro(combinedGapCalc.familyLoanMonthlyInterest)}
+                                      </p>
+                                      <span className="text-[11px] text-slate-400">
+                                        Alleen rente, geen aflossingsaanname
+                                      </span>
+                                    </div>
+                                  </div>
+                                  {combinedGapCalc.withinCapacityAfterFamilyLoan ? (
+                                    <StatusBadge status="success">
+                                      Haalbaar met familielening: samen met uw bijleenruimte dekt
+                                      dit het financieringsgat volledig.
+                                    </StatusBadge>
+                                  ) : (
+                                    <StatusBadge status="error">
+                                      Nog steeds {formatEuro(combinedGapCalc.remainingShortfall)}{' '}
+                                      te weinig, ook met deze familielening.
+                                    </StatusBadge>
+                                  )}
+                                  <p className="text-xs text-slate-400">
+                                    Let op: de meeste geldverstrekkers willen weten van een
+                                    familielening en wegen deze mee als schuld, tenzij schriftelijk
+                                    is vastgelegd dat er geen aflossingsverplichting geldt binnen de
+                                    toetsperiode. Zonder een reële rente-/aflossingsafspraak op
+                                    papier kan de Belastingdienst dit bovendien als schenking
+                                    aanmerken (schenkbelasting). Dit is geen persoonlijk financieel
+                                    of fiscaal advies — raadpleeg hiervoor een adviseur of notaris.
+                                  </p>
+                                </>
+                              )}
                             </div>
                           )}
                         </>
@@ -5635,9 +6034,10 @@ function MortgageCalculatorForm({ onReset }) {
                         {additionalLoanCalc.exceedsLenderCap && (
                           <p className="mt-3 flex items-start gap-1.5 text-xs text-amber-600">
                             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-                            Boven de {formatEuro(LENDER_CAP_THRESHOLD)} grens die sommige
-                            geldverstrekkers hanteren voor de totale hypotheeksom, mogelijk
-                            aanvullende acceptatie-eisen.
+                            Boven het ingestelde maximum van{' '}
+                            {formatEuro(safeNum(lenderCapThreshold))} bij uw geldverstrekker
+                            (aan te passen bij "Uw situatie"), mogelijk aanvullende
+                            acceptatie-eisen.
                           </p>
                         )}
                       </div>
