@@ -369,6 +369,42 @@ function Slider({ id, label, icon, value, min, max, step, onChange, formatValue,
   );
 }
 
+// Compacte Ja/Nee-toggle om aan te geven of ingebracht eigen vermogen nu al liquide is, of
+// pas later vrijkomt (bijv. bij de verkoop van een aangehouden tweede woning). Alleen
+// getoond als er daadwerkelijk een bedrag is ingevuld.
+function LiquidityToggle({ amount, liquid, onChange }) {
+  if (safeNum(amount) <= 0) return null;
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2">
+      <span className="text-xs text-slate-500">Nu al liquide beschikbaar?</span>
+      <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
+        <button
+          type="button"
+          onClick={() => onChange(true)}
+          className={`rounded px-2.5 py-1 text-[11px] font-semibold transition-all duration-200 ${
+            liquid
+              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          Ja
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(false)}
+          className={`rounded px-2.5 py-1 text-[11px] font-semibold transition-all duration-200 ${
+            !liquid
+              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          Pas later
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hint, min = 0, max }) {
   // Klemt de waarde binnen [min, max] zodra er een geldig getal staat, zodat onzinnige
   // invoer (negatieve leeftijden, absurd hoge waarden) niet in de berekening terechtkomt.
@@ -1295,6 +1331,11 @@ function MortgageCalculatorForm({ onReset }) {
   const [age2, setAge2] = useState('36');
   const [ownCapital1, setOwnCapital1] = useState(125000);
   const [ownCapital2, setOwnCapital2] = useState(25000);
+  // Is dit eigen vermogen nu al liquide, of komt het pas vrij bij een latere gebeurtenis
+  // (bijv. de verkoop van een aangehouden tweede woning)? Standaard "nu beschikbaar", zoals
+  // voorheen impliciet werd aangenomen.
+  const [ownCapital1Liquid, setOwnCapital1Liquid] = useState(true);
+  const [ownCapital2Liquid, setOwnCapital2Liquid] = useState(true);
   const [rate, setRate] = useState(4.0);
   const [fixedRatePeriod, setFixedRatePeriod] = useState(10);
   const [energyLabel, setEnergyLabel] = useState('A');
@@ -1413,6 +1454,15 @@ function MortgageCalculatorForm({ onReset }) {
   const [useFamilyLoan, setUseFamilyLoan] = useState(false);
   const [familyLoanAmount, setFamilyLoanAmount] = useState('');
   const [familyLoanRate, setFamilyLoanRate] = useState(0);
+  // Aflosvorm van de familielening: "ineens" (bijv. bij verkoop van de tweede woning) heeft
+  // geen invloed op de Nibud-toets; "maandelijks" is een reguliere verplichting en telt mee
+  // als schuld, net als overige schulden.
+  const [familyLoanRepaymentType, setFamilyLoanRepaymentType] = useState('ineens');
+  const [familyLoanMonthlyRepayment, setFamilyLoanMonthlyRepayment] = useState('');
+  // Veiligheidsmarge bovenop het niet-liquide eigen vermogen bij het suggereren van een
+  // familieleningbedrag: dekt rente tijdens de looptijd en onzekerheid over de uiteindelijke
+  // verkoopprijs/kosten van de tweede woning.
+  const [familyLoanBufferPct, setFamilyLoanBufferPct] = useState(10);
   // Meeneemregeling: neemt u de bestaande hypotheek mee tegen de huidige voorwaarden
   // (rente, resterende looptijd), of lost u deze af bij verkoop en financiert u de nieuwe
   // woning volledig opnieuw? Default: ja, meenemen (de gangbare route bij een lagere
@@ -1600,8 +1650,27 @@ function MortgageCalculatorForm({ onReset }) {
         ? safeNum(secondHomeValue) - safeNum(secondHomeMortgageDebt) - secondHomeSaleCosts
         : 0;
     const secondHomeShortfall = secondHomeNetProceeds < 0 ? -secondHomeNetProceeds : 0;
+    // Verwachte netto-opbrengst als de tweede woning ooit verkocht wordt, los van de
+    // aanhouden/verkopen-keuze hierboven (die alleen bepaalt of dit bedrag NU al wordt
+    // ingezet). Gebruikt om een familielening die op die toekomstige verkoop anticipeert
+    // ("aflossen zodra de tweede woning verkocht is") van een concreet bedrag te voorzien.
+    const secondHomeNetProceedsIfSold = hasSecondHome
+      ? safeNum(secondHomeValue) -
+        safeNum(secondHomeMortgageDebt) -
+        safeNum(secondHomeValue) * (safeNum(secondHomeSaleCostsPct) / 100)
+      : 0;
 
-    const monthlyDebt = otherDebtMonthly + studyDebtMonthly + secondHomeMonthly;
+    // Een familielening die maandelijks wordt afgelost (in plaats van ineens bij een
+    // toekomstige gebeurtenis, zoals de verkoop van de tweede woning) is een reguliere
+    // verplichting en telt daarom mee als schuld in de Nibud-toets, net als overige
+    // schulden. Bij "ineens" heeft de lening geen invloed op de leencapaciteit.
+    const familyLoanMonthlyDebt =
+      useFamilyLoan && familyLoanRepaymentType === 'maandelijks'
+        ? safeNum(familyLoanMonthlyRepayment)
+        : 0;
+
+    const monthlyDebt =
+      otherDebtMonthly + studyDebtMonthly + secondHomeMonthly + familyLoanMonthlyDebt;
 
     // A1-A3: echte Nibud-woonquote-systematiek 2026. De woonquote bij (toetsinkomen,
     // toetsrente) bepaalt de maximale bruto woonlast; de maandlast van bestaande schulden
@@ -1701,11 +1770,18 @@ function MortgageCalculatorForm({ onReset }) {
       hasSecondHome && secondHomeWillSell && useSecondHomeProceeds
         ? Math.max(0, secondHomeNetProceeds)
         : 0;
+    // Ingebracht eigen vermogen telt hier alleen mee als het nu al liquide is. Vermogen dat
+    // pas vrijkomt bij een latere gebeurtenis (bijv. de verkoop van een aangehouden tweede
+    // woning) is nu niet beschikbaar voor deze aankoop en wordt apart bijgehouden als
+    // illiquidOwnCapital — zichtbaar gemaakt in het financieringsgat, in plaats van
+    // stilzwijgend meegeteld alsof het al op de rekening staat.
+    const liquidOwnCapital1 = ownCapital1Liquid ? safeNum(ownCapital1) : 0;
+    const liquidOwnCapital2 = hasPartner2 && ownCapital2Liquid ? safeNum(ownCapital2) : 0;
+    const illiquidOwnCapital =
+      (ownCapital1Liquid ? 0 : safeNum(ownCapital1)) +
+      (hasPartner2 && !ownCapital2Liquid ? safeNum(ownCapital2) : 0);
     const totalOwnCapital =
-      safeNum(ownCapital1) +
-      (hasPartner2 ? safeNum(ownCapital2) : 0) +
-      secondHomeProceedsApplied -
-      secondHomeShortfall;
+      liquidOwnCapital1 + liquidOwnCapital2 + secondHomeProceedsApplied - secondHomeShortfall;
 
     // Indicatieve hypotheek als basis voor de NHG-borgtochtprovisie: wat er na inzet van
     // het eigen vermogen gefinancierd moet worden, begrensd door de maximale hypotheek.
@@ -1826,6 +1902,9 @@ function MortgageCalculatorForm({ onReset }) {
       currentScenarioMax,
       pensionScenarioMax,
       totalOwnCapital,
+      illiquidOwnCapital,
+      secondHomeNetProceedsIfSold,
+      familyLoanMonthlyDebt,
       purchasingPower,
       toetsrenteApplies,
       testRate,
@@ -1841,6 +1920,11 @@ function MortgageCalculatorForm({ onReset }) {
     studyDebt1,
     studyDebt2,
     studyDebtRegime,
+    ownCapital1Liquid,
+    ownCapital2Liquid,
+    useFamilyLoan,
+    familyLoanRepaymentType,
+    familyLoanMonthlyRepayment,
     age1,
     age2,
     ownCapital1,
@@ -3496,6 +3580,11 @@ function MortgageCalculatorForm({ onReset }) {
                     onChange={setOwnCapital1}
                     formatValue={formatEuro}
                   />
+                  <LiquidityToggle
+                    amount={ownCapital1}
+                    liquid={ownCapital1Liquid}
+                    onChange={setOwnCapital1Liquid}
+                  />
                   <NumberField
                     id="age1"
                     label="Leeftijd"
@@ -3582,6 +3671,11 @@ function MortgageCalculatorForm({ onReset }) {
                     step={1000}
                     onChange={setOwnCapital2}
                     formatValue={formatEuro}
+                  />
+                  <LiquidityToggle
+                    amount={ownCapital2}
+                    liquid={ownCapital2Liquid}
+                    onChange={setOwnCapital2Liquid}
                   />
                   <NumberField
                     id="age2"
@@ -5761,6 +5855,51 @@ function MortgageCalculatorForm({ onReset }) {
                             </span>
                           </div>
 
+                          {calc.illiquidOwnCapital > 0 && (
+                            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                              <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber-700">
+                                Tijdelijk financieringsgat vóór verkoop tweede woning
+                                <InfoTooltip text="U heeft aangegeven dat een deel van uw ingebrachte eigen vermogen nu nog niet liquide is. Dat bedrag telt daarom niet mee bij 'Gedekt door inbreng eigen vermogen' hierboven en verhoogt in plaats daarvan de aanvullende hypotheek — totdat het vrijkomt." />
+                              </span>
+                              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <div>
+                                  <span className="text-xs text-slate-500">Aanvullende hypotheek nu</span>
+                                  <p className="text-sm font-semibold text-slate-800">
+                                    {formatEuro(combinedGapCalc.additionalMortgage)}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span className="text-xs text-slate-500">
+                                    Zou zijn geweest mét dit vermogen
+                                  </span>
+                                  <p className="text-sm font-semibold text-slate-800">
+                                    {formatEuro(
+                                      Math.max(
+                                        0,
+                                        combinedGapCalc.additionalMortgage - calc.illiquidOwnCapital
+                                      )
+                                    )}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span className="text-xs font-medium text-amber-700">
+                                    Te overbruggen bedrag
+                                  </span>
+                                  <p className="text-sm font-bold text-amber-800">
+                                    {formatEuro(
+                                      Math.min(calc.illiquidOwnCapital, combinedGapCalc.additionalMortgage)
+                                    )}
+                                  </p>
+                                </div>
+                              </div>
+                              <p className="mt-3 text-[11px] text-amber-700">
+                                Dit bedrag is niet per se een extra kostenpost — het is het deel van
+                                uw eigen vermogen dat u tijdelijk elders vandaan moet halen (bijv. een
+                                overbruggingskrediet of familielening hieronder) totdat het vrijkomt.
+                              </p>
+                            </div>
+                          )}
+
                           {combinedGapCalc.exceedsLenderCap && (
                             <div className="mt-3">
                               <StatusBadge status="warning">
@@ -5815,7 +5954,7 @@ function MortgageCalculatorForm({ onReset }) {
                             </div>
                           </div>
 
-                          {combinedGapCalc.withinCapacity ? (
+                          {combinedGapCalc.withinCapacity && calc.illiquidOwnCapital <= 0 ? (
                             <div className="mt-4">
                               <StatusBadge status="success">
                                 Haalbaar: de aanvullende hypotheek past binnen{' '}
@@ -5827,24 +5966,38 @@ function MortgageCalculatorForm({ onReset }) {
                             </div>
                           ) : (
                             <div className="mt-4 space-y-3">
-                              <StatusBadge status={combinedGapCalc.withinCapacityAfterFamilyLoan ? 'warning' : 'error'}>
-                                {combinedGapCalc.bindingCapIsLender
-                                  ? 'Uw ingestelde geldverstrekkersmaximum'
-                                  : 'Uw bijleenruimte o.b.v. inkomen'}{' '}
-                                is {formatEuro(combinedGapCalc.shortfallBeforeFamilyLoan)} te
-                                krap voor deze aanvullende hypotheek.
-                                {combinedGapCalc.familyLoanApplied > 0
-                                  ? ` Met de familielening hieronder van ${formatEuro(
-                                      combinedGapCalc.familyLoanApplied
-                                    )} is dit ${
-                                      combinedGapCalc.withinCapacityAfterFamilyLoan
-                                        ? 'wel haalbaar.'
-                                        : `nog steeds ${formatEuro(
-                                            combinedGapCalc.remainingShortfall
-                                          )} te weinig.`
-                                    }`
-                                  : ' Verhoog de inbreng eigen vermogen, verlaag de gewenste aanschafprijs, of vul het gat met een tijdelijke familielening hieronder.'}
-                              </StatusBadge>
+                              {combinedGapCalc.withinCapacity ? (
+                                <StatusBadge status="success">
+                                  Haalbaar: de aanvullende hypotheek past binnen{' '}
+                                  {combinedGapCalc.bindingCapIsLender
+                                    ? 'uw ingestelde geldverstrekkersmaximum'
+                                    : 'uw bijleenruimte o.b.v. inkomen'}
+                                  , met nog {formatEuro(combinedGapCalc.capacityMargin)} marge. Een
+                                  deel hiervan komt doordat uw niet-liquide eigen vermogen (zie
+                                  hierboven) nu als hypotheek wordt meegefinancierd — u kunt dat met
+                                  een familielening hieronder vervangen, zodat u niet harder op uw
+                                  hypotheek leunt dan nodig.
+                                </StatusBadge>
+                              ) : (
+                                <StatusBadge status={combinedGapCalc.withinCapacityAfterFamilyLoan ? 'warning' : 'error'}>
+                                  {combinedGapCalc.bindingCapIsLender
+                                    ? 'Uw ingestelde geldverstrekkersmaximum'
+                                    : 'Uw bijleenruimte o.b.v. inkomen'}{' '}
+                                  is {formatEuro(combinedGapCalc.shortfallBeforeFamilyLoan)} te
+                                  krap voor deze aanvullende hypotheek.
+                                  {combinedGapCalc.familyLoanApplied > 0
+                                    ? ` Met de familielening hieronder van ${formatEuro(
+                                        combinedGapCalc.familyLoanApplied
+                                      )} is dit ${
+                                        combinedGapCalc.withinCapacityAfterFamilyLoan
+                                          ? 'wel haalbaar.'
+                                          : `nog steeds ${formatEuro(
+                                              combinedGapCalc.remainingShortfall
+                                            )} te weinig.`
+                                      }`
+                                    : ' Verhoog de inbreng eigen vermogen, verlaag de gewenste aanschafprijs, of vul het gat met een tijdelijke familielening hieronder.'}
+                                </StatusBadge>
+                              )}
 
                               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
                                 <div>
@@ -5887,6 +6040,72 @@ function MortgageCalculatorForm({ onReset }) {
 
                               {useFamilyLoan && (
                                 <>
+                                  {calc.illiquidOwnCapital > 0 && (
+                                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                                      <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                                        Suggestie voor het te vragen bedrag
+                                      </span>
+                                      <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                        <div>
+                                          <span className="text-xs text-slate-500">
+                                            Minimaal nodig (sluit alleen uw bijleenruimte-gat)
+                                          </span>
+                                          <p className="text-sm font-semibold text-slate-800">
+                                            {formatEuro(combinedGapCalc.shortfallBeforeFamilyLoan)}
+                                          </p>
+                                        </div>
+                                        <div>
+                                          <span className="text-xs text-slate-500">
+                                            Aanbevolen (niet-liquide vermogen + buffer)
+                                          </span>
+                                          <p className="text-sm font-semibold text-indigo-700">
+                                            {formatEuro(
+                                              calc.illiquidOwnCapital *
+                                                (1 + safeNum(familyLoanBufferPct) / 100)
+                                            )}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      <div className="mt-3">
+                                        <Slider
+                                          id="familyLoanBufferPct"
+                                          label="Buffer bovenop niet-liquide vermogen"
+                                          icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
+                                          value={familyLoanBufferPct}
+                                          min={0}
+                                          max={25}
+                                          step={1}
+                                          onChange={setFamilyLoanBufferPct}
+                                          formatValue={(v) => `${v}%`}
+                                          hint="Marge voor rente tijdens de looptijd en onzekerheid over de uiteindelijke verkoopprijs/kosten."
+                                        />
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setFamilyLoanAmount(
+                                            String(
+                                              Math.round(
+                                                calc.illiquidOwnCapital *
+                                                  (1 + safeNum(familyLoanBufferPct) / 100)
+                                              )
+                                            )
+                                          )
+                                        }
+                                        className="mt-3 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
+                                      >
+                                        Vul aanbevolen bedrag in
+                                      </button>
+                                      {hasSecondHome && !secondHomeWillSell && (
+                                        <p className="mt-3 text-[11px] text-indigo-700">
+                                          Deze lening overbrugt tot de verkoop van uw tweede woning
+                                          (verwachte netto-opbrengst{' '}
+                                          {formatEuro(calc.secondHomeNetProceedsIfSold)}); zodra die
+                                          verkocht is, lost u 'm af.
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
                                   <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                                     <CurrencyField
                                       id="familyLoanAmount"
@@ -5911,6 +6130,54 @@ function MortgageCalculatorForm({ onReset }) {
                                       formatValue={formatRate}
                                     />
                                   </div>
+
+                                  <div>
+                                    <span className="text-xs font-medium text-slate-600">
+                                      Aflossing familielening
+                                    </span>
+                                    <div className="mt-1.5 inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => setFamilyLoanRepaymentType('ineens')}
+                                        className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                                          familyLoanRepaymentType === 'ineens'
+                                            ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                                            : 'text-slate-500 hover:text-slate-700'
+                                        }`}
+                                      >
+                                        Ineens (bijv. bij verkoop)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setFamilyLoanRepaymentType('maandelijks')}
+                                        className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                                          familyLoanRepaymentType === 'maandelijks'
+                                            ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                                            : 'text-slate-500 hover:text-slate-700'
+                                        }`}
+                                      >
+                                        Maandelijks
+                                      </button>
+                                    </div>
+                                    <p className="mt-1.5 text-[11px] text-slate-400">
+                                      {familyLoanRepaymentType === 'ineens'
+                                        ? 'Ineens (bijv. bij verkoop van de tweede woning) heeft geen invloed op uw leencapaciteit hierboven.'
+                                        : 'Een maandelijkse aflossing is een reguliere verplichting en telt daarom mee als schuld in de Nibud-toets — dit verlaagt uw leencapaciteit.'}
+                                    </p>
+                                    {familyLoanRepaymentType === 'maandelijks' && (
+                                      <div className="mt-3 max-w-xs">
+                                        <CurrencyField
+                                          id="familyLoanMonthlyRepayment"
+                                          label="Maandelijkse aflossing"
+                                          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                                          value={familyLoanMonthlyRepayment}
+                                          onChange={setFamilyLoanMonthlyRepayment}
+                                          placeholder="0"
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+
                                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                     <div>
                                       <span className="text-xs text-slate-400">
@@ -5925,10 +6192,15 @@ function MortgageCalculatorForm({ onReset }) {
                                         Maandlast familielening (indicatief)
                                       </span>
                                       <p className="text-sm font-semibold text-slate-800">
-                                        {formatEuro(combinedGapCalc.familyLoanMonthlyInterest)}
+                                        {formatEuro(
+                                          combinedGapCalc.familyLoanMonthlyInterest +
+                                            calc.familyLoanMonthlyDebt
+                                        )}
                                       </p>
                                       <span className="text-[11px] text-slate-400">
-                                        Alleen rente, geen aflossingsaanname
+                                        {familyLoanRepaymentType === 'maandelijks'
+                                          ? 'Rente + aflossing, telt mee in de Nibud-toets'
+                                          : 'Alleen rente, geen aflossingsaanname'}
                                       </span>
                                     </div>
                                   </div>
