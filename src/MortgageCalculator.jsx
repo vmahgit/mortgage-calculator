@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence, animate } from 'framer-motion';
 import {
   Euro,
@@ -27,6 +27,10 @@ import {
   HardHat,
   Calculator,
   FileDown,
+  Link2,
+  Save,
+  FolderOpen,
+  X,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
@@ -269,6 +273,180 @@ function calculateSimpleMortgagePayment(principal, annualRatePct, type, remainin
 function safeNum(value) {
   const n = parseFloat(value);
   return isNaN(n) || !isFinite(n) ? 0 : n;
+}
+
+// Eén centrale bron voor de startwaarden van alle financiële invoervelden ("het dossier").
+// Gebruikt door: het laden van een gedeelde link/localStorage, "opnieuw beginnen", en het
+// invullen van ontbrekende velden bij een scenario uit een oudere schema-versie. Bewust
+// losstaand van de useState-defaults in MortgageCalculatorForm zelf zou dubbel onderhoud
+// betekenen; die defaults verwijzen naar dit object (zie DOSSIER_DEFAULTS.<veld>).
+const DOSSIER_DEFAULTS = {
+  income1: 118000,
+  income2: 115000,
+  age1: '36',
+  age2: '36',
+  ownCapital1: 125000,
+  ownCapital2: 25000,
+  ownCapital1Liquid: true,
+  ownCapital2Liquid: true,
+  rate: 4.0,
+  fixedRatePeriod: 10,
+  energyLabel: 'A',
+  purchasePrice: 1350000,
+  hasPartner2: true,
+  debt1: '0',
+  debt2: '0',
+  studyDebt1: '14000',
+  studyDebt2: '0',
+  studyDebtRegime: 'oud',
+  propertyUsage: 'zelfbewoning',
+  starterExemption1: false,
+  starterExemption2: false,
+  bouwdepotAmount: '',
+  constructionMonths: 12,
+  notaryCosts: String(KOSTEN_KOPER_DEFAULTS.notaryCosts),
+  valuationCosts: String(KOSTEN_KOPER_DEFAULTS.valuationCosts),
+  advisoryCosts: String(KOSTEN_KOPER_DEFAULTS.advisoryCosts),
+  includeBankGuarantee: true,
+  includeBuyersAgent: false,
+  includeNhgFee: false,
+  includeEwfInNetCalc: false,
+  includeKostenKoperInCalc: true,
+  partnerAlimony1: '0',
+  partnerAlimony2: '0',
+  pensionIncome1: '',
+  pensionIncome2: '',
+  incomeType1: 'vast',
+  incomeType2: 'vast',
+  incomeHistory1: { y1: '', y2: '', y3: '' },
+  incomeHistory2: { y1: '', y2: '', y3: '' },
+  thirteenthMonth1: '0',
+  thirteenthMonth2: '0',
+  avgBonus1: '0',
+  avgBonus2: '0',
+  hasExistingHome: true,
+  hasSecondHome: true,
+  secondHomeWillSell: false,
+  useSecondHomeProceeds: true,
+  secondHomeValue: '300000',
+  secondHomeMortgageDebt: '42000',
+  secondHomeInterestRate: 1.0,
+  secondHomeRepaymentType: 'Annuïteit',
+  secondHomeRemainingYears: 20,
+  secondHomeSaleCostsPct: 2,
+  lenderCapThreshold: String(LENDER_CAP_THRESHOLD_DEFAULT),
+  limitOwnContribution: false,
+  desiredMaxOwnContribution: '100000',
+  useFamilyLoan: false,
+  familyLoanAmount: '',
+  familyLoanRate: 0,
+  familyLoanRepaymentType: 'ineens',
+  familyLoanMonthlyRepayment: '',
+  familyLoanBufferPct: 10,
+  takeOverMortgage: true,
+  oldMortgageStance: 'volledig',
+  bridgePeriodMonths: 6,
+  includeOwnCapitalInDoubleTest: true,
+  liquidityBuffer: '0',
+  useBridgeLoan: false,
+  bridgeLoanAmount: '',
+  bridgeLoanRate: 6.0,
+  marketValue: 935000,
+  saleDiscountPercentage: 95,
+  currentEnergyLabel: 'A',
+  originalDebt: '675000',
+  startDate: '2021-01-15',
+  loanParts: [
+    { id: 1, type: 'Annuïteit', principal: '271846', rate: 1.25, originalFixedYears: 10 },
+    { id: 2, type: 'Aflossingsvrij', principal: '354269', rate: 1.85, originalFixedYears: 20 },
+  ],
+  additionalLoanParts: [
+    { id: 1, type: 'Aflossingsvrij', principal: '0', rate: 4.0, originalFixedYears: 10 },
+  ],
+  aflossingsvrijMaxPct: 50,
+  scheduleWindowStartMonth: 0,
+  scheduleAppreciationPct: 0,
+  starterLoanParts: [{ id: 1, type: 'Annuïteit', principal: '0', rate: 4.0, originalFixedYears: 10 }],
+};
+
+const DOSSIER_FIELD_NAMES = Object.keys(DOSSIER_DEFAULTS);
+const DOSSIER_STORAGE_KEY = 'mortgageDossier:v1';
+const SCENARIOS_STORAGE_KEY = 'mortgageScenarios:v1';
+
+// Vult een (mogelijk onvolledig, bijv. van een oudere link) dossier-object aan met
+// defaults voor ontbrekende velden, zodat laden nooit een veld ongedefinieerd laat.
+function fillDossierDefaults(partial) {
+  const result = {};
+  for (const key of DOSSIER_FIELD_NAMES) {
+    result[key] = partial && partial[key] !== undefined ? partial[key] : DOSSIER_DEFAULTS[key];
+  }
+  return result;
+}
+
+// Pure samenvattingsberekening voor scenario-vergelijking: herhaalt het inkomens- en
+// schulden-deel van de hoofdberekening (getToetsinkomen/getIncomeBasedMortgage, dezelfde
+// pure functies als de live berekening) op een losstaand dossier-object, zonder React
+// state. Bewust beperkt tot de kern-Nibud-uitkomst (leencapaciteit, woonquote, maandlast);
+// de bijleenruimte/financieringsgat-keten voor wie al een woning heeft, is hier niet
+// meegenomen — dat blijft voorbehouden aan de actieve, live berekening.
+function computeScenarioSummary(d) {
+  const toets1 = getToetsinkomen({
+    incomeType: d.incomeType1,
+    income: d.income1,
+    history: d.incomeHistory1,
+    thirteenthMonth: d.thirteenthMonth1,
+    avgBonus: d.avgBonus1,
+    alimonyMonthly: d.partnerAlimony1,
+  });
+  const toets2 = d.hasPartner2
+    ? getToetsinkomen({
+        incomeType: d.incomeType2,
+        income: d.income2,
+        history: d.incomeHistory2,
+        thirteenthMonth: d.thirteenthMonth2,
+        avgBonus: d.avgBonus2,
+        alimonyMonthly: d.partnerAlimony2,
+      })
+    : getToetsinkomen({ incomeType: 'vast', income: 0 });
+  const combinedIncome = toets1.toetsinkomen + toets2.toetsinkomen;
+
+  const testRate = getTestRate(d.rate, d.fixedRatePeriod);
+  const energyBonus = getEnergyBonus(d.energyLabel);
+
+  const otherDebtMonthly =
+    (safeNum(d.debt1) + (d.hasPartner2 ? safeNum(d.debt2) : 0)) * OTHER_DEBT_MONTHLY_WEIGHT;
+  const studyDebtMonthly = getStudyDebtMonthlyBurden(
+    safeNum(d.studyDebt1) + (d.hasPartner2 ? safeNum(d.studyDebt2) : 0),
+    d.studyDebtRegime
+  );
+  const secondHomeMonthly =
+    d.hasSecondHome && !d.secondHomeWillSell
+      ? calculateSimpleMortgagePayment(
+          d.secondHomeMortgageDebt,
+          d.secondHomeInterestRate,
+          d.secondHomeRepaymentType,
+          d.secondHomeRemainingYears
+        )
+      : 0;
+  const monthlyDebt = otherDebtMonthly + studyDebtMonthly + secondHomeMonthly;
+
+  const nibud = getIncomeBasedMortgage(combinedIncome, testRate, monthlyDebt);
+  const incomeBasedMax = Math.max(0, nibud.maxLoan + energyBonus);
+  const priceNum = safeNum(d.purchasePrice);
+  const cappedByPropertyValue = priceNum > 0 && incomeBasedMax > priceNum;
+  const maxMortgage = priceNum > 0 ? Math.min(incomeBasedMax, priceNum) : incomeBasedMax;
+
+  return {
+    combinedIncome,
+    woonquote: nibud.woonquote,
+    maxWoonlastMonthly: nibud.maxWoonlastMonthly,
+    monthlyDebt,
+    incomeBasedMax,
+    maxMortgage,
+    cappedByPropertyValue,
+    purchasePrice: priceNum,
+    isOverIndebted: monthlyDebt > nibud.maxWoonlastMonthly,
+  };
 }
 
 const currencyFormatter = new Intl.NumberFormat('nl-NL', {
@@ -1554,6 +1732,296 @@ function MortgageCalculatorForm({ onReset }) {
     { id: 1, type: 'Annuïteit', principal: '0', rate: 4.0, originalFixedYears: 10 },
   ]);
   const [starterViewMode, setStarterViewMode] = useState('bruto');
+
+  // ---------------------------------------------------------------------------------
+  // Dossier: één plat, serialiseerbaar object met alle financiële invoervelden hierboven
+  // (dus niet de klap-open/dicht- of weergave-toggles). Dit maakt drie dingen mogelijk
+  // zonder de ~75 losse useState-velden hierboven te hoeven vervangen: (1) een deelbare
+  // link, (2) automatisch onthouden in deze browser, (3) scenario's opslaan/laden/
+  // vergelijken. Bewust geen useReducer: dat zou elke individuele onChange-call site in
+  // de JSX hieronder moeten wijzigen, met veel grotere kans op regressies dan deze
+  // additieve laag.
+  // ---------------------------------------------------------------------------------
+  const dossierSnapshot = useMemo(
+    () => ({
+      income1,
+      income2,
+      age1,
+      age2,
+      ownCapital1,
+      ownCapital2,
+      ownCapital1Liquid,
+      ownCapital2Liquid,
+      rate,
+      fixedRatePeriod,
+      energyLabel,
+      purchasePrice,
+      hasPartner2,
+      debt1,
+      debt2,
+      studyDebt1,
+      studyDebt2,
+      studyDebtRegime,
+      propertyUsage,
+      starterExemption1,
+      starterExemption2,
+      bouwdepotAmount,
+      constructionMonths,
+      notaryCosts,
+      valuationCosts,
+      advisoryCosts,
+      includeBankGuarantee,
+      includeBuyersAgent,
+      includeNhgFee,
+      includeEwfInNetCalc,
+      includeKostenKoperInCalc,
+      partnerAlimony1,
+      partnerAlimony2,
+      pensionIncome1,
+      pensionIncome2,
+      incomeType1,
+      incomeType2,
+      incomeHistory1,
+      incomeHistory2,
+      thirteenthMonth1,
+      thirteenthMonth2,
+      avgBonus1,
+      avgBonus2,
+      hasExistingHome,
+      hasSecondHome,
+      secondHomeWillSell,
+      useSecondHomeProceeds,
+      secondHomeValue,
+      secondHomeMortgageDebt,
+      secondHomeInterestRate,
+      secondHomeRepaymentType,
+      secondHomeRemainingYears,
+      secondHomeSaleCostsPct,
+      lenderCapThreshold,
+      limitOwnContribution,
+      desiredMaxOwnContribution,
+      useFamilyLoan,
+      familyLoanAmount,
+      familyLoanRate,
+      familyLoanRepaymentType,
+      familyLoanMonthlyRepayment,
+      familyLoanBufferPct,
+      takeOverMortgage,
+      oldMortgageStance,
+      bridgePeriodMonths,
+      includeOwnCapitalInDoubleTest,
+      liquidityBuffer,
+      useBridgeLoan,
+      bridgeLoanAmount,
+      bridgeLoanRate,
+      marketValue,
+      saleDiscountPercentage,
+      currentEnergyLabel,
+      originalDebt,
+      startDate,
+      loanParts,
+      additionalLoanParts,
+      aflossingsvrijMaxPct,
+      scheduleWindowStartMonth,
+      scheduleAppreciationPct,
+      starterLoanParts,
+    }),
+    [
+      income1, income2, age1, age2, ownCapital1, ownCapital2, ownCapital1Liquid,
+      ownCapital2Liquid, rate, fixedRatePeriod, energyLabel, purchasePrice, hasPartner2,
+      debt1, debt2, studyDebt1, studyDebt2, studyDebtRegime, propertyUsage,
+      starterExemption1, starterExemption2, bouwdepotAmount, constructionMonths,
+      notaryCosts, valuationCosts, advisoryCosts, includeBankGuarantee, includeBuyersAgent,
+      includeNhgFee, includeEwfInNetCalc, includeKostenKoperInCalc, partnerAlimony1,
+      partnerAlimony2, pensionIncome1, pensionIncome2, incomeType1, incomeType2,
+      incomeHistory1, incomeHistory2, thirteenthMonth1, thirteenthMonth2, avgBonus1,
+      avgBonus2, hasExistingHome, hasSecondHome, secondHomeWillSell, useSecondHomeProceeds,
+      secondHomeValue, secondHomeMortgageDebt, secondHomeInterestRate,
+      secondHomeRepaymentType, secondHomeRemainingYears, secondHomeSaleCostsPct,
+      lenderCapThreshold, limitOwnContribution, desiredMaxOwnContribution, useFamilyLoan,
+      familyLoanAmount, familyLoanRate, familyLoanRepaymentType, familyLoanMonthlyRepayment,
+      familyLoanBufferPct, takeOverMortgage, oldMortgageStance, bridgePeriodMonths,
+      includeOwnCapitalInDoubleTest, liquidityBuffer, useBridgeLoan, bridgeLoanAmount,
+      bridgeLoanRate, marketValue, saleDiscountPercentage, currentEnergyLabel, originalDebt,
+      startDate, loanParts, additionalLoanParts, aflossingsvrijMaxPct,
+      scheduleWindowStartMonth, scheduleAppreciationPct, starterLoanParts,
+    ]
+  );
+
+  // Herstelt alle dossiervelden in één keer vanuit een (volledig gevuld, zie
+  // fillDossierDefaults) snapshot-object — gebruikt bij het laden van een gedeelde link,
+  // het automatisch herstellen bij openen, en het laden van een opgeslagen scenario.
+  // Setters zijn stabiel over renders, dus een lege dependency-array is hier correct.
+  const loadDossier = useCallback((snap) => {
+    setIncome1(snap.income1);
+    setIncome2(snap.income2);
+    setAge1(snap.age1);
+    setAge2(snap.age2);
+    setOwnCapital1(snap.ownCapital1);
+    setOwnCapital2(snap.ownCapital2);
+    setOwnCapital1Liquid(snap.ownCapital1Liquid);
+    setOwnCapital2Liquid(snap.ownCapital2Liquid);
+    setRate(snap.rate);
+    setFixedRatePeriod(snap.fixedRatePeriod);
+    setEnergyLabel(snap.energyLabel);
+    setPurchasePrice(snap.purchasePrice);
+    setHasPartner2(snap.hasPartner2);
+    setDebt1(snap.debt1);
+    setDebt2(snap.debt2);
+    setStudyDebt1(snap.studyDebt1);
+    setStudyDebt2(snap.studyDebt2);
+    setStudyDebtRegime(snap.studyDebtRegime);
+    setPropertyUsage(snap.propertyUsage);
+    setStarterExemption1(snap.starterExemption1);
+    setStarterExemption2(snap.starterExemption2);
+    setBouwdepotAmount(snap.bouwdepotAmount);
+    setConstructionMonths(snap.constructionMonths);
+    setNotaryCosts(snap.notaryCosts);
+    setValuationCosts(snap.valuationCosts);
+    setAdvisoryCosts(snap.advisoryCosts);
+    setIncludeBankGuarantee(snap.includeBankGuarantee);
+    setIncludeBuyersAgent(snap.includeBuyersAgent);
+    setIncludeNhgFee(snap.includeNhgFee);
+    setIncludeEwfInNetCalc(snap.includeEwfInNetCalc);
+    setIncludeKostenKoperInCalc(snap.includeKostenKoperInCalc);
+    setPartnerAlimony1(snap.partnerAlimony1);
+    setPartnerAlimony2(snap.partnerAlimony2);
+    setPensionIncome1(snap.pensionIncome1);
+    setPensionIncome2(snap.pensionIncome2);
+    setIncomeType1(snap.incomeType1);
+    setIncomeType2(snap.incomeType2);
+    setIncomeHistory1(snap.incomeHistory1);
+    setIncomeHistory2(snap.incomeHistory2);
+    setThirteenthMonth1(snap.thirteenthMonth1);
+    setThirteenthMonth2(snap.thirteenthMonth2);
+    setAvgBonus1(snap.avgBonus1);
+    setAvgBonus2(snap.avgBonus2);
+    setHasExistingHome(snap.hasExistingHome);
+    setHasSecondHome(snap.hasSecondHome);
+    setSecondHomeWillSell(snap.secondHomeWillSell);
+    setUseSecondHomeProceeds(snap.useSecondHomeProceeds);
+    setSecondHomeValue(snap.secondHomeValue);
+    setSecondHomeMortgageDebt(snap.secondHomeMortgageDebt);
+    setSecondHomeInterestRate(snap.secondHomeInterestRate);
+    setSecondHomeRepaymentType(snap.secondHomeRepaymentType);
+    setSecondHomeRemainingYears(snap.secondHomeRemainingYears);
+    setSecondHomeSaleCostsPct(snap.secondHomeSaleCostsPct);
+    setLenderCapThreshold(snap.lenderCapThreshold);
+    setLimitOwnContribution(snap.limitOwnContribution);
+    setDesiredMaxOwnContribution(snap.desiredMaxOwnContribution);
+    setUseFamilyLoan(snap.useFamilyLoan);
+    setFamilyLoanAmount(snap.familyLoanAmount);
+    setFamilyLoanRate(snap.familyLoanRate);
+    setFamilyLoanRepaymentType(snap.familyLoanRepaymentType);
+    setFamilyLoanMonthlyRepayment(snap.familyLoanMonthlyRepayment);
+    setFamilyLoanBufferPct(snap.familyLoanBufferPct);
+    setTakeOverMortgage(snap.takeOverMortgage);
+    setOldMortgageStance(snap.oldMortgageStance);
+    setBridgePeriodMonths(snap.bridgePeriodMonths);
+    setIncludeOwnCapitalInDoubleTest(snap.includeOwnCapitalInDoubleTest);
+    setLiquidityBuffer(snap.liquidityBuffer);
+    setUseBridgeLoan(snap.useBridgeLoan);
+    setBridgeLoanAmount(snap.bridgeLoanAmount);
+    setBridgeLoanRate(snap.bridgeLoanRate);
+    setMarketValue(snap.marketValue);
+    setSaleDiscountPercentage(snap.saleDiscountPercentage);
+    setCurrentEnergyLabel(snap.currentEnergyLabel);
+    setOriginalDebt(snap.originalDebt);
+    setStartDate(snap.startDate);
+    setLoanParts(snap.loanParts);
+    setAdditionalLoanParts(snap.additionalLoanParts);
+    setAflossingsvrijMaxPct(snap.aflossingsvrijMaxPct);
+    setScheduleWindowStartMonth(snap.scheduleWindowStartMonth);
+    setScheduleAppreciationPct(snap.scheduleAppreciationPct);
+    setStarterLoanParts(snap.starterLoanParts);
+  }, []);
+
+  // Bij het openen: een gedeelde link (URL-hash) weegt zwaarder dan wat lokaal onthouden
+  // is, wat weer zwaarder weegt dan de standaardwaarden. hydratedRef voorkomt dat de
+  // opslag-effect hieronder dit meteen weer overschrijft vóór het herstellen is voltooid.
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    try {
+      const hash = window.location.hash;
+      if (hash && hash.startsWith('#d=')) {
+        const parsed = JSON.parse(decodeURIComponent(hash.slice(3)));
+        loadDossier(fillDossierDefaults(parsed));
+        hydratedRef.current = true;
+        return;
+      }
+      const stored = window.localStorage.getItem(DOSSIER_STORAGE_KEY);
+      if (stored) {
+        loadDossier(fillDossierDefaults(JSON.parse(stored)));
+      }
+    } catch {
+      // Corrupte of onleesbare link/opslag: gewoon bij de standaardwaarden blijven.
+    } finally {
+      hydratedRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Onthoudt elke wijziging automatisch (gedebouncet), zowel lokaal als in de URL, zodat
+  // de pagina delen ("kopieer link") en verversen altijd de actuele invoer teruggeeft.
+  useEffect(() => {
+    if (!hydratedRef.current) return undefined;
+    const timeout = setTimeout(() => {
+      try {
+        const encoded = encodeURIComponent(JSON.stringify(dossierSnapshot));
+        window.localStorage.setItem(DOSSIER_STORAGE_KEY, JSON.stringify(dossierSnapshot));
+        window.history.replaceState(null, '', `#d=${encoded}`);
+      } catch {
+        // localStorage kan vol/uitgeschakeld zijn (bijv. privénavigatie) — dan onthoudt de
+        // app de invoer simpelweg niet tussen bezoeken, de berekening blijft werken.
+      }
+    }, 500);
+    return () => clearTimeout(timeout);
+  }, [dossierSnapshot]);
+
+  // Scenario's: losstaande, met naam opgeslagen dossier-snapshots (niet de actieve
+  // invoer), zodat u twee of meer volledige situaties kunt vergelijken zonder steeds
+  // handmatig velden om te zetten. Persistent in dezelfde browser, net als het dossier.
+  const [scenarios, setScenarios] = useState(() => {
+    try {
+      const stored = window.localStorage.getItem(SCENARIOS_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SCENARIOS_STORAGE_KEY, JSON.stringify(scenarios));
+    } catch {
+      // Zie hierboven: opslag kan onbeschikbaar zijn, dan blijft dit alleen in-memory.
+    }
+  }, [scenarios]);
+
+  const saveCurrentAsScenario = (name) => {
+    const trimmed = (name || '').trim() || `Scenario ${scenarios.length + 1}`;
+    setScenarios((prev) => [
+      ...prev,
+      { id: Date.now(), name: trimmed, snapshot: dossierSnapshot, createdAt: Date.now() },
+    ]);
+  };
+
+  const loadScenario = (id) => {
+    const scenario = scenarios.find((s) => s.id === id);
+    if (scenario) loadDossier(fillDossierDefaults(scenario.snapshot));
+  };
+
+  const deleteScenario = (id) => {
+    setScenarios((prev) => prev.filter((s) => s.id !== id));
+  };
+
+  const renameScenario = (id, name) => {
+    setScenarios((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
+  };
+
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [showScenarios, setShowScenarios] = useState(false);
+  const [newScenarioName, setNewScenarioName] = useState('');
 
   const addStarterLoanPart = () => {
     setStarterLoanParts((prev) => {
@@ -2930,6 +3398,7 @@ function MortgageCalculatorForm({ onReset }) {
   const railSections = useMemo(
     () => [
       { id: 'sectie-situatie', label: 'Uw situatie' },
+      { id: 'sectie-scenarios', label: "Scenario's" },
       { id: 'sectie-beoogde-woning', label: 'Beoogde woning' },
       { id: 'sectie-inkomen', label: 'Inkomen' },
       { id: 'sectie-schulden', label: 'Schulden' },
@@ -3185,12 +3654,34 @@ function MortgageCalculatorForm({ onReset }) {
             </button>
             <button
               type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(window.location.href);
+                  setLinkCopied(true);
+                  setTimeout(() => setLinkCopied(false), 2000);
+                } catch {
+                  // Klembord niet beschikbaar (bijv. onveilige context) — geen harde fout.
+                }
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 transition-all duration-200 hover:border-slate-300 hover:text-slate-700"
+            >
+              <Link2 className="h-3.5 w-3.5" />
+              {linkCopied ? 'Link gekopieerd!' : 'Kopieer deelbare link'}
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 if (
                   window.confirm(
                     'Weet u zeker dat u opnieuw wilt beginnen? Alle ingevoerde gegevens gaan verloren.'
                   )
                 ) {
+                  try {
+                    window.localStorage.removeItem(DOSSIER_STORAGE_KEY);
+                    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+                  } catch {
+                    // Zie boven: opslag kan onbeschikbaar zijn, dan is er ook niets te wissen.
+                  }
                   onReset();
                 }
               }}
@@ -3276,6 +3767,156 @@ function MortgageCalculatorForm({ onReset }) {
               />
             </div>
           </div>
+        </div>
+
+        <div id="sectie-scenarios" className="mb-6 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <button
+            type="button"
+            onClick={() => setShowScenarios((prev) => !prev)}
+            className="flex w-full items-center justify-between gap-3 p-4 text-left transition-colors duration-200 hover:bg-slate-50"
+          >
+            <div className="flex items-center gap-2">
+              <Save className="h-4 w-4 text-slate-500" />
+              <span className="text-sm font-medium text-slate-700">
+                Scenario's {scenarios.length > 0 ? `(${scenarios.length})` : ''}
+              </span>
+            </div>
+            {showScenarios ? (
+              <ChevronUp className="h-4 w-4 text-slate-400" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-slate-400" />
+            )}
+          </button>
+          <AnimatePresence initial={false}>
+            {showScenarios && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.25, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="space-y-4 border-t border-slate-100 p-4">
+                  <p className="text-xs text-slate-400">
+                    Sla de huidige invoer op als scenario om varianten naast elkaar te
+                    vergelijken (bijv. andere aanschafprijs, aflosvorm of rentevastperiode).
+                    Scenario's blijven bewaard in deze browser.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={newScenarioName}
+                      onChange={(e) => setNewScenarioName(e.target.value)}
+                      placeholder={`Scenario ${scenarios.length + 1}`}
+                      className="min-w-[160px] flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        saveCurrentAsScenario(newScenarioName);
+                        setNewScenarioName('');
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-700 px-3 py-2 text-xs font-semibold text-white shadow-sm transition-opacity hover:opacity-90"
+                    >
+                      <Save className="h-3.5 w-3.5" />
+                      Huidige situatie opslaan
+                    </button>
+                  </div>
+
+                  {scenarios.length > 0 && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[560px] text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-100 text-left text-slate-400">
+                            <th className="py-2 pr-3 font-medium">Scenario</th>
+                            <th className="py-2 pr-3 font-medium">Max. hypotheek</th>
+                            <th className="py-2 pr-3 font-medium">Woonquote</th>
+                            <th className="py-2 pr-3 font-medium">Bruto woonlast p/m</th>
+                            <th className="py-2 pr-3 font-medium">Schulden p/m</th>
+                            <th className="py-2 font-medium"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-b border-slate-50 bg-blue-50/40">
+                            <td className="py-2 pr-3 font-semibold text-blue-900">
+                              Huidig (actieve invoer)
+                            </td>
+                            <td className="py-2 pr-3 font-semibold text-slate-800">
+                              {formatEuro(calc.maxMortgage)}
+                            </td>
+                            <td className="py-2 pr-3 text-slate-600">
+                              {(calc.woonquote * 100).toFixed(1).replace('.', ',')}%
+                            </td>
+                            <td className="py-2 pr-3 text-slate-600">
+                              {formatEuro(calc.maxWoonlastMonthly)}
+                            </td>
+                            <td className="py-2 pr-3 text-slate-600">
+                              {formatEuro(calc.monthlyDebt)}
+                            </td>
+                            <td className="py-2"></td>
+                          </tr>
+                          {scenarios.map((s) => {
+                            const summary = computeScenarioSummary(fillDossierDefaults(s.snapshot));
+                            return (
+                              <tr key={s.id} className="border-b border-slate-50">
+                                <td className="py-2 pr-3">
+                                  <input
+                                    type="text"
+                                    value={s.name}
+                                    onChange={(e) => renameScenario(s.id, e.target.value)}
+                                    className="w-full min-w-[100px] rounded border border-transparent bg-transparent px-1 py-0.5 font-medium text-slate-700 hover:border-slate-200 focus:border-blue-400 focus:outline-none"
+                                  />
+                                </td>
+                                <td className="py-2 pr-3 font-semibold text-slate-800">
+                                  {formatEuro(summary.maxMortgage)}
+                                </td>
+                                <td className="py-2 pr-3 text-slate-600">
+                                  {(summary.woonquote * 100).toFixed(1).replace('.', ',')}%
+                                </td>
+                                <td className="py-2 pr-3 text-slate-600">
+                                  {formatEuro(summary.maxWoonlastMonthly)}
+                                </td>
+                                <td className="py-2 pr-3 text-slate-600">
+                                  {formatEuro(summary.monthlyDebt)}
+                                </td>
+                                <td className="py-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => loadScenario(s.id)}
+                                      title="Laden als actieve invoer"
+                                      className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-blue-600"
+                                    >
+                                      <FolderOpen className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteScenario(s.id)}
+                                      title="Verwijderen"
+                                      className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-red-600"
+                                    >
+                                      <X className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <p className="mt-2 text-[11px] text-slate-400">
+                        "Huidig" toont de volledige berekening (incl. AOW-toets en
+                        energiebonus). Opgeslagen scenario's tonen de kern-Nibud-uitkomst
+                        (inkomen, schulden, energiebonus) zonder de AOW-toets of de
+                        bijleenruimte-keten van een bestaande woning — bij een verschil is
+                        de volledige berekening (na laden) bindend, niet dit tabelgetal.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         <div className="mt-8">
