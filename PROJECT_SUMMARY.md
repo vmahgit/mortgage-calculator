@@ -1,5 +1,32 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Laatste sessie: Fase 2 (geleide intake) + Fase 3 (status-stepper)
+- **Weergavemodus geleid/expert** (`uiMode`, default `geleid`). Onthouden in een eigen,
+  lichte localStorage-sleutel `UI_MODE_STORAGE_KEY` (`mortgageUiMode:v1`) — bewust NIET in
+  het dossier, zodat een gedeelde link geen modus oplegt en scenario-snapshots schoon
+  blijven. Toggle staat rechtsboven in de header (`Geleid` = Wand2-icoon, `Expert` =
+  SlidersHorizontal). `const guided = uiMode === 'geleid';`.
+- **Geleide modus = conditionele secties**: de "Uw situatie"-kaart heet dan "Intake" en
+  heeft een extra vertakkende vraag *"Heeft u een tweede woning met eigen hypotheekschuld?"*
+  (zet `hasSecondHome` + `showSecondHome`). In geleide modus renderen alleen de relevante
+  kaarten: `sectie-scenarios` is verborgen (`{!guided && (…)}`) en `sectie-tweede-woning`
+  alleen bij `hasSecondHome` (`{(!guided || hasSecondHome) && (…)}`). Starter/doorstromer
+  (`hasExistingHome`) en nieuwbouw→`sectie-bouwdepot` (`propertyUsage`) volgden die vlaggen
+  al. **Expert-modus = de volledige scroll-pagina** met alles zichtbaar (scenario's + tweede
+  woning altijd), exact het oude gedrag.
+- **Fase 3-stepper** (`src/SectionRail.jsx`, default export herschreven; `useScrollSpy`
+  ongewijzigd): de stippen-rail is nu een verticale stepper met voortgangslijn + **per-stap-
+  status**, gevoed door bestaande afleidingen. `railSections` (in `MortgageCalculator.jsx`)
+  levert nu per sectie een `status`: `done` (✓ emerald) / `attention` (⚠ amber, uit
+  `isOverIndebted`, `cappedByPropertyValue`, `!withinCapacityAfterFamilyLoan`,
+  `restschuldTekort>0`) / `ignored` (– grijs, optionele lege sectie) / `todo` (genummerd).
+  In geleide modus filtert `railSections` de `guidedHidden`-secties eruit. Labels inline
+  vanaf 2xl, hover-tooltip op xl; nodes + lijn liggen buiten de `max-w-6xl`-content.
+- **Valkuil gefixt deze sessie**: een node met zowel `bg-white` als `${style.bg}`
+  (`bg-emerald-500`) → Tailwind liet `bg-white` winnen, dus "done"-nodes renderden wit.
+  Losse `bg-white` verwijderd; elke status levert nu zelf zijn `bg`. Bij zulke
+  conditionele-kleur-classNames: geen concurrerende basis-utility naast de dynamische zetten.
+
 **Laatste commit**: `db8d944` — bekijk `git log --oneline` voor de volledige geschiedenis
 (80+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
 Working tree is schoon; alles hieronder staat al gepusht naar GitHub

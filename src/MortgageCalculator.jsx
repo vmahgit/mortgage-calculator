@@ -31,6 +31,8 @@ import {
   Save,
   FolderOpen,
   X,
+  Wand2,
+  SlidersHorizontal,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
@@ -372,6 +374,9 @@ const DOSSIER_DEFAULTS = {
 const DOSSIER_FIELD_NAMES = Object.keys(DOSSIER_DEFAULTS);
 const DOSSIER_STORAGE_KEY = 'mortgageDossier:v1';
 const SCENARIOS_STORAGE_KEY = 'mortgageScenarios:v1';
+// Losstaande, lichte voorkeur voor de weergavemodus (geleid/expert) — bewust NIET in het
+// dossier, zodat een gedeelde link geen modus oplegt (zie uiMode in de vorm).
+const UI_MODE_STORAGE_KEY = 'mortgageUiMode:v1';
 
 // Vult een (mogelijk onvolledig, bijv. van een oudere link) dossier-object aan met
 // defaults voor ontbrekende velden, zodat laden nooit een veld ongedefinieerd laat.
@@ -1599,6 +1604,32 @@ function MortgageCalculatorForm({ onReset }) {
   const [showAanvullendeHypotheek, setShowAanvullendeHypotheek] = useState(true);
   const [showDoubleCostsTest, setShowDoubleCostsTest] = useState(false);
   const [showSources, setShowSources] = useState(false);
+  // Weergavemodus (Fase 2): 'geleid' toont een op de intake toegesneden set secties;
+  // 'expert' toont de volledige scroll-pagina met alles erop en eraan (scenario's, tweede
+  // woning altijd beschikbaar, enz.). De keuze wordt onthouden in een eigen, lichte
+  // localStorage-sleutel (los van het financiële dossier, zodat een gedeelde link niemands
+  // modus-voorkeur oplegt en scenario-snapshots schoon blijven). Default 'geleid'.
+  const [uiMode, setUiMode] = useState('geleid');
+  const uiModeHydratedRef = useRef(false);
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(UI_MODE_STORAGE_KEY);
+      if (stored === 'geleid' || stored === 'expert') setUiMode(stored);
+    } catch {
+      // localStorage onbeschikbaar (privénavigatie e.d.) — blijf bij de default 'geleid'.
+    } finally {
+      uiModeHydratedRef.current = true;
+    }
+  }, []);
+  useEffect(() => {
+    if (!uiModeHydratedRef.current) return;
+    try {
+      window.localStorage.setItem(UI_MODE_STORAGE_KEY, uiMode);
+    } catch {
+      // Zie boven: dan wordt de modus simpelweg niet onthouden tussen bezoeken.
+    }
+  }, [uiMode]);
+  const guided = uiMode === 'geleid';
   const [hasExistingHome, setHasExistingHome] = useState(true);
   // Tweede woning met een eigen, los van de verhuizing staande hypotheekschuld —
   // onafhankelijk van de "huidige woning" hierboven (die gaat over de woning die u
@@ -3395,25 +3426,108 @@ function MortgageCalculatorForm({ onReset }) {
   // incl. de secties die de chipbalk (bewust compacter) niet toont zoals "Uw situatie" en
   // "Kosten koper". Afhankelijk van hasExistingHome is het óf de starters- óf de
   // doorstromers-hypotheekkaart de voorlaatste stop vóór het resultaat.
-  const railSections = useMemo(
-    () => [
-      { id: 'sectie-situatie', label: 'Uw situatie' },
-      { id: 'sectie-scenarios', label: "Scenario's" },
-      { id: 'sectie-beoogde-woning', label: 'Beoogde woning' },
-      { id: 'sectie-inkomen', label: 'Inkomen' },
-      { id: 'sectie-schulden', label: 'Schulden' },
-      { id: 'sectie-tweede-woning', label: 'Tweede woning' },
-      { id: 'sectie-kosten-koper', label: 'Kosten koper' },
+  // Secties + per-stap-status voor de stepper (Fase 3). De status leunt volledig op de
+  // validatie-afleidingen die de calculator toch al berekent (isOverIndebted,
+  // cappedByPropertyValue, withinCapacityAfterFamilyLoan, restschuldTekort, …) — hier
+  // alleen vertaald naar done / attention / ignored / todo (zie SectionRail). In geleide
+  // modus (Fase 2) tonen we alleen de secties die bij de intake-antwoorden passen
+  // (`guidedHidden` eruit gefilterd); expert-modus toont alles.
+  const railSections = useMemo(() => {
+    const hasAnyDebt =
+      safeNum(debt1) + safeNum(debt2) + safeNum(studyDebt1) + safeNum(studyDebt2) > 0;
+    const all = [
+      { id: 'sectie-situatie', label: guided ? 'Intake' : 'Uw situatie', status: 'done' },
+      {
+        id: 'sectie-scenarios',
+        label: "Scenario's",
+        status: scenarios.length > 0 ? 'done' : 'ignored',
+        guidedHidden: true,
+      },
+      {
+        id: 'sectie-beoogde-woning',
+        label: 'Beoogde woning',
+        status: safeNum(purchasePrice) > 0 ? 'done' : 'todo',
+      },
+      {
+        id: 'sectie-inkomen',
+        label: 'Inkomen',
+        status: calc.combinedIncome > 0 ? 'done' : 'todo',
+      },
+      {
+        id: 'sectie-schulden',
+        label: 'Schulden',
+        status: !incomeStepDone
+          ? 'todo'
+          : calc.isOverIndebted
+            ? 'attention'
+            : hasAnyDebt
+              ? 'done'
+              : 'ignored',
+      },
+      {
+        id: 'sectie-tweede-woning',
+        label: 'Tweede woning',
+        status: safeNum(secondHomeValue) > 0 ? 'done' : 'ignored',
+        guidedHidden: !hasSecondHome,
+      },
+      { id: 'sectie-kosten-koper', label: 'Kosten koper', status: 'done' },
       ...(propertyUsage === 'nieuwbouw'
-        ? [{ id: 'sectie-bouwdepot', label: 'Bouwdepot' }]
+        ? [
+            {
+              id: 'sectie-bouwdepot',
+              label: 'Bouwdepot',
+              status: safeNum(bouwdepotAmount) > 0 ? 'done' : 'ignored',
+            },
+          ]
         : []),
       hasExistingHome
-        ? { id: 'sectie-huidige-woning', label: 'Huidige woning' }
-        : { id: 'sectie-starter-hypotheek', label: 'Uw hypotheek' },
-      { id: 'sectie-resultaat', label: 'Resultaat' },
-    ],
-    [hasExistingHome, propertyUsage]
-  );
+        ? {
+            id: 'sectie-huidige-woning',
+            label: 'Huidige woning',
+            status:
+              currentMortgage.restschuldTekort > 0 ||
+              !combinedGapCalc.withinCapacityAfterFamilyLoan
+                ? 'attention'
+                : safeNum(marketValue) > 0
+                  ? 'done'
+                  : 'todo',
+          }
+        : {
+            id: 'sectie-starter-hypotheek',
+            label: 'Uw hypotheek',
+            status: calc.cappedByPropertyValue
+              ? 'attention'
+              : safeNum(purchasePrice) > 0 && incomeStepDone
+                ? 'done'
+                : 'todo',
+          },
+      {
+        id: 'sectie-resultaat',
+        label: 'Resultaat',
+        status: overallAffordable ? 'done' : 'attention',
+      },
+    ];
+    return guided ? all.filter((s) => !s.guidedHidden) : all;
+  }, [
+    guided,
+    hasExistingHome,
+    propertyUsage,
+    hasSecondHome,
+    incomeStepDone,
+    overallAffordable,
+    calc,
+    combinedGapCalc,
+    currentMortgage,
+    purchasePrice,
+    marketValue,
+    secondHomeValue,
+    bouwdepotAmount,
+    debt1,
+    debt2,
+    studyDebt1,
+    studyDebt2,
+    scenarios.length,
+  ]);
   const railIds = useMemo(() => railSections.map((s) => s.id), [railSections]);
   const { active: activeSectionId, progress: sectionProgress } = useScrollSpy(railIds);
 
@@ -3644,6 +3758,41 @@ function MortgageCalculatorForm({ onReset }) {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <div
+              role="tablist"
+              aria-label="Weergavemodus"
+              className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1"
+              title="Geleid toont alleen de secties die bij uw situatie passen; Expert toont de volledige pagina met alle opties."
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={guided}
+                onClick={() => setUiMode('geleid')}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                  guided
+                    ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Wand2 className="h-3.5 w-3.5" />
+                Geleid
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!guided}
+                onClick={() => setUiMode('expert')}
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all duration-200 ${
+                  !guided
+                    ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Expert
+              </button>
+            </div>
             <button
               type="button"
               onClick={handleExportPdf}
@@ -3694,9 +3843,16 @@ function MortgageCalculatorForm({ onReset }) {
         </div>
 
         <div id="sectie-situatie" className="mb-6 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <span className="text-sm font-medium text-slate-700">Uw situatie</span>
+          <div className="flex items-center gap-2">
+            {guided && <Wand2 className="h-4 w-4 text-blue-600" />}
+            <span className="text-sm font-medium text-slate-700">
+              {guided ? 'Intake' : 'Uw situatie'}
+            </span>
+          </div>
           <p className="mb-4 text-xs text-slate-400">
-            Deze twee keuzes bepalen de vorm van de rest van de berekening.
+            {guided
+              ? 'Beantwoord deze vragen; hieronder verschijnen alleen de onderdelen die bij uw situatie horen. Wilt u alles zien? Zet rechtsboven om naar Expert.'
+              : 'Deze keuzes bepalen de vorm van de rest van de berekening.'}
           </p>
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3755,6 +3911,38 @@ function MortgageCalculatorForm({ onReset }) {
                 </button>
               </div>
             </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+              <p className="text-xs text-slate-500">
+                Heeft u een tweede woning met een eigen hypotheekschuld?
+              </p>
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHasSecondHome(true);
+                    setShowSecondHome(true);
+                  }}
+                  className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    hasSecondHome
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Ja
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHasSecondHome(false)}
+                  className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                    !hasSecondHome
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  Nee
+                </button>
+              </div>
+            </div>
             <div className="border-t border-slate-100 pt-3">
               <CurrencyField
                 id="lenderCapThreshold"
@@ -3769,6 +3957,7 @@ function MortgageCalculatorForm({ onReset }) {
           </div>
         </div>
 
+        {!guided && (
         <div id="sectie-scenarios" className="mb-6 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
           <button
             type="button"
@@ -3918,6 +4107,7 @@ function MortgageCalculatorForm({ onReset }) {
             )}
           </AnimatePresence>
         </div>
+        )}
 
         <div className="mt-8">
           <SectionCard id="sectie-beoogde-woning" title="Beoogde woning" icon={<Home className="h-4 w-4" />} accent="emerald">
@@ -4499,6 +4689,7 @@ function MortgageCalculatorForm({ onReset }) {
               </p>
             </SectionCard>
 
+          {(!guided || hasSecondHome) && (
           <div
             id="sectie-tweede-woning"
             className="overflow-hidden rounded-2xl border border-l-4 border-slate-100 border-l-rose-400 bg-white shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl"
@@ -4827,6 +5018,7 @@ function MortgageCalculatorForm({ onReset }) {
               )}
             </AnimatePresence>
           </div>
+          )}
 
           <div
             id="sectie-kosten-koper"

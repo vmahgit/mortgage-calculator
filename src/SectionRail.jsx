@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
+import { Check, AlertTriangle, Minus } from 'lucide-react';
 
 // offsetTop (via de offsetParent-keten) geeft de positie van een element zoals het in de
 // normale document-flow zou staan — anders dan getBoundingClientRect(), dat bij
@@ -97,56 +98,105 @@ export function useScrollSpy(ids) {
   return { active, progress };
 }
 
-// Desktop: dunne stippen-rail vast aan de linkerrand van het scherm, buiten de
-// content-kolommen om (die zelf al de volle breedte gebruiken tot lg:grid-cols-5). Op
-// kleinere/lagere breedtes (< xl) staat hij uit, dan is de mobiele chipbalk het overzicht.
+// Per-stap-status → node-uiterlijk. De statussen komen uit de validatie-afleidingen die de
+// calculator toch al berekent (isOverIndebted, cappedByPropertyValue, withinCapacity, …),
+// hier alleen vertaald naar een glyph + kleur:
+//   done      ✓  groen   — sectie ingevuld en zonder knelpunt
+//   attention ⚠  amber   — een validatie-afleiding vraagt aandacht (schuldenknelpunt,
+//                          restschuld, financieringsgat, boven aanschafprijs, …)
+//   ignored   –  grijs   — optionele sectie die (nog) niet is ingevuld / niet van toepassing
+//   todo      ○  grijs   — verplichte sectie die nog wacht op invoer
+const STATUS_STYLES = {
+  done: { ring: 'border-emerald-500', bg: 'bg-emerald-500', text: 'text-white' },
+  attention: { ring: 'border-amber-400', bg: 'bg-amber-400', text: 'text-white' },
+  ignored: { ring: 'border-slate-300', bg: 'bg-white', text: 'text-slate-300' },
+  todo: { ring: 'border-slate-300', bg: 'bg-white', text: 'text-slate-300' },
+};
+
+function StatusGlyph({ status }) {
+  if (status === 'done') return <Check className="h-3.5 w-3.5" strokeWidth={3} />;
+  if (status === 'attention') return <AlertTriangle className="h-3 w-3" strokeWidth={2.5} />;
+  if (status === 'ignored') return <Minus className="h-3 w-3" strokeWidth={2.5} />;
+  return null; // todo: lege node
+}
+
+// Desktop: een verticale stepper vast aan de linkerrand, buiten de content-kolommen om.
+// Vervangt de oude stippen-rail: nu genummerde/gestatuste stappen met een doorlopende
+// voortgangslijn en per-stap-status. Op < xl staat hij uit (dan is de mobiele chipbalk het
+// overzicht). Labels staan inline vanaf 2xl (daar is genoeg gutter-ruimte naast de
+// max-w-6xl-kolom); op xl verschijnt het label als hover-tooltip zodat de smalle gutter
+// niet over de content valt.
 export default function SectionRail({ sections, activeId, progress, onNavigate }) {
   return (
-    <div className="pointer-events-none fixed inset-y-0 left-0 z-30 hidden w-14 xl:flex xl:items-center">
-      <div className="pointer-events-auto relative mx-auto flex flex-col items-center">
-        <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-slate-200" />
-        <div
-          className="absolute left-1/2 top-0 w-px -translate-x-1/2 rounded-full bg-gradient-to-b from-blue-500 to-indigo-500 transition-[height] duration-150 ease-linear"
-          style={{ height: `${progress * 100}%` }}
-        />
-        <div className="relative flex flex-col gap-6 py-6">
-          {sections.map((s) => {
+    <nav
+      aria-label="Voortgang"
+      className="pointer-events-none fixed inset-y-0 left-0 z-30 hidden xl:flex xl:items-center"
+    >
+      <div className="pointer-events-auto relative ml-1 flex max-h-[90vh] flex-col overflow-y-auto py-6 pl-1 pr-0 [-ms-overflow-style:none] [scrollbar-width:none] 2xl:ml-5 2xl:pl-2 2xl:pr-2 [&::-webkit-scrollbar]:hidden">
+        <ol className="relative flex flex-col gap-1.5">
+          {/* Doorlopende baan + voortgangsvulling, uitgelijnd op het midden van de nodes (14px). */}
+          <div className="absolute left-[14px] top-4 bottom-4 w-px -translate-x-1/2 bg-slate-200" />
+          <div
+            className="absolute left-[14px] top-4 w-px -translate-x-1/2 rounded-full bg-gradient-to-b from-blue-500 to-indigo-500 transition-[height] duration-150 ease-linear"
+            style={{ height: `calc(${progress * 100}% - 2rem)` }}
+          />
+          {sections.map((s, i) => {
             const isActive = s.id === activeId;
+            const status = s.status || 'todo';
+            const style = STATUS_STYLES[status] || STATUS_STYLES.todo;
             return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => onNavigate(s.id)}
-                aria-label={s.label}
-                aria-current={isActive ? 'true' : undefined}
-                className="group relative flex h-3 w-3 items-center justify-center"
-              >
-                <motion.span
-                  animate={{
-                    scale: isActive ? 1 : 0.55,
-                    backgroundColor: isActive ? '#2563eb' : '#cbd5e1',
-                  }}
-                  whileHover={{ scale: isActive ? 1.15 : 0.85 }}
-                  transition={{ duration: 0.2, ease: 'easeOut' }}
-                  className="block h-3 w-3 rounded-full shadow-sm"
-                />
-                {isActive && (
-                  <motion.span
-                    layoutId="section-rail-ring"
-                    className="absolute inset-0 rounded-full border-2 border-blue-400/50"
-                    initial={{ scale: 1, opacity: 0.6 }}
-                    animate={{ scale: 2.1, opacity: 0 }}
-                    transition={{ duration: 1.1, repeat: Infinity, ease: 'easeOut' }}
-                  />
-                )}
-                <span className="pointer-events-none absolute left-6 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
-                  {s.label}
-                </span>
-              </button>
+              <li key={s.id} className="relative">
+                <button
+                  type="button"
+                  onClick={() => onNavigate(s.id)}
+                  aria-label={`${s.label} — ${status}`}
+                  aria-current={isActive ? 'step' : undefined}
+                  className="group flex items-center gap-3 rounded-lg py-1 pr-1 text-left transition-colors duration-150 2xl:pr-3"
+                >
+                  <span className="relative flex h-7 w-7 flex-shrink-0 items-center justify-center">
+                    {isActive && (
+                      <motion.span
+                        layoutId="section-rail-ring"
+                        className="absolute inset-0 rounded-full border-2 border-blue-400/50"
+                        initial={{ scale: 1, opacity: 0.6 }}
+                        animate={{ scale: 1.9, opacity: 0 }}
+                        transition={{ duration: 1.1, repeat: Infinity, ease: 'easeOut' }}
+                      />
+                    )}
+                    <motion.span
+                      animate={{ scale: isActive ? 1.12 : 1 }}
+                      transition={{ duration: 0.2, ease: 'easeOut' }}
+                      className={`flex h-7 w-7 items-center justify-center rounded-full border-2 shadow-sm ring-2 ring-transparent transition-colors duration-200 ${
+                        style.ring
+                      } ${style.bg} ${style.text} ${
+                        isActive ? 'ring-blue-200' : ''
+                      }`}
+                    >
+                      {status === 'todo' ? (
+                        <span className="text-[11px] font-semibold text-slate-400">{i + 1}</span>
+                      ) : (
+                        <StatusGlyph status={status} />
+                      )}
+                    </motion.span>
+                  </span>
+                  {/* Inline label vanaf 2xl. */}
+                  <span
+                    className={`hidden max-w-[9rem] truncate text-xs font-medium transition-colors duration-150 2xl:block ${
+                      isActive ? 'text-slate-900' : 'text-slate-500 group-hover:text-slate-800'
+                    }`}
+                  >
+                    {s.label}
+                  </span>
+                  {/* Hover-tooltip op xl (waar de inline labels verborgen zijn). */}
+                  <span className="pointer-events-none absolute left-9 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 2xl:hidden">
+                    {s.label}
+                  </span>
+                </button>
+              </li>
             );
           })}
-        </div>
+        </ol>
       </div>
-    </div>
+    </nav>
   );
 }
