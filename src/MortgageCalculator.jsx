@@ -1315,9 +1315,20 @@ function AmortizationChart({ data }) {
   );
 }
 
-function BudgetBar({ segments, total, marker }) {
-  const safeTotal = Math.max(total, marker || 0, 1);
-  const markerPct = marker != null ? Math.min(100, (marker / safeTotal) * 100) : null;
+// Violet, schuin-gearceerde vulling voor de kosten-koper-zone: bewust géén effen kleur zoals
+// de financieringsbron-segmenten, zodat direct duidelijk is dat dit geen extra bron is maar
+// een kostenpost die een deel van het budget opslokt. Violet sluit aan op de Kosten
+// koper-kaart (border-l-violet-400).
+const KOSTEN_KOPER_HATCH =
+  'repeating-linear-gradient(45deg, rgba(139,92,246,0.60) 0, rgba(139,92,246,0.60) 4px, rgba(139,92,246,0.18) 4px, rgba(139,92,246,0.18) 8px)';
+
+function BudgetBar({ segments, total, marker, markerLabel = 'Aanschafprijs beoogde woning', costZone }) {
+  const zoneEnd = costZone ? costZone.start + costZone.amount : null;
+  const safeTotal = Math.max(total, marker || 0, zoneEnd || 0, 1);
+  const pctOf = (v) => Math.min(100, Math.max(0, (v / safeTotal) * 100));
+  const markerPct = marker != null ? pctOf(marker) : null;
+  const zoneStartPct = costZone ? pctOf(costZone.start) : null;
+  const zoneEndPct = zoneEnd != null ? pctOf(zoneEnd) : null;
 
   return (
     <div className="w-full">
@@ -1339,6 +1350,19 @@ function BudgetBar({ segments, total, marker }) {
             );
           })}
         </div>
+        {/* Kosten-koper-zone: het stuk vanaf de aanschafprijs dat aan kosten koper opgaat en
+            dus niet meer voor de woning zelf beschikbaar is. */}
+        {costZone && zoneEndPct - zoneStartPct > 0 && (
+          <div
+            className="pointer-events-none absolute top-0 h-9 border-x border-violet-500/70"
+            style={{
+              left: `${zoneStartPct}%`,
+              width: `${zoneEndPct - zoneStartPct}%`,
+              backgroundImage: KOSTEN_KOPER_HATCH,
+            }}
+            title={`${costZone.label}: ${formatEuro(costZone.amount)}`}
+          />
+        )}
         {markerPct != null && (
           <div
             className="absolute top-0 flex h-9 flex-col items-center"
@@ -1347,19 +1371,47 @@ function BudgetBar({ segments, total, marker }) {
             <div className="h-9 w-0.5 bg-slate-900" />
           </div>
         )}
+        {/* Tweede markering: totaal benodigd = aanschafprijs + kosten koper. */}
+        {costZone && zoneEndPct != null && zoneEndPct - (markerPct || 0) > 0.3 && (
+          <div
+            className="absolute top-0 flex h-9 flex-col items-center"
+            style={{ left: `${zoneEndPct}%`, transform: 'translateX(-50%)' }}
+          >
+            <div className="h-9 w-0.5 bg-violet-600" />
+          </div>
+        )}
       </div>
       <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
-        {segments.map((seg, i) => (
-          <div key={i} className="flex items-center gap-1.5 text-xs text-slate-600">
-            <span className={`h-2.5 w-2.5 rounded-sm ${seg.dotClassName}`} />
-            {seg.label}: <span className="font-semibold text-slate-800">{formatEuro(seg.value)}</span>
-          </div>
-        ))}
+        {segments.map((seg, i) => {
+          if (Math.max(0, seg.value) <= 0) return null;
+          return (
+            <div key={i} className="flex items-center gap-1.5 text-xs text-slate-600">
+              <span className={`h-2.5 w-2.5 rounded-sm ${seg.dotClassName}`} />
+              {seg.label}: <span className="font-semibold text-slate-800">{formatEuro(seg.value)}</span>
+            </div>
+          );
+        })}
         {marker != null && (
           <div className="flex items-center gap-1.5 text-xs text-slate-600">
             <span className="h-2.5 w-0.5 bg-slate-900" />
-            Aanschafprijs beoogde woning:{' '}
-            <span className="font-semibold text-slate-800">{formatEuro(marker)}</span>
+            {markerLabel}: <span className="font-semibold text-slate-800">{formatEuro(marker)}</span>
+          </div>
+        )}
+        {costZone && (
+          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+            <span
+              className="h-2.5 w-2.5 rounded-sm border border-violet-500/70"
+              style={{ backgroundImage: KOSTEN_KOPER_HATCH }}
+            />
+            {costZone.label}:{' '}
+            <span className="font-semibold text-slate-800">{formatEuro(costZone.amount)}</span>
+          </div>
+        )}
+        {costZone && zoneEnd != null && (
+          <div className="flex items-center gap-1.5 text-xs text-slate-600">
+            <span className="h-2.5 w-0.5 bg-violet-600" />
+            Totaal benodigd (incl. kosten koper):{' '}
+            <span className="font-semibold text-slate-800">{formatEuro(zoneEnd)}</span>
           </div>
         )}
       </div>
@@ -3091,6 +3143,13 @@ function MortgageCalculatorForm({ onReset }) {
       currentMortgage.restschuldTekort;
     const price = safeNum(purchasePrice);
     const remainingRoom = maxBudget - price;
+    // Kosten koper moet óók uit dit budget komen (grotendeels uit eigen geld — je kunt de
+    // overdrachtsbelasting e.d. niet boven 100% LTV meefinancieren), dus het "overgebleven"
+    // t.o.v. alleen de aanschafprijs is te rooskleurig. Volg de includeKostenKoperInCalc-
+    // schakelaar: staat die uit, dan telt kosten koper hier (net als elders) niet mee.
+    const kostenKoper = includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
+    const totalNeeded = price + kostenKoper;
+    const remainingAfterCosts = maxBudget - totalNeeded;
 
     return {
       eigenVermogen,
@@ -3100,8 +3159,11 @@ function MortgageCalculatorForm({ onReset }) {
       maxBudget,
       price,
       remainingRoom,
+      kostenKoper,
+      totalNeeded,
+      remainingAfterCosts,
     };
-  }, [calc, currentMortgage, purchasePrice]);
+  }, [calc, currentMortgage, purchasePrice, includeKostenKoperInCalc]);
 
   // Aflossingsgrafiek: geprojecteerde restschuld van de meegenomen én de nieuwe leningdelen
   // samen, jaar voor jaar over de komende dertig jaar, uitgaande van de huidige rentes,
@@ -7416,12 +7478,16 @@ function MortgageCalculatorForm({ onReset }) {
 
             <BudgetBar
               segments={[
-                {
-                  label: 'Eigen vermogen inbreng',
-                  value: maxBudgetCalc.eigenVermogen,
-                  className: 'bg-emerald-400',
-                  dotClassName: 'bg-emerald-400',
-                },
+                ...(maxBudgetCalc.oudeHypotheek > 0
+                  ? [
+                      {
+                        label: 'Oude hypotheek (meegenomen)',
+                        value: maxBudgetCalc.oudeHypotheek,
+                        className: 'bg-blue-400',
+                        dotClassName: 'bg-blue-400',
+                      },
+                    ]
+                  : []),
                 {
                   label: 'Overwaarde',
                   value: maxBudgetCalc.overwaarde,
@@ -7429,60 +7495,92 @@ function MortgageCalculatorForm({ onReset }) {
                   dotClassName: 'bg-teal-400',
                 },
                 {
-                  label: 'Oude hypotheek (meegenomen)',
-                  value: maxBudgetCalc.oudeHypotheek,
-                  className: 'bg-blue-400',
-                  dotClassName: 'bg-blue-400',
-                },
-                {
                   label: 'Nieuwe hypotheek (max. extra)',
                   value: maxBudgetCalc.nieuweHypotheekMax,
                   className: 'bg-indigo-500',
                   dotClassName: 'bg-indigo-500',
                 },
+                {
+                  label: 'Eigen vermogen inbreng',
+                  value: maxBudgetCalc.eigenVermogen,
+                  className: 'bg-emerald-400',
+                  dotClassName: 'bg-emerald-400',
+                },
               ]}
               total={maxBudgetCalc.maxBudget}
               marker={maxBudgetCalc.price}
+              costZone={
+                maxBudgetCalc.kostenKoper > 0
+                  ? {
+                      start: maxBudgetCalc.price,
+                      amount: maxBudgetCalc.kostenKoper,
+                      label: 'Kosten koper',
+                    }
+                  : null
+              }
             />
 
-            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div
+              className={`mt-6 grid grid-cols-1 gap-4 ${
+                maxBudgetCalc.kostenKoper > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'
+              }`}
+            >
               <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
                 <span className="text-xs text-slate-400">Maximaal aankoopbudget</span>
                 <p className="text-2xl font-bold text-slate-900">
                   {formatEuro(maxBudgetCalc.maxBudget)}
                 </p>
               </div>
-              <div
-                className={`rounded-xl border p-4 ${
-                  maxBudgetCalc.remainingRoom >= 0
-                    ? 'border-emerald-100 bg-emerald-50'
-                    : 'border-red-100 bg-red-50'
-                }`}
-              >
-                <span
-                  className={`text-xs ${
-                    maxBudgetCalc.remainingRoom >= 0 ? 'text-emerald-600' : 'text-red-600'
-                  }`}
-                >
-                  {maxBudgetCalc.remainingRoom >= 0
-                    ? 'Overgebleven ruimte t.o.v. aanschafprijs'
-                    : 'Tekort t.o.v. aanschafprijs'}
-                </span>
-                <p
-                  className={`text-2xl font-bold ${
-                    maxBudgetCalc.remainingRoom >= 0 ? 'text-emerald-700' : 'text-red-700'
-                  }`}
-                >
-                  {formatEuro(Math.abs(maxBudgetCalc.remainingRoom))}
-                </p>
-              </div>
+              {maxBudgetCalc.kostenKoper > 0 && (
+                <div className="rounded-xl border border-violet-100 bg-violet-50 p-4">
+                  <span className="text-xs text-violet-600">Kosten koper (indicatief)</span>
+                  <p className="text-2xl font-bold text-violet-700">
+                    {formatEuro(maxBudgetCalc.kostenKoper)}
+                  </p>
+                </div>
+              )}
+              {(() => {
+                const useAfterCosts = maxBudgetCalc.kostenKoper > 0;
+                const value = useAfterCosts
+                  ? maxBudgetCalc.remainingAfterCosts
+                  : maxBudgetCalc.remainingRoom;
+                const positive = value >= 0;
+                const label = positive
+                  ? useAfterCosts
+                    ? 'Overgebleven ruimte (na woning + kosten koper)'
+                    : 'Overgebleven ruimte t.o.v. aanschafprijs'
+                  : useAfterCosts
+                    ? 'Tekort (na woning + kosten koper)'
+                    : 'Tekort t.o.v. aanschafprijs';
+                return (
+                  <div
+                    className={`rounded-xl border p-4 ${
+                      positive ? 'border-emerald-100 bg-emerald-50' : 'border-red-100 bg-red-50'
+                    }`}
+                  >
+                    <span className={`text-xs ${positive ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {label}
+                    </span>
+                    <p
+                      className={`text-2xl font-bold ${
+                        positive ? 'text-emerald-700' : 'text-red-700'
+                      }`}
+                    >
+                      {formatEuro(Math.abs(value))}
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
 
             <p className="mt-4 text-xs text-slate-400">
-              Nieuwe hypotheek (max. extra) is uw inkomensgebaseerde bijleenruimte, al
-              gecorrigeerd voor eventueel renterisico op leningdelen met een resterende
-              rentevastperiode korter dan 10 jaar. Dit is een theoretisch maximum: het is niet
-              per definitie verstandig om dit volledig te benutten.
+              De gearceerde violette zone laat zien welk deel van uw budget na de aanschafprijs
+              nog naar kosten koper gaat — dat geld (grotendeels eigen middelen) kunt u niet óók
+              aan de woning zelf besteden. Nieuwe hypotheek (max. extra) is uw
+              inkomensgebaseerde bijleenruimte, al gecorrigeerd voor eventueel renterisico op
+              leningdelen met een resterende rentevastperiode korter dan 10 jaar. Dit is een
+              theoretisch maximum: het is niet per definitie verstandig om dit volledig te
+              benutten.
             </p>
           </div>
 
