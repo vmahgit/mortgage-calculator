@@ -365,6 +365,7 @@ const DOSSIER_DEFAULTS = {
   additionalLoanParts: [
     { id: 1, type: 'Aflossingsvrij', principal: '0', rate: 4.0, originalFixedYears: 10 },
   ],
+  additionalLoanTouched: false,
   aflossingsvrijMaxPct: 50,
   scheduleWindowStartMonth: 0,
   scheduleAppreciationPct: 0,
@@ -1791,7 +1792,14 @@ function MortgageCalculatorForm({ onReset }) {
   const [scheduleWindowStartMonth, setScheduleWindowStartMonth] = useState(0);
   const [scheduleAppreciationPct, setScheduleAppreciationPct] = useState(0);
 
+  // Volgt of de gebruiker de aanvullende leningdelen zélf heeft aangepast. Zolang dit false
+  // is, volgen de leningdelen automatisch het benodigde aanvullende bedrag (zie de auto-sync
+  // useEffect verderop), zodat een wijziging in eerdere parameters meteen doorwerkt. Zodra de
+  // gebruiker handmatig iets aanpast wordt dit true en respecteren we hun invoer.
+  const [additionalLoanTouched, setAdditionalLoanTouched] = useState(false);
+
   const addAdditionalLoanPart = () => {
+    setAdditionalLoanTouched(true);
     setAdditionalLoanParts((prev) => {
       if (prev.length >= 2) return prev;
       return [
@@ -1802,10 +1810,12 @@ function MortgageCalculatorForm({ onReset }) {
   };
 
   const removeAdditionalLoanPart = (id) => {
+    setAdditionalLoanTouched(true);
     setAdditionalLoanParts((prev) => (prev.length > 1 ? prev.filter((p) => p.id !== id) : prev));
   };
 
   const updateAdditionalLoanPart = (id, field, value) => {
+    setAdditionalLoanTouched(true);
     setAdditionalLoanParts((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
   };
 
@@ -1904,6 +1914,7 @@ function MortgageCalculatorForm({ onReset }) {
       startDate,
       loanParts,
       additionalLoanParts,
+      additionalLoanTouched,
       aflossingsvrijMaxPct,
       scheduleWindowStartMonth,
       scheduleAppreciationPct,
@@ -1926,7 +1937,7 @@ function MortgageCalculatorForm({ onReset }) {
       familyLoanBufferPct, takeOverMortgage, oldMortgageStance, bridgePeriodMonths,
       includeOwnCapitalInDoubleTest, liquidityBuffer, useBridgeLoan, bridgeLoanAmount,
       bridgeLoanRate, marketValue, saleDiscountPercentage, currentEnergyLabel, originalDebt,
-      startDate, loanParts, additionalLoanParts, aflossingsvrijMaxPct,
+      startDate, loanParts, additionalLoanParts, additionalLoanTouched, aflossingsvrijMaxPct,
       scheduleWindowStartMonth, scheduleAppreciationPct, starterLoanParts,
     ]
   );
@@ -2013,6 +2024,7 @@ function MortgageCalculatorForm({ onReset }) {
     setStartDate(snap.startDate);
     setLoanParts(snap.loanParts);
     setAdditionalLoanParts(snap.additionalLoanParts);
+    setAdditionalLoanTouched(snap.additionalLoanTouched ?? false);
     setAflossingsvrijMaxPct(snap.aflossingsvrijMaxPct);
     setScheduleWindowStartMonth(snap.scheduleWindowStartMonth);
     setScheduleAppreciationPct(snap.scheduleAppreciationPct);
@@ -2690,11 +2702,19 @@ function MortgageCalculatorForm({ onReset }) {
     // dichten (zoals voorheen). Met limitOwnContribution geeft u aan zélf niet meer dan een
     // bepaald bedrag te willen inleggen (ex kosten koper, die lopen via de kaart Kosten
     // koper) — het restant van het gat moet dan via de hypotheek of andere bronnen komen.
+    // Kosten koper worden (grotendeels) uit eigen middelen betaald en kunnen niet boven 100%
+    // LTV worden meegefinancierd. Meegeteld (includeKostenKoperInCalc) verlagen ze dus het
+    // eigen vermogen dat nog voor het financieringsgat beschikbaar is — dat verschuift het gat
+    // naar de aanvullende hypotheek en laat, bij ontoereikende capaciteit, de haalbaarheid
+    // kantelen. Zo blijft dit consistent met "Overgebleven ruimte na woning + kosten koper" in
+    // het Maximaal-aankoopbudget-blok (en met de aan/uit-schakelaar bij Kosten koper).
+    const kostenKoperCash = includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
+    const ownCapitalForGap = Math.max(0, calc.totalOwnCapital - kostenKoperCash);
     const ownContributionCap = limitOwnContribution
       ? Math.max(0, safeNum(desiredMaxOwnContribution))
       : Infinity;
     const ownCapitalApplied = Math.min(
-      calc.totalOwnCapital,
+      ownCapitalForGap,
       Math.max(0, gap),
       ownContributionCap
     );
@@ -2766,9 +2786,68 @@ function MortgageCalculatorForm({ onReset }) {
     useFamilyLoan,
     familyLoanAmount,
     familyLoanRate,
+    includeKostenKoperInCalc,
   ]);
 
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
+  // Auto-sync aanvullende leningdelen: zolang de gebruiker ze niet zelf heeft aangepast
+  // (additionalLoanTouched), volgen ze automatisch het benodigde aanvullende bedrag
+  // (combinedGapCalc.additionalMortgage). Zo werkt een wijziging in eerdere parameters
+  // (aanschafprijs, inkomen, eigen geld, kosten koper, …) meteen door in dit blok, in plaats
+  // van dat de eerder ingevulde leningdelen blijven staan tot je "Automatisch verdelen" klikt.
+  // De verdeling is dezelfde als die knop (eerst aflossingsvrij tot de bancaire ruimte, rest
+  // annuïteit); de berekening gebeurt hier los van additionalLoanCalc om een render-lus te
+  // vermijden.
+  useEffect(() => {
+    if (!hasExistingHome || additionalLoanTouched) return;
+    const needed = Math.max(0, Math.round(combinedGapCalc.additionalMortgage));
+    const priceNum = safeNum(purchasePrice);
+    const portedAflossingsvrij = takeOverMortgage
+      ? loanParts
+          .filter((p) => p.type === 'Aflossingsvrij')
+          .reduce((s, p) => s + safeNum(p.principal), 0)
+      : 0;
+    const room = Math.max(0, priceNum * (aflossingsvrijMaxPct / 100) - portedAflossingsvrij);
+    const aflossingsvrijPortion = Math.min(room, needed);
+    const restPortion = needed - aflossingsvrijPortion;
+    const parts = [];
+    if (aflossingsvrijPortion > 0) {
+      parts.push({
+        id: 1,
+        type: 'Aflossingsvrij',
+        principal: String(Math.round(aflossingsvrijPortion)),
+        rate: 4.0,
+        originalFixedYears: 10,
+      });
+    }
+    if (restPortion > 0 || parts.length === 0) {
+      parts.push({
+        id: 2,
+        type: 'Annuïteit',
+        principal: String(Math.round(restPortion)),
+        rate: 4.0,
+        originalFixedYears: 10,
+      });
+    }
+    setAdditionalLoanParts((prev) => {
+      const same =
+        prev.length === parts.length &&
+        prev.every(
+          (p, i) =>
+            p.type === parts[i].type && safeNum(p.principal) === safeNum(parts[i].principal)
+        );
+      return same ? prev : parts;
+    });
+  }, [
+    hasExistingHome,
+    additionalLoanTouched,
+    combinedGapCalc.additionalMortgage,
+    purchasePrice,
+    takeOverMortgage,
+    loanParts,
+    aflossingsvrijMaxPct,
+  ]);
 
   // Scenario-analyse: wat betekent een hogere of lagere bieding t.o.v. de aanschafprijs
   // voor het aanvullend te lenen bedrag en de bruto/netto maandlast? Bij een bestaande
@@ -3030,6 +3109,9 @@ function MortgageCalculatorForm({ onReset }) {
       });
     }
     setAdditionalLoanParts(parts);
+    // Hervat automatisch volgen: na "Automatisch verdelen" werken latere wijzigingen in
+    // eerdere parameters weer direct door (tot de gebruiker opnieuw handmatig aanpast).
+    setAdditionalLoanTouched(false);
   };
 
   // Starters-toets: benodigde hypotheek = aanschafprijs min ingebracht eigen vermogen,

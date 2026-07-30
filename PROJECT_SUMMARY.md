@@ -1,5 +1,24 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Bugfixes: kosten-koper-propagatie + auto-sync aanvullende hypotheek
+- **Kosten koper werkt nu consistent door**: `combinedGapCalc` trok kosten koper nergens af,
+  terwijl het Maximaal-aankoopbudget-blok wél een "Tekort na woning + kosten koper" toonde —
+  dus de topstatus zei "Haalbaar" terwijl het budgetblok een tekort liet zien. Fix: in
+  `combinedGapCalc` is het voor het financieringsgat beschikbare eigen vermogen nu
+  `max(0, totalOwnCapital − kostenKoperCash)` met `kostenKoperCash = includeKostenKoperInCalc
+  ? calc.kostenKoper.total : 0`. Zo verschuift kosten koper het gat naar de aanvullende
+  hypotheek en kantelt de haalbaarheid mee (dep `includeKostenKoperInCalc` toegevoegd). Met
+  de standaard-testdata kantelt het default-scenario daardoor naar "Nog niet haalbaar"
+  (€4.898 tekort) — dat is de eerlijke uitkomst zodra kosten koper meetelt.
+- **Aanvullende leningdelen volgen nu automatisch**: `additionalLoanParts` bleven op hun oude
+  bedrag staan als je eerdere parameters veranderde (je moest "Automatisch verdelen" klikken).
+  Nieuw: `additionalLoanTouched` (in het dossier). Zolang false, houdt een useEffect de
+  leningdelen gelijk aan `combinedGapCalc.additionalMortgage` (zelfde verdeling als de knop:
+  eerst aflossingsvrij tot de bancaire ruimte, rest annuïteit; berekend los van
+  `additionalLoanCalc` om een render-lus te vermijden). Handmatig een leningdeel aanpassen zet
+  touched=true (dan blijft je invoer staan, met de bestaande "wijkt af"-waarschuwing);
+  "Automatisch verdelen" zet touched weer op false en hervat het automatisch volgen.
+
 ## Laatste sessie: Fase 2 (geleide intake) + Fase 3 (status-stepper)
 - **Weergavemodus geleid/expert** (`uiMode`, default `geleid`). Onthouden in een eigen,
   lichte localStorage-sleutel `UI_MODE_STORAGE_KEY` (`mortgageUiMode:v1`) — bewust NIET in
