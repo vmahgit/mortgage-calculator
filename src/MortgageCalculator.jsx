@@ -590,8 +590,10 @@ function LiquidityToggle({ amount, liquid, onChange }) {
 }
 
 function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hint, min = 0, max }) {
-  // Klemt de waarde binnen [min, max] zodra er een geldig getal staat, zodat onzinnige
-  // invoer (negatieve leeftijden, absurd hoge waarden) niet in de berekening terechtkomt.
+  // Klemt tijdens het typen alleen de max (voorkomt absurd hoge invoer zonder het typen van
+  // een lagere waarde te blokkeren); de min wordt pas bij het verlaten van het veld
+  // toegepast, zodat je bijv. van 36 naar 28 kunt tikken zonder dat elke tussenstap al op
+  // min wordt vastgezet.
   const handleChange = (e) => {
     const raw = e.target.value;
     if (raw === '') {
@@ -604,9 +606,18 @@ function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hi
       return;
     }
     let clamped = num;
-    if (min !== undefined && clamped < min) clamped = min;
     if (max !== undefined && clamped > max) clamped = max;
     onChange(String(clamped));
+  };
+
+  const handleBlur = () => {
+    if (value === '' || value === undefined) return;
+    const num = parseFloat(value);
+    if (isNaN(num)) return;
+    let clamped = num;
+    if (min !== undefined && clamped < min) clamped = min;
+    if (max !== undefined && clamped > max) clamped = max;
+    if (clamped !== num) onChange(String(clamped));
   };
 
   return (
@@ -624,6 +635,7 @@ function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hi
           max={max}
           value={value}
           onChange={handleChange}
+          onBlur={handleBlur}
           placeholder={placeholder}
           className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
         />
@@ -2811,13 +2823,14 @@ function MortgageCalculatorForm({ onReset }) {
     const room = Math.max(0, priceNum * (aflossingsvrijMaxPct / 100) - portedAflossingsvrij);
     const aflossingsvrijPortion = Math.min(room, needed);
     const restPortion = needed - aflossingsvrijPortion;
+    const currentRate = safeNum(rate);
     const parts = [];
     if (aflossingsvrijPortion > 0) {
       parts.push({
         id: 1,
         type: 'Aflossingsvrij',
         principal: String(Math.round(aflossingsvrijPortion)),
-        rate: 4.0,
+        rate: currentRate,
         originalFixedYears: 10,
       });
     }
@@ -2826,7 +2839,7 @@ function MortgageCalculatorForm({ onReset }) {
         id: 2,
         type: 'Annuïteit',
         principal: String(Math.round(restPortion)),
-        rate: 4.0,
+        rate: currentRate,
         originalFixedYears: 10,
       });
     }
@@ -2835,7 +2848,9 @@ function MortgageCalculatorForm({ onReset }) {
         prev.length === parts.length &&
         prev.every(
           (p, i) =>
-            p.type === parts[i].type && safeNum(p.principal) === safeNum(parts[i].principal)
+            p.type === parts[i].type &&
+            safeNum(p.principal) === safeNum(parts[i].principal) &&
+            safeNum(p.rate) === safeNum(parts[i].rate)
         );
       return same ? prev : parts;
     });
@@ -2847,6 +2862,7 @@ function MortgageCalculatorForm({ onReset }) {
     takeOverMortgage,
     loanParts,
     aflossingsvrijMaxPct,
+    rate,
   ]);
 
   // Scenario-analyse: wat betekent een hogere of lagere bieding t.o.v. de aanschafprijs
@@ -2871,11 +2887,21 @@ function MortgageCalculatorForm({ onReset }) {
 
     const portedDebt = hasExistingHome ? currentMortgage.portedDebt : 0;
     const overwaarde = hasExistingHome ? currentMortgage.usableOverwaarde : 0;
+    const restschuldTekort = hasExistingHome ? currentMortgage.restschuldTekort : 0;
     const portedGrossMonthly = hasExistingHome && takeOverMortgage ? currentMortgage.totalGross : 0;
     const portedTaxBenefit = hasExistingHome && takeOverMortgage ? currentMortgage.taxBenefit : 0;
     const extraBorrowCapacity = hasExistingHome
       ? currentMortgage.extraBorrowCapacity
       : calc.incomeBasedMax;
+    // Zelfde eigen-middelen-bron als combinedGapCalc: kosten koper gaan er (indien
+    // meegeteld) eerst af, en een eventuele eigen-inleg-limiet begrenst wat hiervan nog voor
+    // het gat wordt ingezet. Zonder deze twee zou het 0%-scenario hieronder afwijken van de
+    // headline "aanvullend te lenen" bij de aanschafprijs.
+    const kostenKoperCash = includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
+    const ownCapitalForGapBase = Math.max(0, calc.totalOwnCapital - kostenKoperCash);
+    const ownContributionCap = limitOwnContribution
+      ? Math.max(0, safeNum(desiredMaxOwnContribution))
+      : Infinity;
 
     // Huidige samenstelling van de aanvullende leningdelen (som + per deel het aandeel),
     // zodat die verhouding naar elk scenario geschaald kan worden.
@@ -2915,10 +2941,14 @@ function MortgageCalculatorForm({ onReset }) {
       // voor het gewone financieringsgat.
       const financeablePrice = Math.min(price, basePrice);
       const overbidExtra = Math.max(0, price - basePrice);
-      const gap = financeablePrice - portedDebt - overwaarde;
-      const ownCapitalForGap = Math.min(calc.totalOwnCapital, Math.max(0, gap));
-      const additionalMortgage = Math.max(0, gap - calc.totalOwnCapital);
-      const remainingOwnCapital = calc.totalOwnCapital - ownCapitalForGap;
+      const gap = financeablePrice - portedDebt - overwaarde + restschuldTekort;
+      const ownCapitalForGap = Math.min(
+        ownCapitalForGapBase,
+        Math.max(0, gap),
+        ownContributionCap
+      );
+      const additionalMortgage = Math.max(0, gap - ownCapitalForGap);
+      const remainingOwnCapital = calc.totalOwnCapital - kostenKoperCash - ownCapitalForGap;
       const insufficientCashForOverbid = overbidExtra > remainingOwnCapital;
 
       const { grossMonthly: newGrossMonthly, taxBenefit: newTaxBenefit } =
@@ -2962,6 +2992,9 @@ function MortgageCalculatorForm({ onReset }) {
     additionalLoanParts,
     todayIso,
     includeEwfInNetCalc,
+    includeKostenKoperInCalc,
+    limitOwnContribution,
+    desiredMaxOwnContribution,
   ]);
 
   const additionalLoanCalc = useMemo(() => {
@@ -3089,13 +3122,14 @@ function MortgageCalculatorForm({ onReset }) {
     const needed = Math.max(0, combinedGapCalc.additionalMortgage);
     const aflossingsvrijPortion = Math.min(additionalLoanCalc.aflossingsvrijRoomRemaining, needed);
     const restPortion = needed - aflossingsvrijPortion;
+    const currentRate = safeNum(rate);
     const parts = [];
     if (aflossingsvrijPortion > 0) {
       parts.push({
         id: 1,
         type: 'Aflossingsvrij',
         principal: String(Math.round(aflossingsvrijPortion)),
-        rate: 4.0,
+        rate: currentRate,
         originalFixedYears: 10,
       });
     }
@@ -3104,7 +3138,7 @@ function MortgageCalculatorForm({ onReset }) {
         id: 2,
         type: 'Annuïteit',
         principal: String(Math.round(restPortion)),
-        rate: 4.0,
+        rate: currentRate,
         originalFixedYears: 10,
       });
     }

@@ -53,13 +53,17 @@ export function getToetsinkomen({
       (v) => v !== '' && v !== null && v !== undefined && num(v) > 0
     ).length;
     insufficientHistory = filledYears < 3;
-    const average = (years[0] + years[1] + years[2]) / 3;
+    // Middel alleen over de daadwerkelijk ingevulde jaren: bij lege velden (0) altijd door
+    // 3 delen zou het toetsinkomen kunstmatig laag maken (bijv. maar 1 jaar ingevuld →
+    // toetsinkomen op 1/3 van dat jaar), terwijl insufficientHistory al waarschuwt dat de
+    // toets nog onvolledig is.
+    const average = filledYears > 0 ? (years[0] + years[1] + years[2]) / filledYears : 0;
     const lastYear = years[0];
     // Gemiddelde van drie jaar, gemaximeerd op het laatste jaar: een dalend inkomen
     // telt dus tegen het laatste (lagere) jaar, een stijgend inkomen tegen het
     // (lagere) gemiddelde.
-    base = Math.min(average, lastYear);
-    cappedAtLastYear = average > lastYear;
+    base = lastYear > 0 ? Math.min(average, lastYear) : average;
+    cappedAtLastYear = lastYear > 0 && average > lastYear;
   } else {
     base = num(income);
   }
