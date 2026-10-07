@@ -1,5 +1,32 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026: kort antwoord, haalbaarheids-solver, restschuld per vandaag
+- **Pure rekenketen**: `computeCalc` / `computeCurrentMortgage` / `computeCombinedGap` /
+  `computeStarterGap` staan nu op moduleniveau en werken op een dossier-object; de component
+  roept ze aan via `useMemo(() => …(dossierSnapshot))`. Bij de verplaatsing output-identiek
+  geverifieerd op zes scenario's. `evaluateAffordability(d)` is hét haalbaarheidsoordeel
+  (chip, resultaat, rail, mobiele balk en solver gebruiken allemaal hetzelfde).
+- **Solver** (`solveAffordabilityLevers`): binair zoeken op een raster — maximale haalbare
+  aanschafprijs (€1.000), benodigd extra liquide eigen geld (€1, via de
+  `extraLiquidCapital`-optie van `computeCalc`) en of 10+ jaar rentevast helpt. ~0,8 ms per
+  volledige solve. Getoond als "Zo wordt het haalbaar" / "Uw ruimte" met Toepassen-knoppen.
+- **Resultaatpaneel**: status + één zin + hoofdbedrag + hefbomen bovenaan; de rest achter
+  "Toon alle details" (standaard dicht in Geleid, open in Expert). "Bewaar als scenario" en
+  "Vergelijk (n)" in het paneel; de scenario-sectie verschijnt in Geleid zodra er ≥1 is.
+- **Gedragswijzigingen**: starters-haalbaarheid telt nu eigen geld ná kosten koper mee (was:
+  inkomen alleen ≥ aanschafprijs); geldverstrekkersmaximum is ook voor starters een harde
+  grens; leeg maximumveld = €1 mln (was €0) via `getLenderCap`.
+- **Bestaande leningdelen = hoofdsom bij aanvang**: de restschuld wordt per de dag van gebruik
+  berekend (`toCurrentLoanParts`, 30 jaar looptijd vanaf de ingangsdatum, geen extra
+  aflossingen). Oude dossiers/links (zonder `loanPartsBasis: 'aanvang'`) worden in
+  `fillDossierDefaults` teruggerekend zodat hun restschuld van vandaag gelijk blijft. Het losse
+  veld "Oorspronkelijke hypotheekschuld" is vervallen; het is nu de som van de leningdelen.
+- **Test-tip**: in de preview-pane is `document.hidden` vaak true — dan lopen
+  `requestAnimationFrame`-animaties (AnimatedEuro, exit-animaties) niet. Lees getallen buiten
+  AnimatedEuro om en check uitklapstatus via `aria-expanded`.
+- **Volgende stap die nu klein is**: de scenario-vergelijkingstabel via
+  `evaluateAffordability` laten rekenen (nu nog de vereenvoudigde `computeScenarioSummary`).
+
 ## Bugfixes: kosten-koper-propagatie + auto-sync aanvullende hypotheek
 - **Kosten koper werkt nu consistent door**: `combinedGapCalc` trok kosten koper nergens af,
   terwijl het Maximaal-aankoopbudget-blok wél een "Tekort na woning + kosten koper" toonde —
@@ -46,7 +73,7 @@
   Losse `bg-white` verwijderd; elke status levert nu zelf zijn `bg`. Bij zulke
   conditionele-kleur-classNames: geen concurrerende basis-utility naast de dynamische zetten.
 
-**Laatste commit**: `db8d944` — bekijk `git log --oneline` voor de volledige geschiedenis
+**Laatste commit**: zie `git log --oneline` voor de volledige geschiedenis
 (80+ commits, elke stap apart, dus alles is terug te draaien met `git revert <hash>`).
 Working tree is schoon; alles hieronder staat al gepusht naar GitHub
 (`vmahgit/mortgage-calculator`, branch `main`) én live op Vercel.

@@ -106,6 +106,11 @@ const TOETSRENTE = 5.0;
 // een redelijke default; gebruikers met een afwijkend maximum bij hun eigen
 // geldverstrekker kunnen dit zelf aanpassen (zie lenderCapThreshold state).
 const LENDER_CAP_THRESHOLD_DEFAULT = 1000000;
+
+// Het veld is optioneel: leeg betekent de standaardgrens, niet een plafond van €0.
+function getLenderCap(value) {
+  return String(value ?? '').trim() === '' ? LENDER_CAP_THRESHOLD_DEFAULT : safeNum(value);
+}
 // Wegingsfactor overige schulden: 2% per maand van het schuldbedrag, de gangbare norm
 // voor consumptief krediet (doorlopend krediet, persoonlijke lening).
 const OTHER_DEBT_MONTHLY_WEIGHT = 0.02;
@@ -201,6 +206,30 @@ function projectRemainingBalance(principal, ratePct, type, remainingMonthsNow, m
   if (r === 0) return Math.max(0, P - (P / N) * k);
   const balance = (P * (Math.pow(1 + r, N) - Math.pow(1 + r, k))) / (Math.pow(1 + r, N) - 1);
   return Math.max(0, balance);
+}
+
+// Bestaande leningdelen worden ingevoerd met hun hoofdsom bij aanvang; de restschuld volgt uit
+// de maanden sinds de ingangsdatum tot de dag waarop de site gebruikt wordt (30 jaar looptijd,
+// geen extra aflossingen). De rest van de berekening werkt met deze actuele restschuld.
+function toCurrentLoanParts(loanParts, elapsedMonths) {
+  return loanParts.map((part) => ({
+    ...part,
+    principal: String(
+      projectRemainingBalance(part.principal, part.rate, part.type, TERM_MONTHS, elapsedMonths)
+    ),
+  }));
+}
+
+// Omgekeerde van toCurrentLoanParts, voor dossiers van vóór die wijziging: daarin was de
+// ingevoerde hoofdsom de restschuld van dat moment.
+function getOriginalPrincipalFromBalance(balance, ratePct, type, elapsedMonths) {
+  const B = safeNum(balance);
+  const N = TERM_MONTHS;
+  const k = Math.min(Math.max(0, elapsedMonths), N);
+  if (type === 'Aflossingsvrij' || k === 0 || k >= N) return B;
+  const r = safeNum(ratePct) / 100 / 12;
+  if (type === 'Lineair' || r === 0) return B / (1 - k / N);
+  return (B * (Math.pow(1 + r, N) - 1)) / (Math.pow(1 + r, N) - Math.pow(1 + r, k));
 }
 
 function formatDateNL(dateStr) {
@@ -356,12 +385,13 @@ const DOSSIER_DEFAULTS = {
   marketValue: 935000,
   saleDiscountPercentage: 95,
   currentEnergyLabel: 'A',
-  originalDebt: '675000',
   startDate: '2021-01-15',
+  // Hoofdsommen bij aanvang (samen €675.000); de restschuld wordt per vandaag berekend.
   loanParts: [
-    { id: 1, type: 'Annuïteit', principal: '271846', rate: 1.25, originalFixedYears: 10 },
+    { id: 1, type: 'Annuïteit', principal: '320731', rate: 1.25, originalFixedYears: 10 },
     { id: 2, type: 'Aflossingsvrij', principal: '354269', rate: 1.85, originalFixedYears: 20 },
   ],
+  loanPartsBasis: 'aanvang',
   additionalLoanParts: [
     { id: 1, type: 'Aflossingsvrij', principal: '0', rate: 4.0, originalFixedYears: 10 },
   ],
@@ -386,6 +416,19 @@ function fillDossierDefaults(partial) {
   for (const key of DOSSIER_FIELD_NAMES) {
     result[key] = partial && partial[key] !== undefined ? partial[key] : DOSSIER_DEFAULTS[key];
   }
+  // Oudere dossiers (zonder loanPartsBasis) bevatten de restschuld van dat moment als hoofdsom.
+  // Terugrekenen naar de hoofdsom bij aanvang houdt de restschuld van vandaag gelijk aan wat
+  // er destijds was ingevuld.
+  if (partial && partial.loanParts !== undefined && partial.loanPartsBasis !== 'aanvang') {
+    const elapsed = getElapsedMonths(result.startDate);
+    result.loanParts = result.loanParts.map((part) => ({
+      ...part,
+      principal: String(
+        Math.round(getOriginalPrincipalFromBalance(part.principal, part.rate, part.type, elapsed))
+      ),
+    }));
+  }
+  result.loanPartsBasis = 'aanvang';
   return result;
 }
 
@@ -452,6 +495,721 @@ function computeScenarioSummary(d) {
     cappedByPropertyValue,
     purchasePrice: priceNum,
     isOverIndebted: monthlyDebt > nibud.maxWoonlastMonthly,
+  };
+}
+
+// Kern-rekenketen als pure functies op een dossier-object: dezelfde code draait voor de
+// live weergave (via useMemo op dossierSnapshot) én voor de haalbaarheids-solver, die
+// hypothetische varianten (andere aanschafprijs, extra eigen geld) doorrekent.
+function computeCalc(d, { extraLiquidCapital = 0 } = {}) {
+  const {
+    income1,
+    income2,
+    rate,
+    fixedRatePeriod,
+    energyLabel,
+    debt1,
+    debt2,
+    studyDebt1,
+    studyDebt2,
+    studyDebtRegime,
+    ownCapital1Liquid,
+    ownCapital2Liquid,
+    useFamilyLoan,
+    familyLoanRepaymentType,
+    familyLoanMonthlyRepayment,
+    age1,
+    age2,
+    ownCapital1,
+    ownCapital2,
+    purchasePrice,
+    propertyUsage,
+    starterExemption1,
+    starterExemption2,
+    notaryCosts,
+    valuationCosts,
+    advisoryCosts,
+    includeBankGuarantee,
+    includeBuyersAgent,
+    includeNhgFee,
+    includeKostenKoperInCalc,
+    partnerAlimony1,
+    partnerAlimony2,
+    pensionIncome1,
+    pensionIncome2,
+    incomeType1,
+    incomeType2,
+    incomeHistory1,
+    incomeHistory2,
+    thirteenthMonth1,
+    thirteenthMonth2,
+    avgBonus1,
+    avgBonus2,
+    hasPartner2,
+    hasSecondHome,
+    secondHomeWillSell,
+    useSecondHomeProceeds,
+    secondHomeValue,
+    secondHomeMortgageDebt,
+    secondHomeInterestRate,
+    secondHomeRepaymentType,
+    secondHomeRemainingYears,
+    secondHomeSaleCostsPct,
+  } = d;
+
+  // Toetsinkomen per aanvrager (toetsinkomen.js): afhankelijk van het inkomenstype
+  // telt het bruto jaarinkomen volledig mee (vast, flex mét intentieverklaring) of
+  // geldt het 3-jaarsgemiddelde gemaximeerd op het laatste jaar (flex zónder
+  // intentieverklaring, ZZP). Betaalde partneralimentatie gaat er bruto (×12)
+  // vanaf, vóór de woonquote-bepaling.
+  const toets1 = getToetsinkomen({
+    incomeType: incomeType1,
+    income: income1,
+    history: incomeHistory1,
+    thirteenthMonth: thirteenthMonth1,
+    avgBonus: avgBonus1,
+    alimonyMonthly: partnerAlimony1,
+  });
+  // Bij één aanvrager telt Partner 2 nergens mee, ongeacht wat er nog in die velden
+  // staat (ze blijven zichtbaar-onzichtbaar bewaard voor als de gebruiker weer twee
+  // aanvragers kiest).
+  const toets2 = hasPartner2
+    ? getToetsinkomen({
+        incomeType: incomeType2,
+        income: income2,
+        history: incomeHistory2,
+        thirteenthMonth: thirteenthMonth2,
+        avgBonus: avgBonus2,
+        alimonyMonthly: partnerAlimony2,
+      })
+    : getToetsinkomen({ incomeType: 'vast', income: 0 });
+  const combinedIncome = toets1.toetsinkomen + toets2.toetsinkomen;
+
+  // A6: bij een rentevastperiode korter dan 10 jaar moet wettelijk met de (hogere)
+  // AFM-toetsrente worden getoetst, nooit met de lagere daadwerkelijke rente.
+  const testRate = getTestRate(rate, fixedRatePeriod);
+  const toetsrenteApplies = testRate !== safeNum(rate);
+
+  const energyBonus = getEnergyBonus(energyLabel);
+
+  // A3: schulden worden eerst omgerekend naar een maandlast (2% van het schuldbedrag
+  // voor overige schulden). Studieschuld wordt sinds 2024 berekend op basis van de
+  // werkelijke DUO-terugbetaalregeling (rente en aflostermijn van het gekozen stelsel),
+  // toegepast op de restschuld.
+  const otherDebtMonthly =
+    (safeNum(debt1) + (hasPartner2 ? safeNum(debt2) : 0)) * OTHER_DEBT_MONTHLY_WEIGHT;
+  const studyDebtMonthly = getStudyDebtMonthlyBurden(
+    safeNum(studyDebt1) + (hasPartner2 ? safeNum(studyDebt2) : 0),
+    studyDebtRegime
+  );
+
+  // Tweede woning met eigen hypotheekschuld: bij aanhouden telt de volledige,
+  // werkelijke bruto maandlast mee als schuld (geen 2%-vuistregel, want het exacte
+  // bedrag is bekend — net als bij een studieschuld). Bij verkoop komt er geen
+  // maandlast bij, maar wel een eenmalige netto-opbrengst (of -tekort) vrij, zie
+  // totalOwnCapital hieronder.
+  const secondHomeMonthly =
+    hasSecondHome && !secondHomeWillSell
+      ? calculateSimpleMortgagePayment(
+          secondHomeMortgageDebt,
+          secondHomeInterestRate,
+          secondHomeRepaymentType,
+          secondHomeRemainingYears
+        )
+      : 0;
+  const secondHomeSaleCosts =
+    hasSecondHome && secondHomeWillSell
+      ? safeNum(secondHomeValue) * (safeNum(secondHomeSaleCostsPct) / 100)
+      : 0;
+  const secondHomeNetProceeds =
+    hasSecondHome && secondHomeWillSell
+      ? safeNum(secondHomeValue) - safeNum(secondHomeMortgageDebt) - secondHomeSaleCosts
+      : 0;
+  const secondHomeShortfall = secondHomeNetProceeds < 0 ? -secondHomeNetProceeds : 0;
+  // Verwachte netto-opbrengst als de tweede woning ooit verkocht wordt, los van de
+  // aanhouden/verkopen-keuze hierboven (die alleen bepaalt of dit bedrag NU al wordt
+  // ingezet). Gebruikt om een familielening die op die toekomstige verkoop anticipeert
+  // ("aflossen zodra de tweede woning verkocht is") van een concreet bedrag te voorzien.
+  const secondHomeNetProceedsIfSold = hasSecondHome
+    ? safeNum(secondHomeValue) -
+      safeNum(secondHomeMortgageDebt) -
+      safeNum(secondHomeValue) * (safeNum(secondHomeSaleCostsPct) / 100)
+    : 0;
+
+  // Een familielening die maandelijks wordt afgelost (in plaats van ineens bij een
+  // toekomstige gebeurtenis, zoals de verkoop van de tweede woning) is een reguliere
+  // verplichting en telt daarom mee als schuld in de Nibud-toets, net als overige
+  // schulden. Bij "ineens" heeft de lening geen invloed op de leencapaciteit.
+  const familyLoanMonthlyDebt =
+    useFamilyLoan && familyLoanRepaymentType === 'maandelijks'
+      ? safeNum(familyLoanMonthlyRepayment)
+      : 0;
+
+  const monthlyDebt =
+    otherDebtMonthly + studyDebtMonthly + secondHomeMonthly + familyLoanMonthlyDebt;
+
+  // A1-A3: echte Nibud-woonquote-systematiek 2026. De woonquote bij (toetsinkomen,
+  // toetsrente) bepaalt de maximale bruto woonlast; de maandlast van bestaande schulden
+  // gaat daar direct vanaf; het restant wordt gekapitaliseerd tegen de toetsrente.
+  const nibud = getIncomeBasedMortgage(combinedIncome, testRate, monthlyDebt);
+  const woonquote = nibud.woonquote;
+
+  // Ter weergave: hoeveel maximale hypotheek er wegvalt door de schulden (de
+  // gekapitaliseerde waarde van de schuldmaandlast tegen de toetsrente).
+  const debtDeduction = monthlyDebt * nibud.annuityFactor;
+
+  // Ter weergave: het specifieke aandeel van de tweede-woning-hypotheek in die
+  // afslag op de leencapaciteit (dezelfde kapitalisatie, alleen voor dit ene deel van
+  // monthlyDebt) — zodat de Nibud-impact van "aanhouden" apart zichtbaar is.
+  const secondHomeCapacityReduction = secondHomeMonthly * nibud.annuityFactor;
+
+  // AOW-toets (Stcrt. 2025-36471): wie binnen 10 jaar de AOW-leeftijd (67) bereikt,
+  // wordt óók getoetst op het verwachte pensioeninkomen, tegen de aparte
+  // AOW-financieringslasttabel (Tabel 2). De laagste van de twee uitkomsten is
+  // bindend. De min() gebeurt hier op maxLoan-niveau — vóór de energiebonus en de
+  // LTV-cap — zodat ook alle afgeleide berekeningen (doorstromer-bijleenruimte,
+  // scenario-analyse, dubbele-lasten-test) automatisch de bindende toets volgen.
+  const pensionApplies1 = safeNum(age1) >= 57;
+  const pensionApplies2 = hasPartner2 && safeNum(age2) >= 57;
+  const pensionApplies = pensionApplies1 || pensionApplies2;
+  const pensionMissing1 = pensionApplies1 && safeNum(pensionIncome1) <= 0;
+  const pensionMissing2 = pensionApplies2 && safeNum(pensionIncome2) <= 0;
+  // Zolang een verwacht pensioeninkomen ontbreekt, wordt er bewust niet op €0
+  // getoetst maar een waarschuwing getoond: de toets is dan onvolledig.
+  const pensionIncomplete = pensionMissing1 || pensionMissing2;
+  const pensionActive = pensionApplies && !pensionIncomplete;
+
+  // Pensioenscenario-inkomen: voor aanvragers binnen 10 jaar van de AOW-leeftijd het
+  // verwachte pensioeninkomen (met dezelfde alimentatie-aftrek), voor de ander het
+  // gewone toetsinkomen.
+  const pensionToets1 = pensionApplies1
+    ? getToetsinkomen({
+        incomeType: 'vast',
+        income: pensionIncome1,
+        alimonyMonthly: partnerAlimony1,
+      })
+    : toets1;
+  const pensionToets2 = pensionApplies2
+    ? getToetsinkomen({
+        incomeType: 'vast',
+        income: pensionIncome2,
+        alimonyMonthly: partnerAlimony2,
+      })
+    : toets2;
+  const pensionCombinedIncome = pensionToets1.toetsinkomen + pensionToets2.toetsinkomen;
+
+  const nibudPension = pensionActive
+    ? getIncomeBasedMortgage(pensionCombinedIncome, testRate, monthlyDebt, { aow: true })
+    : null;
+  const pensionBinding = pensionActive && nibudPension.maxLoan < nibud.maxLoan;
+  const boundMaxLoan = pensionActive
+    ? Math.min(nibud.maxLoan, nibudPension.maxLoan)
+    : nibud.maxLoan;
+
+  // Scenariobedragen voor de vergelijkings-UI (beide inclusief energiebonus, zodat ze
+  // één-op-één vergelijkbaar zijn met de getoonde maximale hypotheek).
+  const currentScenarioMax = Math.max(0, nibud.maxLoan + energyBonus);
+  const pensionScenarioMax = pensionActive
+    ? Math.max(0, nibudPension.maxLoan + energyBonus)
+    : null;
+
+  const incomeBasedMax = Math.max(0, boundMaxLoan + energyBonus);
+
+  // B10: een hypotheek kan nooit hoger zijn dan de aanschafprijs van de woning
+  // (maximale LTV van 100%), ongeacht hoeveel de leencapaciteit op inkomen toelaat.
+  const priceNum = safeNum(purchasePrice);
+  const cappedByPropertyValue = priceNum > 0 && incomeBasedMax > priceNum;
+  const maxMortgage = priceNum > 0 ? Math.min(incomeBasedMax, priceNum) : incomeBasedMax;
+
+  // B11: kosten koper nu consistent gebaseerd op de daadwerkelijke aanschafprijs (net
+  // als verderop bij de financieringsgat-berekening), in plaats van op de maximale
+  // hypotheek zoals voorheen. De overdrachtsbelasting wordt gedifferentieerd bepaald
+  // (startersvrijstelling, gebruiksdoel, nieuwbouw); dit is de ene gedeelde bron
+  // waar ook newHomeCalc en doubleCostsCalc hun tarief uit halen.
+  const kostenKoperBasis = priceNum > 0 ? priceNum : maxMortgage;
+  const transferTaxInfo = getTransferTaxRate({
+    propertyUsage,
+    price: kostenKoperBasis,
+    buyers: [
+      { age: safeNum(age1), exemption: starterExemption1 },
+      ...(hasPartner2 ? [{ age: safeNum(age2), exemption: starterExemption2 }] : []),
+    ].filter((b) => b.age > 0),
+  });
+  const transferTax = kostenKoperBasis * transferTaxInfo.rate;
+
+  // Netto-opbrengst van de verkochte tweede woning: een positieve opbrengst telt
+  // alleen mee als extra eigen middelen als u die ook daadwerkelijk voor déze aankoop
+  // wilt inzetten (useSecondHomeProceeds). Een restschuld-tekort is geen keuze — dat
+  // moet u sowieso uit eigen zak bijleggen bij verkoop — en verlaagt dus altijd de
+  // beschikbare eigen middelen, ongeacht die schakelaar.
+  const secondHomeProceedsApplied =
+    hasSecondHome && secondHomeWillSell && useSecondHomeProceeds
+      ? Math.max(0, secondHomeNetProceeds)
+      : 0;
+  // Ingebracht eigen vermogen telt hier alleen mee als het nu al liquide is. Vermogen dat
+  // pas vrijkomt bij een latere gebeurtenis (bijv. de verkoop van een aangehouden tweede
+  // woning) is nu niet beschikbaar voor deze aankoop en wordt apart bijgehouden als
+  // illiquidOwnCapital — zichtbaar gemaakt in het financieringsgat, in plaats van
+  // stilzwijgend meegeteld alsof het al op de rekening staat.
+  const liquidOwnCapital1 = ownCapital1Liquid ? safeNum(ownCapital1) : 0;
+  const liquidOwnCapital2 = hasPartner2 && ownCapital2Liquid ? safeNum(ownCapital2) : 0;
+  const illiquidOwnCapital =
+    (ownCapital1Liquid ? 0 : safeNum(ownCapital1)) +
+    (hasPartner2 && !ownCapital2Liquid ? safeNum(ownCapital2) : 0);
+  // extraLiquidCapital is alleen voor de solver ("hoeveel extra eigen geld is nodig?");
+  // in de live berekening altijd 0.
+  const totalOwnCapital =
+    liquidOwnCapital1 +
+    liquidOwnCapital2 +
+    secondHomeProceedsApplied -
+    secondHomeShortfall +
+    extraLiquidCapital;
+
+  // Indicatieve hypotheek als basis voor de NHG-borgtochtprovisie: wat er na inzet van
+  // het eigen vermogen gefinancierd moet worden, begrensd door de maximale hypotheek.
+  const nhgMortgageBasis = Math.min(
+    maxMortgage,
+    Math.max(0, kostenKoperBasis - totalOwnCapital)
+  );
+  const kostenKoper = getKostenKoperBreakdown({
+    price: kostenKoperBasis,
+    mortgageAmount: nhgMortgageBasis,
+    transferTax,
+    transferTaxLabel: transferTaxInfo.shortLabel,
+    options: {
+      notaryCosts,
+      valuationCosts,
+      advisoryCosts,
+      includeBankGuarantee,
+      includeBuyersAgent,
+      includeNhgFee,
+    },
+  });
+  const ownMoney = includeKostenKoperInCalc ? kostenKoper.total : 0;
+
+  // Eenmalig aftrekbare financieringskosten (box 1, jaar van aankoop): hypotheekadvies,
+  // taxatie (voor de financiering) en de NHG-borgtochtprovisie zijn eenmalig aftrekbaar.
+  // Overdrachtsbelasting en de leveringsakte zijn dat niet. Notariskosten worden hier
+  // bewust buiten beschouwing gelaten: dat bedrag dekt zowel de niet-aftrekbare
+  // leveringsakte als de wél aftrekbare hypotheekakte, en dit veld splitst die twee niet
+  // uit — een verkeerde precisie zou hier misleidender zijn dan een duidelijke uitsluiting.
+  const deductibleFinancingCostKeys = ['advisory', 'valuation', 'nhgFee'];
+  const deductibleFinancingCosts = kostenKoper.items
+    .filter((item) => deductibleFinancingCostKeys.includes(item.key) && item.included)
+    .reduce((sum, item) => sum + item.amount, 0);
+  const financingCostsHraRate = getHraRate(toets1.toetsinkomen, toets2.toetsinkomen);
+  const financingCostsTaxBenefit = deductibleFinancingCosts * financingCostsHraRate;
+
+  const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly;
+  const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
+  const purchasingPower = maxMortgage + totalOwnCapital;
+
+  // Basis voor de aanvullende-hypotheektoets verderop: leencapaciteit o.b.v. inkomen bij
+  // de daadwerkelijke rente, zonder de generieke toetsrentecorrectie hierboven (die is
+  // gebaseerd op één algemene rentevastperiode-aanname). Bij het toetsen van de
+  // aanvullende leningdelen wordt per leningdeel opnieuw en preciezer getoetst.
+  // Ook hier geldt de AOW-toets: het bindende (laagste) scenario telt.
+  const nibudAtActualRate = getIncomeBasedMortgage(combinedIncome, safeNum(rate), monthlyDebt);
+  const boundMaxLoanAtActualRate = pensionActive
+    ? Math.min(
+        nibudAtActualRate.maxLoan,
+        getIncomeBasedMortgage(pensionCombinedIncome, safeNum(rate), monthlyDebt, { aow: true })
+          .maxLoan
+      )
+    : nibudAtActualRate.maxLoan;
+  const incomeBasedMaxAtActualRate = Math.max(0, boundMaxLoanAtActualRate + energyBonus);
+
+  // Drie leencapaciteit-stappen voor de resultaatweergave, zodat zichtbaar is waar de
+  // hypotheek precies kleiner wordt: (1) puur op inkomen, bij de werkelijke rente en
+  // zonder schulden; (2) diezelfde toets met de maandlast van schulden erin
+  // (incomeBasedMaxAtActualRate hierboven); (3) ook nog met de toetsrente-afslag die
+  // geldt zodra een leningdeel korter dan 10 jaar rentevast is (incomeBasedMax verderop,
+  // al inclusief AOW-toets). Ook hier telt het bindende AOW-scenario mee, zodat de eerste
+  // stap consistent blijft met de andere twee.
+  const nibudIncomeOnly = getIncomeBasedMortgage(combinedIncome, safeNum(rate), 0);
+  const boundMaxLoanIncomeOnly = pensionActive
+    ? Math.min(
+        nibudIncomeOnly.maxLoan,
+        getIncomeBasedMortgage(pensionCombinedIncome, safeNum(rate), 0, { aow: true }).maxLoan
+      )
+    : nibudIncomeOnly.maxLoan;
+  const maxLoanIncomeOnly = Math.max(0, boundMaxLoanIncomeOnly + energyBonus);
+
+  // Effectieve leenfactor puur ter illustratie (maximale hypotheek gedeeld door inkomen);
+  // de daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor.
+  const effectiveFactor = combinedIncome > 0 ? incomeBasedMax / combinedIncome : 0;
+
+  return {
+    combinedIncome,
+    toets1,
+    toets2,
+    woonquote,
+    effectiveFactor,
+    maxWoonlastMonthly: nibud.maxWoonlastMonthly,
+    energyBonus,
+    debtDeduction,
+    otherDebtMonthly,
+    studyDebtMonthly,
+    secondHomeMonthly,
+    secondHomeSaleCosts,
+    secondHomeNetProceeds,
+    secondHomeShortfall,
+    secondHomeCapacityReduction,
+    secondHomeProceedsApplied,
+    monthlyDebt,
+    availableMonthly: nibud.availableMonthly,
+    annuityFactor: nibud.annuityFactor,
+    maxLoanIncomeOnly,
+    incomeBasedMax,
+    incomeBasedMaxAtActualRate,
+    cappedByPropertyValue,
+    maxMortgage,
+    transferTaxInfo,
+    transferTax,
+    kostenKoper,
+    ownMoney,
+    deductibleFinancingCosts,
+    financingCostsHraRate,
+    financingCostsTaxBenefit,
+    isOverIndebted,
+    showSustainability,
+    pensionApplies,
+    pensionApplies1,
+    pensionApplies2,
+    pensionMissing1,
+    pensionMissing2,
+    pensionIncomplete,
+    pensionBinding,
+    pensionCombinedIncome,
+    currentScenarioMax,
+    pensionScenarioMax,
+    totalOwnCapital,
+    illiquidOwnCapital,
+    secondHomeNetProceedsIfSold,
+    familyLoanMonthlyDebt,
+    purchasingPower,
+    toetsrenteApplies,
+    testRate,
+  };
+}
+
+function computeCurrentMortgage(d, calc) {
+  const {
+    startDate,
+    marketValue,
+    saleDiscountPercentage,
+    takeOverMortgage,
+    includeEwfInNetCalc,
+  } = d;
+
+  const elapsedMonths = getElapsedMonths(startDate);
+  const loanParts = toCurrentLoanParts(d.loanParts, elapsedMonths);
+
+  const partResults = loanParts.map((part) => calculateLoanPart(part, elapsedMonths, startDate));
+
+  const totalGross = partResults.reduce((sum, p) => sum + p.grossMonthly, 0);
+  const totalInterest = partResults.reduce((sum, p) => sum + p.interestMonthly, 0);
+  const totalPrincipal = partResults.reduce((sum, p) => sum + p.principalMonthly, 0);
+  const deductibleInterest = partResults.reduce(
+    (sum, p) => sum + (p.eligibleForHRA ? p.interestMonthly : 0),
+    0
+  );
+
+  const hraRate = getHraRate(calc.toets1.toetsinkomen, calc.toets2.toetsinkomen);
+  const taxBenefit = deductibleInterest * hraRate;
+  const ewfYearly = includeEwfInNetCalc ? EWF_RATE * Math.min(safeNum(marketValue), EWF_CAP) : 0;
+  const ewfMonthly = ewfYearly / 12;
+  const netTaxBenefit = taxBenefit - ewfMonthly;
+  const totalNet = totalGross - netTaxBenefit;
+
+  const netInterestComponent = Math.max(0, totalInterest - netTaxBenefit);
+  const hasAflossingsvrij = loanParts.some((p) => p.type === 'Aflossingsvrij');
+  // B9: "Resterende rentevastperiode" deed voorheen niets. Nu telt het mee als
+  // waarschuwing wanneer een leningdeel binnen 2 jaar opnieuw moet worden vastgezet.
+  const partsWithExpiringFixedPeriod = loanParts.filter(
+    (p, i) => partResults[i].fixedPeriodExpiringSoon
+  );
+  const hasExpiringFixedPeriod = partsWithExpiringFixedPeriod.length > 0;
+
+  // Toetsrente geldt niet alleen voor een nieuwe hypotheek, maar ook voor meegenomen
+  // leningdelen met een resterende rentevastperiode korter dan 10 jaar: voor de
+  // leencapaciteitstoets wordt zo'n deel getoetst alsof de rente bij afloop stijgt
+  // naar de AFM-toetsrente, ook al is de daadwerkelijke (lagere) contractrente wat er
+  // nu echt betaald wordt.
+  const rateRiskCapacityHaircut = loanParts.reduce((sum, part, i) => {
+    const remainingFractionalYears = partResults[i].fixedPeriod.fractionalYears;
+    const testRate = getTestRate(part.rate, remainingFractionalYears);
+    const actualRate = safeNum(part.rate);
+    if (testRate === actualRate) return sum;
+    const stressResult = calculateLoanPart({ ...part, rate: testRate }, elapsedMonths, startDate);
+    const extraMonthly = Math.max(0, stressResult.grossMonthly - partResults[i].grossMonthly);
+    return sum + extraMonthly * getCapitalizationFactor(testRate);
+  }, 0);
+  // Het renterisico op een korte rentevastperiode is alleen relevant als het leningdeel
+  // daadwerkelijk wordt meegenomen; wordt de hypotheek afgelost bij verkoop, dan vervalt
+  // dat risico voor de nieuwe financiering volledig.
+  const effectiveRateRiskHaircut = takeOverMortgage ? rateRiskCapacityHaircut : 0;
+  const hasRateRiskOnPortedDebt = takeOverMortgage && rateRiskCapacityHaircut > 0;
+
+  const currentDebtBalance = loanParts.reduce((sum, p) => sum + safeNum(p.principal), 0);
+  const ltv = safeNum(marketValue) > 0 ? (currentDebtBalance / safeNum(marketValue)) * 100 : 0;
+  // Meegenomen hypotheek: alleen van toepassing als de meeneemregeling aan staat. Wordt
+  // deze uitgezet, dan wordt de bestaande hypotheek bij verkoop volledig afgelost (de
+  // overwaarde-berekening houdt daar al rekening mee) en moet de nieuwe woning volledig
+  // opnieuw gefinancierd worden.
+  const portedDebt = takeOverMortgage ? currentDebtBalance : 0;
+  // Werkelijke leencapaciteit: de inkomensgebaseerde leencapaciteit, gecorrigeerd voor het
+  // renterisico op meegenomen leningdelen met een korte rentevastperiode. Dit is het getal
+  // dat er in de praktijk toe doet, in plaats van de ongecorrigeerde leencapaciteit o.b.v.
+  // inkomen alleen. Let op: hier bewust calc.incomeBasedMax gebruikt (ongekort door de
+  // aanschafprijs), niet calc.maxMortgage. Anders zou uw bijleenruimte en maximale
+  // aankoopbudget circulair begrensd worden door de aanschafprijs die u toevallig nu heeft
+  // ingesteld, terwijl deze getallen juist bedoeld zijn om te laten zien wat maximaal
+  // haalbaar is, ongeacht de huidige stand van de schuifknop.
+  const effectiveMaxMortgage = Math.max(0, calc.incomeBasedMax - effectiveRateRiskHaircut);
+  const extraBorrowCapacity = Math.max(0, effectiveMaxMortgage - portedDebt);
+  // Werkelijke overwaarde: marktwaarde min restschuld, ongekort. Sommige geldverstrekkers
+  // tellen de nog niet (onvoorwaardelijk) verkochte woning echter niet voor 100% mee als
+  // onderpand voor de financiering, maar hanteren een verkoopafslag (bijvoorbeeld 95%). De
+  // "bruikbare" overwaarde voor financieringsdoeleinden houdt hier rekening mee.
+  const saleValueForFinancing = safeNum(marketValue) * (saleDiscountPercentage / 100);
+  const overwaarde = safeNum(marketValue) - currentDebtBalance;
+  const usableOverwaarde = Math.max(0, saleValueForFinancing - currentDebtBalance);
+  // Onderwaarde: als de (met verkoopafslag gecorrigeerde) verkoopwaarde lager is dan de
+  // restschuld, blijft er na verkoop een restschuld-tekort staan dat moet worden afgelost
+  // en dus meegefinancierd/uit eigen middelen betaald moet worden.
+  const restschuldTekort = Math.max(0, currentDebtBalance - saleValueForFinancing);
+
+  return {
+    totalGross,
+    totalInterest,
+    totalPrincipal,
+    hraRate,
+    taxBenefit,
+    ewfMonthly,
+    netTaxBenefit,
+    totalNet,
+    netInterestComponent,
+    hasAflossingsvrij,
+    hasExpiringFixedPeriod,
+    partsWithExpiringFixedPeriod,
+    rateRiskCapacityHaircut,
+    hasRateRiskOnPortedDebt,
+    effectiveMaxMortgage,
+    currentDebtBalance,
+    portedDebt,
+    ltv,
+    extraBorrowCapacity,
+    overwaarde,
+    usableOverwaarde,
+    saleValueForFinancing,
+    restschuldTekort,
+  };
+}
+
+function computeCombinedGap(d, calc, currentMortgage) {
+  const {
+    purchasePrice,
+    lenderCapThreshold,
+    limitOwnContribution,
+    desiredMaxOwnContribution,
+    useFamilyLoan,
+    familyLoanAmount,
+    familyLoanRate,
+    includeKostenKoperInCalc,
+  } = d;
+
+  const price = safeNum(purchasePrice);
+  const portedDebt = currentMortgage.portedDebt;
+  const overwaarde = currentMortgage.usableOverwaarde;
+  const restschuldTekort = currentMortgage.restschuldTekort;
+  // Meeneemregeling: de bestaande hypotheek gaat mee tegen de oude voorwaarden, en de
+  // overwaarde komt daarnaast vrij als cash. Samen dekken deze twee posten een deel van de
+  // aanschafprijs; wat overblijft is het financieringsgat. Bij onderwaarde is er geen
+  // overwaarde maar juist een restschuld-tekort dat na verkoop moet worden afgelost; dat
+  // vergroot het gat (symmetrisch aan hoe overwaarde het gat verkleint).
+  const gap = price - portedDebt - overwaarde + restschuldTekort;
+  // Eigen inleg: standaard wordt zoveel mogelijk eigen vermogen ingezet om het gat te
+  // dichten (zoals voorheen). Met limitOwnContribution geeft u aan zélf niet meer dan een
+  // bepaald bedrag te willen inleggen (ex kosten koper, die lopen via de kaart Kosten
+  // koper) — het restant van het gat moet dan via de hypotheek of andere bronnen komen.
+  // Kosten koper worden (grotendeels) uit eigen middelen betaald en kunnen niet boven 100%
+  // LTV worden meegefinancierd. Meegeteld (includeKostenKoperInCalc) verlagen ze dus het
+  // eigen vermogen dat nog voor het financieringsgat beschikbaar is — dat verschuift het gat
+  // naar de aanvullende hypotheek en laat, bij ontoereikende capaciteit, de haalbaarheid
+  // kantelen. Zo blijft dit consistent met "Overgebleven ruimte na woning + kosten koper" in
+  // het Maximaal-aankoopbudget-blok (en met de aan/uit-schakelaar bij Kosten koper).
+  const kostenKoperCash = includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
+  const ownCapitalForGap = Math.max(0, calc.totalOwnCapital - kostenKoperCash);
+  const ownContributionCap = limitOwnContribution
+    ? Math.max(0, safeNum(desiredMaxOwnContribution))
+    : Infinity;
+  const ownCapitalApplied = Math.min(
+    ownCapitalForGap,
+    Math.max(0, gap),
+    ownContributionCap
+  );
+  // Wat er nog gefinancierd moet worden nadat de (eventueel beperkte) eigen inleg is
+  // toegepast — dit is het bedrag waarvoor hieronder aanvullende leningdelen worden
+  // opgesplitst, ongeacht of dit daadwerkelijk geleend kán worden (zie capaciteitstoets).
+  const additionalMortgage = Math.max(0, gap - ownCapitalApplied);
+  const surplus = gap < 0 ? -gap : 0;
+
+  // Twee onafhankelijke, bindende grenzen op de aanvullende hypotheek: de Nibud-
+  // inkomenstoets (extraBorrowCapacity) én het absolute plafond van de geldverstrekker
+  // (lenderCapThreshold, hierboven al meegenomen in de bepaling van de bank; hier het
+  // resterende bedrag onder dat plafond na de meegenomen hypotheek).
+  const lenderCapRoom = Math.max(0, getLenderCap(lenderCapThreshold) - portedDebt);
+  const additionalMortgageCapacity = Math.min(
+    currentMortgage.extraBorrowCapacity,
+    lenderCapRoom
+  );
+  const bindingCapIsLender = lenderCapRoom < currentMortgage.extraBorrowCapacity;
+  const capacityMargin = additionalMortgageCapacity - additionalMortgage;
+  const withinCapacity = capacityMargin >= 0;
+  // Sommige geldverstrekkers hanteren een interne grens voor de totale hypotheek
+  // (meegenomen plus nieuw), waarboven aanvullende acceptatie-eisen gelden.
+  const totalMortgageAfterMove = portedDebt + additionalMortgage;
+  const exceedsLenderCap = totalMortgageAfterMove > getLenderCap(lenderCapThreshold);
+
+  // Resterend gat na bank- en Nibud-capaciteit: hier kan een tijdelijke, onderhandse
+  // familielening inspringen — bijvoorbeeld omdat de tweede woning nog niet verkocht is
+  // en daar (anders dan bij de eigen woning) geen overbruggingskrediet op mogelijk is.
+  const shortfallBeforeFamilyLoan = Math.max(0, -capacityMargin);
+  const familyLoanApplied = useFamilyLoan
+    ? Math.min(Math.max(0, safeNum(familyLoanAmount)), shortfallBeforeFamilyLoan)
+    : 0;
+  const familyLoanMonthlyInterest = (familyLoanApplied * (safeNum(familyLoanRate) / 100)) / 12;
+  const netCapacityMargin = capacityMargin + familyLoanApplied;
+  const remainingShortfall = Math.max(0, -netCapacityMargin);
+  const withinCapacityAfterFamilyLoan = netCapacityMargin >= 0;
+
+  return {
+    portedDebt,
+    overwaarde,
+    restschuldTekort,
+    gap,
+    ownContributionCap,
+    ownCapitalApplied,
+    additionalMortgage,
+    lenderCapRoom,
+    additionalMortgageCapacity,
+    bindingCapIsLender,
+    capacityMargin,
+    withinCapacity,
+    surplus,
+    totalMortgageAfterMove,
+    exceedsLenderCap,
+    shortfallBeforeFamilyLoan,
+    familyLoanApplied,
+    familyLoanMonthlyInterest,
+    netCapacityMargin,
+    remainingShortfall,
+    withinCapacityAfterFamilyLoan,
+  };
+}
+
+// Starters: zelfde principe als computeCombinedGap — kosten koper (indien meegeteld) kunnen
+// niet boven 100% LTV worden meegefinancierd en gaan dus eerst van het eigen vermogen af; wat
+// daarna overblijft verlaagt de benodigde hypotheek.
+function computeStarterGap(d, calc) {
+  const price = safeNum(d.purchasePrice);
+  const kostenKoperCash = d.includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
+  const ownCapitalAfterCosts = calc.totalOwnCapital - kostenKoperCash;
+  const cashShortfall = Math.max(0, -ownCapitalAfterCosts);
+  const requiredMortgage = Math.max(0, price - Math.max(0, ownCapitalAfterCosts));
+  const lenderCap = getLenderCap(d.lenderCapThreshold);
+  const capacity = Math.min(calc.incomeBasedMax, lenderCap);
+  const bindingCapIsLender = lenderCap < calc.incomeBasedMax;
+  const capacityShortfall = Math.max(0, requiredMortgage - capacity);
+  const shortfall = capacityShortfall + cashShortfall;
+  return {
+    kostenKoperCash,
+    ownCapitalAfterCosts,
+    cashShortfall,
+    requiredMortgage,
+    capacity,
+    bindingCapIsLender,
+    capacityShortfall,
+    shortfall,
+    feasible: shortfall <= 0,
+  };
+}
+
+// Eén haalbaarheidsoordeel voor zowel de live weergave als de solver.
+function evaluateAffordability(d, { extraLiquidCapital = 0 } = {}) {
+  const calc = computeCalc(d, { extraLiquidCapital });
+  if (d.hasExistingHome) {
+    const gap = computeCombinedGap(d, calc, computeCurrentMortgage(d, calc));
+    return { affordable: gap.withinCapacityAfterFamilyLoan, shortfall: gap.remainingShortfall };
+  }
+  const starter = computeStarterGap(d, calc);
+  return { affordable: starter.feasible, shortfall: starter.shortfall };
+}
+
+const SOLVER_PRICE_STEP = 1000;
+const SOLVER_CAPITAL_STEP = 1;
+const SOLVER_PRICE_CEILING = 20000000;
+
+// Hoogste aanschafprijs die met de huidige invoer haalbaar is. Haalbaarheid is monotoon in de
+// prijs (een hogere prijs verhoogt het gat én de kosten koper), dus binair zoeken volstaat.
+// Ondergrens is één stap i.p.v. 0, omdat kosten koper bij prijs 0 op de maximale hypotheek
+// terugvallen als grondslag.
+// Zoekt op het raster (veelvouden van SOLVER_PRICE_STEP), zodat het resultaat zelf haalbaar is
+// en niet pas achteraf wordt afgerond.
+function findMaxAffordablePrice(d) {
+  const ok = (steps) =>
+    evaluateAffordability({ ...d, purchasePrice: steps * SOLVER_PRICE_STEP }).affordable;
+  const ceiling = SOLVER_PRICE_CEILING / SOLVER_PRICE_STEP;
+  if (!ok(1)) return null;
+  let lo = 1;
+  let hi = Math.max(Math.ceil(safeNum(d.purchasePrice) / SOLVER_PRICE_STEP), 100);
+  while (ok(hi)) {
+    lo = hi;
+    if (hi >= ceiling) return SOLVER_PRICE_CEILING;
+    hi = Math.min(hi * 2, ceiling);
+  }
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (ok(mid)) lo = mid;
+    else hi = mid;
+  }
+  return lo * SOLVER_PRICE_STEP;
+}
+
+// Hoeveel extra, direct beschikbaar eigen geld maakt de huidige aanschafprijs haalbaar?
+// null = extra eigen geld alléén lost het niet op (bijv. door een actieve eigen-inleg-limiet).
+function findExtraOwnCapitalNeeded(d) {
+  const ok = (steps) =>
+    evaluateAffordability(d, { extraLiquidCapital: steps * SOLVER_CAPITAL_STEP }).affordable;
+  if (ok(0)) return 0;
+  let lo = 0;
+  let hi = Math.ceil((2 * safeNum(d.purchasePrice) + 1000000) / SOLVER_CAPITAL_STEP);
+  if (!ok(hi)) return null;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (ok(mid)) hi = mid;
+    else lo = mid;
+  }
+  return hi * SOLVER_CAPITAL_STEP;
+}
+
+// Een rentevastperiode van 10+ jaar ontloopt de AFM-toetsrente; alleen relevant als die nu
+// geldt en de overstap het tekort daadwerkelijk verkleint.
+function evaluateFixedRateLever(d, base) {
+  if (safeNum(d.fixedRatePeriod) >= 10 || getTestRate(d.rate, d.fixedRatePeriod) === safeNum(d.rate)) {
+    return null;
+  }
+  const alt = evaluateAffordability({ ...d, fixedRatePeriod: 10 });
+  return alt.shortfall < base.shortfall ? alt : null;
+}
+
+function solveAffordabilityLevers(d) {
+  const base = evaluateAffordability(d);
+  return {
+    maxPrice: findMaxAffordablePrice(d),
+    extraOwnCapital: base.affordable ? 0 : findExtraOwnCapitalNeeded(d),
+    fixedRate: base.affordable ? null : evaluateFixedRateLever(d, base),
   };
 }
 
@@ -1032,6 +1790,13 @@ function LoanPartCard({ part, index, onChange, onRemove, canRemove, elapsedMonth
   const fixedPeriod = getRemainingFixedPeriod(part.originalFixedYears, elapsedMonths);
   const testRate = getTestRate(part.rate, fixedPeriod.fractionalYears);
   const toetsrenteAppliesToPart = testRate !== safeNum(part.rate);
+  const currentBalance = projectRemainingBalance(
+    part.principal,
+    part.rate,
+    part.type,
+    TERM_MONTHS,
+    elapsedMonths
+  );
 
   return (
     <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-4 transition-all duration-200">
@@ -1058,14 +1823,27 @@ function LoanPartCard({ part, index, onChange, onRemove, canRemove, elapsedMonth
         onChange={(v) => onChange('type', v)}
         options={AFLOSVORMEN}
       />
-      <CurrencyField
-        id={`principal-${part.id}`}
-        label="Hoofdsom leningdeel"
-        icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-        value={part.principal}
-        onChange={(v) => onChange('principal', v)}
-        placeholder="0"
-      />
+      <div className="space-y-2">
+        <CurrencyField
+          id={`principal-${part.id}`}
+          label="Hoofdsom bij aanvang"
+          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+          value={part.principal}
+          onChange={(v) => onChange('principal', v)}
+          placeholder="0"
+        />
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
+          <span className="text-xs text-slate-500">Restschuld per {formatDateNL(new Date())}</span>
+          <span className="text-sm font-semibold text-slate-800">{formatEuro(currentBalance)}</span>
+        </div>
+        <p className="text-[11px] text-slate-400">
+          {part.type === 'Aflossingsvrij'
+            ? 'Aflossingsvrij: de restschuld blijft gelijk aan de hoofdsom.'
+            : `Berekend uit rente en ingangsdatum: ${elapsedMonths} ${
+                elapsedMonths === 1 ? 'maandtermijn' : 'maandtermijnen'
+              } betaald (30 jaar looptijd, zonder extra aflossingen).`}
+        </p>
+      </div>
       <Slider
         id={`rate-${part.id}`}
         label="Hypotheekrente leningdeel"
@@ -1755,13 +2533,9 @@ function MortgageCalculatorForm({ onReset }) {
   const [marketValue, setMarketValue] = useState(935000);
   const [saleDiscountPercentage, setSaleDiscountPercentage] = useState(95);
   const [currentEnergyLabel, setCurrentEnergyLabel] = useState('A');
-  const [originalDebt, setOriginalDebt] = useState('675000');
-  const [startDate, setStartDate] = useState('2021-01-15');
+  const [startDate, setStartDate] = useState(DOSSIER_DEFAULTS.startDate);
   const [viewMode, setViewMode] = useState('bruto');
-  const [loanParts, setLoanParts] = useState([
-    { id: 1, type: 'Annuïteit', principal: '271846', rate: 1.25, originalFixedYears: 10 },
-    { id: 2, type: 'Aflossingsvrij', principal: '354269', rate: 1.85, originalFixedYears: 20 },
-  ]);
+  const [loanParts, setLoanParts] = useState(DOSSIER_DEFAULTS.loanParts);
 
   const addLoanPart = () => {
     setLoanParts((prev) => {
@@ -1922,9 +2696,9 @@ function MortgageCalculatorForm({ onReset }) {
       marketValue,
       saleDiscountPercentage,
       currentEnergyLabel,
-      originalDebt,
       startDate,
       loanParts,
+      loanPartsBasis: 'aanvang',
       additionalLoanParts,
       additionalLoanTouched,
       aflossingsvrijMaxPct,
@@ -1948,7 +2722,7 @@ function MortgageCalculatorForm({ onReset }) {
       familyLoanAmount, familyLoanRate, familyLoanRepaymentType, familyLoanMonthlyRepayment,
       familyLoanBufferPct, takeOverMortgage, oldMortgageStance, bridgePeriodMonths,
       includeOwnCapitalInDoubleTest, liquidityBuffer, useBridgeLoan, bridgeLoanAmount,
-      bridgeLoanRate, marketValue, saleDiscountPercentage, currentEnergyLabel, originalDebt,
+      bridgeLoanRate, marketValue, saleDiscountPercentage, currentEnergyLabel,
       startDate, loanParts, additionalLoanParts, additionalLoanTouched, aflossingsvrijMaxPct,
       scheduleWindowStartMonth, scheduleAppreciationPct, starterLoanParts,
     ]
@@ -2032,7 +2806,6 @@ function MortgageCalculatorForm({ onReset }) {
     setMarketValue(snap.marketValue);
     setSaleDiscountPercentage(snap.saleDiscountPercentage);
     setCurrentEnergyLabel(snap.currentEnergyLabel);
-    setOriginalDebt(snap.originalDebt);
     setStartDate(snap.startDate);
     setLoanParts(snap.loanParts);
     setAdditionalLoanParts(snap.additionalLoanParts);
@@ -2129,6 +2902,28 @@ function MortgageCalculatorForm({ onReset }) {
   const [linkCopied, setLinkCopied] = useState(false);
   const [showScenarios, setShowScenarios] = useState(false);
   const [newScenarioName, setNewScenarioName] = useState('');
+  const [scenarioJustSaved, setScenarioJustSaved] = useState(false);
+
+  // Snel opslaan vanuit het resultaatpaneel, met de aanschafprijs in de naam zodat varianten
+  // in de vergelijkingstabel direct herkenbaar zijn (de naam blijft daar aanpasbaar).
+  const quickSaveScenario = () => {
+    saveCurrentAsScenario(`Scenario ${scenarios.length + 1} · ${formatEuro(purchasePrice)}`);
+    setScenarioJustSaved(true);
+    setTimeout(() => setScenarioJustSaved(false), 2000);
+  };
+
+  const openScenarioComparison = () => {
+    setShowScenarios(true);
+    document.getElementById('sectie-scenarios')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // Resultaatdetails: standaard dicht in Geleid (kort antwoord eerst), open in Expert. Een
+  // handmatige keuze geldt alleen binnen de modus waarin die gemaakt is.
+  const [resultDetailsChoice, setResultDetailsChoice] = useState(null);
+  const showResultDetails =
+    resultDetailsChoice?.mode === uiMode ? resultDetailsChoice.open : !guided;
+  const toggleResultDetails = () =>
+    setResultDetailsChoice({ mode: uiMode, open: !showResultDetails });
 
   const addStarterLoanPart = () => {
     setStarterLoanParts((prev) => {
@@ -2155,389 +2950,7 @@ function MortgageCalculatorForm({ onReset }) {
     if (propertyUsage === 'nieuwbouw') setIncludeBuyersAgent(false);
   }, [propertyUsage]);
 
-  const calc = useMemo(() => {
-    // Toetsinkomen per aanvrager (toetsinkomen.js): afhankelijk van het inkomenstype
-    // telt het bruto jaarinkomen volledig mee (vast, flex mét intentieverklaring) of
-    // geldt het 3-jaarsgemiddelde gemaximeerd op het laatste jaar (flex zónder
-    // intentieverklaring, ZZP). Betaalde partneralimentatie gaat er bruto (×12)
-    // vanaf, vóór de woonquote-bepaling.
-    const toets1 = getToetsinkomen({
-      incomeType: incomeType1,
-      income: income1,
-      history: incomeHistory1,
-      thirteenthMonth: thirteenthMonth1,
-      avgBonus: avgBonus1,
-      alimonyMonthly: partnerAlimony1,
-    });
-    // Bij één aanvrager telt Partner 2 nergens mee, ongeacht wat er nog in die velden
-    // staat (ze blijven zichtbaar-onzichtbaar bewaard voor als de gebruiker weer twee
-    // aanvragers kiest).
-    const toets2 = hasPartner2
-      ? getToetsinkomen({
-          incomeType: incomeType2,
-          income: income2,
-          history: incomeHistory2,
-          thirteenthMonth: thirteenthMonth2,
-          avgBonus: avgBonus2,
-          alimonyMonthly: partnerAlimony2,
-        })
-      : getToetsinkomen({ incomeType: 'vast', income: 0 });
-    const combinedIncome = toets1.toetsinkomen + toets2.toetsinkomen;
-
-    // A6: bij een rentevastperiode korter dan 10 jaar moet wettelijk met de (hogere)
-    // AFM-toetsrente worden getoetst, nooit met de lagere daadwerkelijke rente.
-    const testRate = getTestRate(rate, fixedRatePeriod);
-    const toetsrenteApplies = testRate !== safeNum(rate);
-
-    const energyBonus = getEnergyBonus(energyLabel);
-
-    // A3: schulden worden eerst omgerekend naar een maandlast (2% van het schuldbedrag
-    // voor overige schulden). Studieschuld wordt sinds 2024 berekend op basis van de
-    // werkelijke DUO-terugbetaalregeling (rente en aflostermijn van het gekozen stelsel),
-    // toegepast op de restschuld.
-    const otherDebtMonthly =
-      (safeNum(debt1) + (hasPartner2 ? safeNum(debt2) : 0)) * OTHER_DEBT_MONTHLY_WEIGHT;
-    const studyDebtMonthly = getStudyDebtMonthlyBurden(
-      safeNum(studyDebt1) + (hasPartner2 ? safeNum(studyDebt2) : 0),
-      studyDebtRegime
-    );
-
-    // Tweede woning met eigen hypotheekschuld: bij aanhouden telt de volledige,
-    // werkelijke bruto maandlast mee als schuld (geen 2%-vuistregel, want het exacte
-    // bedrag is bekend — net als bij een studieschuld). Bij verkoop komt er geen
-    // maandlast bij, maar wel een eenmalige netto-opbrengst (of -tekort) vrij, zie
-    // totalOwnCapital hieronder.
-    const secondHomeMonthly =
-      hasSecondHome && !secondHomeWillSell
-        ? calculateSimpleMortgagePayment(
-            secondHomeMortgageDebt,
-            secondHomeInterestRate,
-            secondHomeRepaymentType,
-            secondHomeRemainingYears
-          )
-        : 0;
-    const secondHomeSaleCosts =
-      hasSecondHome && secondHomeWillSell
-        ? safeNum(secondHomeValue) * (safeNum(secondHomeSaleCostsPct) / 100)
-        : 0;
-    const secondHomeNetProceeds =
-      hasSecondHome && secondHomeWillSell
-        ? safeNum(secondHomeValue) - safeNum(secondHomeMortgageDebt) - secondHomeSaleCosts
-        : 0;
-    const secondHomeShortfall = secondHomeNetProceeds < 0 ? -secondHomeNetProceeds : 0;
-    // Verwachte netto-opbrengst als de tweede woning ooit verkocht wordt, los van de
-    // aanhouden/verkopen-keuze hierboven (die alleen bepaalt of dit bedrag NU al wordt
-    // ingezet). Gebruikt om een familielening die op die toekomstige verkoop anticipeert
-    // ("aflossen zodra de tweede woning verkocht is") van een concreet bedrag te voorzien.
-    const secondHomeNetProceedsIfSold = hasSecondHome
-      ? safeNum(secondHomeValue) -
-        safeNum(secondHomeMortgageDebt) -
-        safeNum(secondHomeValue) * (safeNum(secondHomeSaleCostsPct) / 100)
-      : 0;
-
-    // Een familielening die maandelijks wordt afgelost (in plaats van ineens bij een
-    // toekomstige gebeurtenis, zoals de verkoop van de tweede woning) is een reguliere
-    // verplichting en telt daarom mee als schuld in de Nibud-toets, net als overige
-    // schulden. Bij "ineens" heeft de lening geen invloed op de leencapaciteit.
-    const familyLoanMonthlyDebt =
-      useFamilyLoan && familyLoanRepaymentType === 'maandelijks'
-        ? safeNum(familyLoanMonthlyRepayment)
-        : 0;
-
-    const monthlyDebt =
-      otherDebtMonthly + studyDebtMonthly + secondHomeMonthly + familyLoanMonthlyDebt;
-
-    // A1-A3: echte Nibud-woonquote-systematiek 2026. De woonquote bij (toetsinkomen,
-    // toetsrente) bepaalt de maximale bruto woonlast; de maandlast van bestaande schulden
-    // gaat daar direct vanaf; het restant wordt gekapitaliseerd tegen de toetsrente.
-    const nibud = getIncomeBasedMortgage(combinedIncome, testRate, monthlyDebt);
-    const woonquote = nibud.woonquote;
-
-    // Ter weergave: hoeveel maximale hypotheek er wegvalt door de schulden (de
-    // gekapitaliseerde waarde van de schuldmaandlast tegen de toetsrente).
-    const debtDeduction = monthlyDebt * nibud.annuityFactor;
-
-    // Ter weergave: het specifieke aandeel van de tweede-woning-hypotheek in die
-    // afslag op de leencapaciteit (dezelfde kapitalisatie, alleen voor dit ene deel van
-    // monthlyDebt) — zodat de Nibud-impact van "aanhouden" apart zichtbaar is.
-    const secondHomeCapacityReduction = secondHomeMonthly * nibud.annuityFactor;
-
-    // AOW-toets (Stcrt. 2025-36471): wie binnen 10 jaar de AOW-leeftijd (67) bereikt,
-    // wordt óók getoetst op het verwachte pensioeninkomen, tegen de aparte
-    // AOW-financieringslasttabel (Tabel 2). De laagste van de twee uitkomsten is
-    // bindend. De min() gebeurt hier op maxLoan-niveau — vóór de energiebonus en de
-    // LTV-cap — zodat ook alle afgeleide berekeningen (doorstromer-bijleenruimte,
-    // scenario-analyse, dubbele-lasten-test) automatisch de bindende toets volgen.
-    const pensionApplies1 = safeNum(age1) >= 57;
-    const pensionApplies2 = hasPartner2 && safeNum(age2) >= 57;
-    const pensionApplies = pensionApplies1 || pensionApplies2;
-    const pensionMissing1 = pensionApplies1 && safeNum(pensionIncome1) <= 0;
-    const pensionMissing2 = pensionApplies2 && safeNum(pensionIncome2) <= 0;
-    // Zolang een verwacht pensioeninkomen ontbreekt, wordt er bewust niet op €0
-    // getoetst maar een waarschuwing getoond: de toets is dan onvolledig.
-    const pensionIncomplete = pensionMissing1 || pensionMissing2;
-    const pensionActive = pensionApplies && !pensionIncomplete;
-
-    // Pensioenscenario-inkomen: voor aanvragers binnen 10 jaar van de AOW-leeftijd het
-    // verwachte pensioeninkomen (met dezelfde alimentatie-aftrek), voor de ander het
-    // gewone toetsinkomen.
-    const pensionToets1 = pensionApplies1
-      ? getToetsinkomen({
-          incomeType: 'vast',
-          income: pensionIncome1,
-          alimonyMonthly: partnerAlimony1,
-        })
-      : toets1;
-    const pensionToets2 = pensionApplies2
-      ? getToetsinkomen({
-          incomeType: 'vast',
-          income: pensionIncome2,
-          alimonyMonthly: partnerAlimony2,
-        })
-      : toets2;
-    const pensionCombinedIncome = pensionToets1.toetsinkomen + pensionToets2.toetsinkomen;
-
-    const nibudPension = pensionActive
-      ? getIncomeBasedMortgage(pensionCombinedIncome, testRate, monthlyDebt, { aow: true })
-      : null;
-    const pensionBinding = pensionActive && nibudPension.maxLoan < nibud.maxLoan;
-    const boundMaxLoan = pensionActive
-      ? Math.min(nibud.maxLoan, nibudPension.maxLoan)
-      : nibud.maxLoan;
-
-    // Scenariobedragen voor de vergelijkings-UI (beide inclusief energiebonus, zodat ze
-    // één-op-één vergelijkbaar zijn met de getoonde maximale hypotheek).
-    const currentScenarioMax = Math.max(0, nibud.maxLoan + energyBonus);
-    const pensionScenarioMax = pensionActive
-      ? Math.max(0, nibudPension.maxLoan + energyBonus)
-      : null;
-
-    const incomeBasedMax = Math.max(0, boundMaxLoan + energyBonus);
-
-    // B10: een hypotheek kan nooit hoger zijn dan de aanschafprijs van de woning
-    // (maximale LTV van 100%), ongeacht hoeveel de leencapaciteit op inkomen toelaat.
-    const priceNum = safeNum(purchasePrice);
-    const cappedByPropertyValue = priceNum > 0 && incomeBasedMax > priceNum;
-    const maxMortgage = priceNum > 0 ? Math.min(incomeBasedMax, priceNum) : incomeBasedMax;
-
-    // B11: kosten koper nu consistent gebaseerd op de daadwerkelijke aanschafprijs (net
-    // als verderop bij de financieringsgat-berekening), in plaats van op de maximale
-    // hypotheek zoals voorheen. De overdrachtsbelasting wordt gedifferentieerd bepaald
-    // (startersvrijstelling, gebruiksdoel, nieuwbouw); dit is de ene gedeelde bron
-    // waar ook newHomeCalc en doubleCostsCalc hun tarief uit halen.
-    const kostenKoperBasis = priceNum > 0 ? priceNum : maxMortgage;
-    const transferTaxInfo = getTransferTaxRate({
-      propertyUsage,
-      price: kostenKoperBasis,
-      buyers: [
-        { age: safeNum(age1), exemption: starterExemption1 },
-        ...(hasPartner2 ? [{ age: safeNum(age2), exemption: starterExemption2 }] : []),
-      ].filter((b) => b.age > 0),
-    });
-    const transferTax = kostenKoperBasis * transferTaxInfo.rate;
-
-    // Netto-opbrengst van de verkochte tweede woning: een positieve opbrengst telt
-    // alleen mee als extra eigen middelen als u die ook daadwerkelijk voor déze aankoop
-    // wilt inzetten (useSecondHomeProceeds). Een restschuld-tekort is geen keuze — dat
-    // moet u sowieso uit eigen zak bijleggen bij verkoop — en verlaagt dus altijd de
-    // beschikbare eigen middelen, ongeacht die schakelaar.
-    const secondHomeProceedsApplied =
-      hasSecondHome && secondHomeWillSell && useSecondHomeProceeds
-        ? Math.max(0, secondHomeNetProceeds)
-        : 0;
-    // Ingebracht eigen vermogen telt hier alleen mee als het nu al liquide is. Vermogen dat
-    // pas vrijkomt bij een latere gebeurtenis (bijv. de verkoop van een aangehouden tweede
-    // woning) is nu niet beschikbaar voor deze aankoop en wordt apart bijgehouden als
-    // illiquidOwnCapital — zichtbaar gemaakt in het financieringsgat, in plaats van
-    // stilzwijgend meegeteld alsof het al op de rekening staat.
-    const liquidOwnCapital1 = ownCapital1Liquid ? safeNum(ownCapital1) : 0;
-    const liquidOwnCapital2 = hasPartner2 && ownCapital2Liquid ? safeNum(ownCapital2) : 0;
-    const illiquidOwnCapital =
-      (ownCapital1Liquid ? 0 : safeNum(ownCapital1)) +
-      (hasPartner2 && !ownCapital2Liquid ? safeNum(ownCapital2) : 0);
-    const totalOwnCapital =
-      liquidOwnCapital1 + liquidOwnCapital2 + secondHomeProceedsApplied - secondHomeShortfall;
-
-    // Indicatieve hypotheek als basis voor de NHG-borgtochtprovisie: wat er na inzet van
-    // het eigen vermogen gefinancierd moet worden, begrensd door de maximale hypotheek.
-    const nhgMortgageBasis = Math.min(
-      maxMortgage,
-      Math.max(0, kostenKoperBasis - totalOwnCapital)
-    );
-    const kostenKoper = getKostenKoperBreakdown({
-      price: kostenKoperBasis,
-      mortgageAmount: nhgMortgageBasis,
-      transferTax,
-      transferTaxLabel: transferTaxInfo.shortLabel,
-      options: {
-        notaryCosts,
-        valuationCosts,
-        advisoryCosts,
-        includeBankGuarantee,
-        includeBuyersAgent,
-        includeNhgFee,
-      },
-    });
-    const ownMoney = includeKostenKoperInCalc ? kostenKoper.total : 0;
-
-    // Eenmalig aftrekbare financieringskosten (box 1, jaar van aankoop): hypotheekadvies,
-    // taxatie (voor de financiering) en de NHG-borgtochtprovisie zijn eenmalig aftrekbaar.
-    // Overdrachtsbelasting en de leveringsakte zijn dat niet. Notariskosten worden hier
-    // bewust buiten beschouwing gelaten: dat bedrag dekt zowel de niet-aftrekbare
-    // leveringsakte als de wél aftrekbare hypotheekakte, en dit veld splitst die twee niet
-    // uit — een verkeerde precisie zou hier misleidender zijn dan een duidelijke uitsluiting.
-    const deductibleFinancingCostKeys = ['advisory', 'valuation', 'nhgFee'];
-    const deductibleFinancingCosts = kostenKoper.items
-      .filter((item) => deductibleFinancingCostKeys.includes(item.key) && item.included)
-      .reduce((sum, item) => sum + item.amount, 0);
-    const financingCostsHraRate = getHraRate(toets1.toetsinkomen, toets2.toetsinkomen);
-    const financingCostsTaxBenefit = deductibleFinancingCosts * financingCostsHraRate;
-
-    const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly;
-    const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
-    const purchasingPower = maxMortgage + totalOwnCapital;
-
-    // Basis voor de aanvullende-hypotheektoets verderop: leencapaciteit o.b.v. inkomen bij
-    // de daadwerkelijke rente, zonder de generieke toetsrentecorrectie hierboven (die is
-    // gebaseerd op één algemene rentevastperiode-aanname). Bij het toetsen van de
-    // aanvullende leningdelen wordt per leningdeel opnieuw en preciezer getoetst.
-    // Ook hier geldt de AOW-toets: het bindende (laagste) scenario telt.
-    const nibudAtActualRate = getIncomeBasedMortgage(combinedIncome, safeNum(rate), monthlyDebt);
-    const boundMaxLoanAtActualRate = pensionActive
-      ? Math.min(
-          nibudAtActualRate.maxLoan,
-          getIncomeBasedMortgage(pensionCombinedIncome, safeNum(rate), monthlyDebt, { aow: true })
-            .maxLoan
-        )
-      : nibudAtActualRate.maxLoan;
-    const incomeBasedMaxAtActualRate = Math.max(0, boundMaxLoanAtActualRate + energyBonus);
-
-    // Drie leencapaciteit-stappen voor de resultaatweergave, zodat zichtbaar is waar de
-    // hypotheek precies kleiner wordt: (1) puur op inkomen, bij de werkelijke rente en
-    // zonder schulden; (2) diezelfde toets met de maandlast van schulden erin
-    // (incomeBasedMaxAtActualRate hierboven); (3) ook nog met de toetsrente-afslag die
-    // geldt zodra een leningdeel korter dan 10 jaar rentevast is (incomeBasedMax verderop,
-    // al inclusief AOW-toets). Ook hier telt het bindende AOW-scenario mee, zodat de eerste
-    // stap consistent blijft met de andere twee.
-    const nibudIncomeOnly = getIncomeBasedMortgage(combinedIncome, safeNum(rate), 0);
-    const boundMaxLoanIncomeOnly = pensionActive
-      ? Math.min(
-          nibudIncomeOnly.maxLoan,
-          getIncomeBasedMortgage(pensionCombinedIncome, safeNum(rate), 0, { aow: true }).maxLoan
-        )
-      : nibudIncomeOnly.maxLoan;
-    const maxLoanIncomeOnly = Math.max(0, boundMaxLoanIncomeOnly + energyBonus);
-
-    // Effectieve leenfactor puur ter illustratie (maximale hypotheek gedeeld door inkomen);
-    // de daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor.
-    const effectiveFactor = combinedIncome > 0 ? incomeBasedMax / combinedIncome : 0;
-
-    return {
-      combinedIncome,
-      toets1,
-      toets2,
-      woonquote,
-      effectiveFactor,
-      maxWoonlastMonthly: nibud.maxWoonlastMonthly,
-      energyBonus,
-      debtDeduction,
-      otherDebtMonthly,
-      studyDebtMonthly,
-      secondHomeMonthly,
-      secondHomeSaleCosts,
-      secondHomeNetProceeds,
-      secondHomeShortfall,
-      secondHomeCapacityReduction,
-      secondHomeProceedsApplied,
-      monthlyDebt,
-      availableMonthly: nibud.availableMonthly,
-      annuityFactor: nibud.annuityFactor,
-      maxLoanIncomeOnly,
-      incomeBasedMax,
-      incomeBasedMaxAtActualRate,
-      cappedByPropertyValue,
-      maxMortgage,
-      transferTaxInfo,
-      transferTax,
-      kostenKoper,
-      ownMoney,
-      deductibleFinancingCosts,
-      financingCostsHraRate,
-      financingCostsTaxBenefit,
-      isOverIndebted,
-      showSustainability,
-      pensionApplies,
-      pensionApplies1,
-      pensionApplies2,
-      pensionMissing1,
-      pensionMissing2,
-      pensionIncomplete,
-      pensionBinding,
-      pensionCombinedIncome,
-      currentScenarioMax,
-      pensionScenarioMax,
-      totalOwnCapital,
-      illiquidOwnCapital,
-      secondHomeNetProceedsIfSold,
-      familyLoanMonthlyDebt,
-      purchasingPower,
-      toetsrenteApplies,
-      testRate,
-    };
-  }, [
-    income1,
-    income2,
-    rate,
-    fixedRatePeriod,
-    energyLabel,
-    debt1,
-    debt2,
-    studyDebt1,
-    studyDebt2,
-    studyDebtRegime,
-    ownCapital1Liquid,
-    ownCapital2Liquid,
-    useFamilyLoan,
-    familyLoanRepaymentType,
-    familyLoanMonthlyRepayment,
-    age1,
-    age2,
-    ownCapital1,
-    ownCapital2,
-    purchasePrice,
-    propertyUsage,
-    starterExemption1,
-    starterExemption2,
-    notaryCosts,
-    valuationCosts,
-    advisoryCosts,
-    includeBankGuarantee,
-    includeBuyersAgent,
-    includeNhgFee,
-    includeKostenKoperInCalc,
-    partnerAlimony1,
-    partnerAlimony2,
-    pensionIncome1,
-    pensionIncome2,
-    incomeType1,
-    incomeType2,
-    incomeHistory1,
-    incomeHistory2,
-    thirteenthMonth1,
-    thirteenthMonth2,
-    avgBonus1,
-    avgBonus2,
-    hasPartner2,
-    hasSecondHome,
-    secondHomeWillSell,
-    useSecondHomeProceeds,
-    secondHomeValue,
-    secondHomeMortgageDebt,
-    secondHomeInterestRate,
-    secondHomeRepaymentType,
-    secondHomeRemainingYears,
-    secondHomeSaleCostsPct,
-  ]);
+  const calc = useMemo(() => computeCalc(dossierSnapshot), [dossierSnapshot]);
 
   // Bouwdepot (nieuwbouw): puur informatief, telt niet mee in de leencapaciteit. Leeg
   // bouwdepotAmount valt terug op de aanschafprijs als redelijke default.
@@ -2553,119 +2966,13 @@ function MortgageCalculatorForm({ onReset }) {
   }, [propertyUsage, bouwdepotAmount, purchasePrice, constructionMonths, rate]);
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
+  const currentLoanParts = useMemo(
+    () => toCurrentLoanParts(loanParts, elapsedMonthsSinceStart),
+    [loanParts, elapsedMonthsSinceStart]
+  );
+  const originalDebtTotal = loanParts.reduce((sum, p) => sum + safeNum(p.principal), 0);
 
-  const currentMortgage = useMemo(() => {
-    const elapsedMonths = getElapsedMonths(startDate);
-
-    const partResults = loanParts.map((part) => calculateLoanPart(part, elapsedMonths, startDate));
-
-    const totalGross = partResults.reduce((sum, p) => sum + p.grossMonthly, 0);
-    const totalInterest = partResults.reduce((sum, p) => sum + p.interestMonthly, 0);
-    const totalPrincipal = partResults.reduce((sum, p) => sum + p.principalMonthly, 0);
-    const deductibleInterest = partResults.reduce(
-      (sum, p) => sum + (p.eligibleForHRA ? p.interestMonthly : 0),
-      0
-    );
-
-    const hraRate = getHraRate(calc.toets1.toetsinkomen, calc.toets2.toetsinkomen);
-    const taxBenefit = deductibleInterest * hraRate;
-    const ewfYearly = includeEwfInNetCalc ? EWF_RATE * Math.min(safeNum(marketValue), EWF_CAP) : 0;
-    const ewfMonthly = ewfYearly / 12;
-    const netTaxBenefit = taxBenefit - ewfMonthly;
-    const totalNet = totalGross - netTaxBenefit;
-
-    const netInterestComponent = Math.max(0, totalInterest - netTaxBenefit);
-    const hasAflossingsvrij = loanParts.some((p) => p.type === 'Aflossingsvrij');
-    // B9: "Resterende rentevastperiode" deed voorheen niets. Nu telt het mee als
-    // waarschuwing wanneer een leningdeel binnen 2 jaar opnieuw moet worden vastgezet.
-    const partsWithExpiringFixedPeriod = loanParts.filter(
-      (p, i) => partResults[i].fixedPeriodExpiringSoon
-    );
-    const hasExpiringFixedPeriod = partsWithExpiringFixedPeriod.length > 0;
-
-    // Toetsrente geldt niet alleen voor een nieuwe hypotheek, maar ook voor meegenomen
-    // leningdelen met een resterende rentevastperiode korter dan 10 jaar: voor de
-    // leencapaciteitstoets wordt zo'n deel getoetst alsof de rente bij afloop stijgt
-    // naar de AFM-toetsrente, ook al is de daadwerkelijke (lagere) contractrente wat er
-    // nu echt betaald wordt.
-    const rateRiskCapacityHaircut = loanParts.reduce((sum, part, i) => {
-      const remainingFractionalYears = partResults[i].fixedPeriod.fractionalYears;
-      const testRate = getTestRate(part.rate, remainingFractionalYears);
-      const actualRate = safeNum(part.rate);
-      if (testRate === actualRate) return sum;
-      const stressResult = calculateLoanPart({ ...part, rate: testRate }, elapsedMonths, startDate);
-      const extraMonthly = Math.max(0, stressResult.grossMonthly - partResults[i].grossMonthly);
-      return sum + extraMonthly * getCapitalizationFactor(testRate);
-    }, 0);
-    // Het renterisico op een korte rentevastperiode is alleen relevant als het leningdeel
-    // daadwerkelijk wordt meegenomen; wordt de hypotheek afgelost bij verkoop, dan vervalt
-    // dat risico voor de nieuwe financiering volledig.
-    const effectiveRateRiskHaircut = takeOverMortgage ? rateRiskCapacityHaircut : 0;
-    const hasRateRiskOnPortedDebt = takeOverMortgage && rateRiskCapacityHaircut > 0;
-
-    const currentDebtBalance = loanParts.reduce((sum, p) => sum + safeNum(p.principal), 0);
-    const ltv = safeNum(marketValue) > 0 ? (currentDebtBalance / safeNum(marketValue)) * 100 : 0;
-    // Meegenomen hypotheek: alleen van toepassing als de meeneemregeling aan staat. Wordt
-    // deze uitgezet, dan wordt de bestaande hypotheek bij verkoop volledig afgelost (de
-    // overwaarde-berekening houdt daar al rekening mee) en moet de nieuwe woning volledig
-    // opnieuw gefinancierd worden.
-    const portedDebt = takeOverMortgage ? currentDebtBalance : 0;
-    // Werkelijke leencapaciteit: de inkomensgebaseerde leencapaciteit, gecorrigeerd voor het
-    // renterisico op meegenomen leningdelen met een korte rentevastperiode. Dit is het getal
-    // dat er in de praktijk toe doet, in plaats van de ongecorrigeerde leencapaciteit o.b.v.
-    // inkomen alleen. Let op: hier bewust calc.incomeBasedMax gebruikt (ongekort door de
-    // aanschafprijs), niet calc.maxMortgage. Anders zou uw bijleenruimte en maximale
-    // aankoopbudget circulair begrensd worden door de aanschafprijs die u toevallig nu heeft
-    // ingesteld, terwijl deze getallen juist bedoeld zijn om te laten zien wat maximaal
-    // haalbaar is, ongeacht de huidige stand van de schuifknop.
-    const effectiveMaxMortgage = Math.max(0, calc.incomeBasedMax - effectiveRateRiskHaircut);
-    const extraBorrowCapacity = Math.max(0, effectiveMaxMortgage - portedDebt);
-    // Werkelijke overwaarde: marktwaarde min restschuld, ongekort. Sommige geldverstrekkers
-    // tellen de nog niet (onvoorwaardelijk) verkochte woning echter niet voor 100% mee als
-    // onderpand voor de financiering, maar hanteren een verkoopafslag (bijvoorbeeld 95%). De
-    // "bruikbare" overwaarde voor financieringsdoeleinden houdt hier rekening mee.
-    const saleValueForFinancing = safeNum(marketValue) * (saleDiscountPercentage / 100);
-    const overwaarde = safeNum(marketValue) - currentDebtBalance;
-    const usableOverwaarde = Math.max(0, saleValueForFinancing - currentDebtBalance);
-    // Onderwaarde: als de (met verkoopafslag gecorrigeerde) verkoopwaarde lager is dan de
-    // restschuld, blijft er na verkoop een restschuld-tekort staan dat moet worden afgelost
-    // en dus meegefinancierd/uit eigen middelen betaald moet worden.
-    const restschuldTekort = Math.max(0, currentDebtBalance - saleValueForFinancing);
-
-    return {
-      totalGross,
-      totalInterest,
-      totalPrincipal,
-      hraRate,
-      taxBenefit,
-      ewfMonthly,
-      netTaxBenefit,
-      totalNet,
-      netInterestComponent,
-      hasAflossingsvrij,
-      hasExpiringFixedPeriod,
-      partsWithExpiringFixedPeriod,
-      rateRiskCapacityHaircut,
-      hasRateRiskOnPortedDebt,
-      effectiveMaxMortgage,
-      currentDebtBalance,
-      portedDebt,
-      ltv,
-      extraBorrowCapacity,
-      overwaarde,
-      usableOverwaarde,
-      saleValueForFinancing,
-      restschuldTekort,
-    };
-  }, [
-    loanParts,
-    startDate,
-    marketValue,
-    saleDiscountPercentage,
-    calc,
-    takeOverMortgage,
-    includeEwfInNetCalc,
-  ]);
+  const currentMortgage = useMemo(() => computeCurrentMortgage(dossierSnapshot, calc), [dossierSnapshot, calc]);
 
   const newHomeCalc = useMemo(() => {
     const price = safeNum(purchasePrice);
@@ -2699,108 +3006,9 @@ function MortgageCalculatorForm({ onReset }) {
     };
   }, [purchasePrice, calc, currentMortgage]);
 
-  const combinedGapCalc = useMemo(() => {
-    const price = safeNum(purchasePrice);
-    const portedDebt = currentMortgage.portedDebt;
-    const overwaarde = currentMortgage.usableOverwaarde;
-    const restschuldTekort = currentMortgage.restschuldTekort;
-    // Meeneemregeling: de bestaande hypotheek gaat mee tegen de oude voorwaarden, en de
-    // overwaarde komt daarnaast vrij als cash. Samen dekken deze twee posten een deel van de
-    // aanschafprijs; wat overblijft is het financieringsgat. Bij onderwaarde is er geen
-    // overwaarde maar juist een restschuld-tekort dat na verkoop moet worden afgelost; dat
-    // vergroot het gat (symmetrisch aan hoe overwaarde het gat verkleint).
-    const gap = price - portedDebt - overwaarde + restschuldTekort;
-    // Eigen inleg: standaard wordt zoveel mogelijk eigen vermogen ingezet om het gat te
-    // dichten (zoals voorheen). Met limitOwnContribution geeft u aan zélf niet meer dan een
-    // bepaald bedrag te willen inleggen (ex kosten koper, die lopen via de kaart Kosten
-    // koper) — het restant van het gat moet dan via de hypotheek of andere bronnen komen.
-    // Kosten koper worden (grotendeels) uit eigen middelen betaald en kunnen niet boven 100%
-    // LTV worden meegefinancierd. Meegeteld (includeKostenKoperInCalc) verlagen ze dus het
-    // eigen vermogen dat nog voor het financieringsgat beschikbaar is — dat verschuift het gat
-    // naar de aanvullende hypotheek en laat, bij ontoereikende capaciteit, de haalbaarheid
-    // kantelen. Zo blijft dit consistent met "Overgebleven ruimte na woning + kosten koper" in
-    // het Maximaal-aankoopbudget-blok (en met de aan/uit-schakelaar bij Kosten koper).
-    const kostenKoperCash = includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
-    const ownCapitalForGap = Math.max(0, calc.totalOwnCapital - kostenKoperCash);
-    const ownContributionCap = limitOwnContribution
-      ? Math.max(0, safeNum(desiredMaxOwnContribution))
-      : Infinity;
-    const ownCapitalApplied = Math.min(
-      ownCapitalForGap,
-      Math.max(0, gap),
-      ownContributionCap
-    );
-    // Wat er nog gefinancierd moet worden nadat de (eventueel beperkte) eigen inleg is
-    // toegepast — dit is het bedrag waarvoor hieronder aanvullende leningdelen worden
-    // opgesplitst, ongeacht of dit daadwerkelijk geleend kán worden (zie capaciteitstoets).
-    const additionalMortgage = Math.max(0, gap - ownCapitalApplied);
-    const surplus = gap < 0 ? -gap : 0;
-
-    // Twee onafhankelijke, bindende grenzen op de aanvullende hypotheek: de Nibud-
-    // inkomenstoets (extraBorrowCapacity) én het absolute plafond van de geldverstrekker
-    // (lenderCapThreshold, hierboven al meegenomen in de bepaling van de bank; hier het
-    // resterende bedrag onder dat plafond na de meegenomen hypotheek).
-    const lenderCapRoom = Math.max(0, safeNum(lenderCapThreshold) - portedDebt);
-    const additionalMortgageCapacity = Math.min(
-      currentMortgage.extraBorrowCapacity,
-      lenderCapRoom
-    );
-    const bindingCapIsLender = lenderCapRoom < currentMortgage.extraBorrowCapacity;
-    const capacityMargin = additionalMortgageCapacity - additionalMortgage;
-    const withinCapacity = capacityMargin >= 0;
-    // Sommige geldverstrekkers hanteren een interne grens voor de totale hypotheek
-    // (meegenomen plus nieuw), waarboven aanvullende acceptatie-eisen gelden.
-    const totalMortgageAfterMove = portedDebt + additionalMortgage;
-    const exceedsLenderCap = totalMortgageAfterMove > safeNum(lenderCapThreshold);
-
-    // Resterend gat na bank- en Nibud-capaciteit: hier kan een tijdelijke, onderhandse
-    // familielening inspringen — bijvoorbeeld omdat de tweede woning nog niet verkocht is
-    // en daar (anders dan bij de eigen woning) geen overbruggingskrediet op mogelijk is.
-    const shortfallBeforeFamilyLoan = Math.max(0, -capacityMargin);
-    const familyLoanApplied = useFamilyLoan
-      ? Math.min(Math.max(0, safeNum(familyLoanAmount)), shortfallBeforeFamilyLoan)
-      : 0;
-    const familyLoanMonthlyInterest = (familyLoanApplied * (safeNum(familyLoanRate) / 100)) / 12;
-    const netCapacityMargin = capacityMargin + familyLoanApplied;
-    const remainingShortfall = Math.max(0, -netCapacityMargin);
-    const withinCapacityAfterFamilyLoan = netCapacityMargin >= 0;
-
-    return {
-      portedDebt,
-      overwaarde,
-      restschuldTekort,
-      gap,
-      ownContributionCap,
-      ownCapitalApplied,
-      additionalMortgage,
-      lenderCapRoom,
-      additionalMortgageCapacity,
-      bindingCapIsLender,
-      capacityMargin,
-      withinCapacity,
-      surplus,
-      totalMortgageAfterMove,
-      exceedsLenderCap,
-      shortfallBeforeFamilyLoan,
-      familyLoanApplied,
-      familyLoanMonthlyInterest,
-      netCapacityMargin,
-      remainingShortfall,
-      withinCapacityAfterFamilyLoan,
-    };
-  }, [
-    purchasePrice,
-    calc,
-    currentMortgage,
-    lenderCapThreshold,
-    limitOwnContribution,
-    desiredMaxOwnContribution,
-    useFamilyLoan,
-    familyLoanAmount,
-    familyLoanRate,
-    includeKostenKoperInCalc,
-  ]);
-
+  const combinedGapCalc = useMemo(() => computeCombinedGap(dossierSnapshot, calc, currentMortgage), [dossierSnapshot, calc, currentMortgage]);
+  const starterGapCalc = useMemo(() => computeStarterGap(dossierSnapshot, calc), [dossierSnapshot, calc]);
+  const affordabilityLevers = useMemo(() => solveAffordabilityLevers(dossierSnapshot), [dossierSnapshot]);
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
   // Auto-sync aanvullende leningdelen: zolang de gebruiker ze niet zelf heeft aangepast
@@ -2816,7 +3024,7 @@ function MortgageCalculatorForm({ onReset }) {
     const needed = Math.max(0, Math.round(combinedGapCalc.additionalMortgage));
     const priceNum = safeNum(purchasePrice);
     const portedAflossingsvrij = takeOverMortgage
-      ? loanParts
+      ? currentLoanParts
           .filter((p) => p.type === 'Aflossingsvrij')
           .reduce((s, p) => s + safeNum(p.principal), 0)
       : 0;
@@ -2860,7 +3068,7 @@ function MortgageCalculatorForm({ onReset }) {
     combinedGapCalc.additionalMortgage,
     purchasePrice,
     takeOverMortgage,
-    loanParts,
+    currentLoanParts,
     aflossingsvrijMaxPct,
     rate,
   ]);
@@ -3041,7 +3249,7 @@ function MortgageCalculatorForm({ onReset }) {
     const totalDebtAfterMove = currentMortgage.portedDebt + totalPrincipal;
     const capacityMargin = effectiveCapacity - totalDebtAfterMove;
     const withinIncomeCapacity = capacityMargin >= 0;
-    const exceedsLenderCap = totalDebtAfterMove > safeNum(lenderCapThreshold);
+    const exceedsLenderCap = totalDebtAfterMove > getLenderCap(lenderCapThreshold);
 
     // B10-stijl: de totale hypotheek (meegenomen plus nieuw) kan nooit boven de aanschafprijs
     // van de beoogde woning uitkomen (maximale LTV van 100%).
@@ -3053,7 +3261,7 @@ function MortgageCalculatorForm({ onReset }) {
     // aflossingsvrij gefinancierd worden, over de meegenomen én de nieuwe leningdelen samen.
     // Alleen relevant als de bestaande hypotheek daadwerkelijk wordt meegenomen.
     const portedAflossingsvrij = takeOverMortgage
-      ? loanParts
+      ? currentLoanParts
           .filter((p) => p.type === 'Aflossingsvrij')
           .reduce((sum, p) => sum + safeNum(p.principal), 0)
       : 0;
@@ -3111,7 +3319,7 @@ function MortgageCalculatorForm({ onReset }) {
     calc,
     currentMortgage,
     purchasePrice,
-    loanParts,
+    currentLoanParts,
     combinedGapCalc,
     aflossingsvrijMaxPct,
     takeOverMortgage,
@@ -3148,13 +3356,9 @@ function MortgageCalculatorForm({ onReset }) {
     setAdditionalLoanTouched(false);
   };
 
-  // Starters-toets: benodigde hypotheek = aanschafprijs min ingebracht eigen vermogen,
-  // begrensd op de maximale hypotheek o.b.v. inkomen. Kosten koper worden apart uit eigen
-  // middelen betaald en tellen hier niet mee in het hypotheekbedrag.
-  const starterRequiredMortgage = Math.max(
-    0,
-    Math.min(calc.maxMortgage, safeNum(purchasePrice) - calc.totalOwnCapital)
-  );
+  // Starters-toets: benodigde hypotheek = aanschafprijs min het eigen vermogen dat na kosten
+  // koper overblijft (zie computeStarterGap), begrensd op de maximale hypotheek o.b.v. inkomen.
+  const starterRequiredMortgage = Math.min(calc.maxMortgage, starterGapCalc.requiredMortgage);
 
   const starterLoanCalc = useMemo(() => {
     const partResults = starterLoanParts.map((part) => calculateLoanPart(part, 0, todayIso));
@@ -3185,7 +3389,7 @@ function MortgageCalculatorForm({ onReset }) {
     // Sommige geldverstrekkers hanteren een interne acceptatiegrens van €1 miljoen voor
     // de totale hypotheeksom, ongeacht starter of doorstromer (zie ook combinedGapCalc/
     // additionalLoanCalc hierboven, waar dezelfde grens al gold voor doorstromers).
-    const exceedsLenderCap = totalPrincipal > safeNum(lenderCapThreshold);
+    const exceedsLenderCap = totalPrincipal > getLenderCap(lenderCapThreshold);
 
     return {
       totalPrincipal,
@@ -3295,7 +3499,7 @@ function MortgageCalculatorForm({ onReset }) {
       const monthsFromNow = year * 12;
       let portedBalance = 0;
       if (takeOverMortgage) {
-        loanParts.forEach((part) => {
+        currentLoanParts.forEach((part) => {
           portedBalance += projectRemainingBalance(
             part.principal,
             part.rate,
@@ -3318,7 +3522,7 @@ function MortgageCalculatorForm({ onReset }) {
       points.push({ year, portedBalance, newBalance, total: portedBalance + newBalance });
     }
     return points;
-  }, [loanParts, additionalLoanParts, elapsedMonthsSinceStart, takeOverMortgage]);
+  }, [currentLoanParts, additionalLoanParts, elapsedMonthsSinceStart, takeOverMortgage]);
 
   // Maandelijks aflosschema nieuwe situatie: zelfde combinatie van meegenomen + nieuwe
   // leningdelen als amortizationSchedule hierboven, maar per maand (0..360) i.p.v. per jaar,
@@ -3335,7 +3539,7 @@ function MortgageCalculatorForm({ onReset }) {
 
     const activeParts = [
       ...(takeOverMortgage
-        ? loanParts.map((p) => ({ ...p, remainingMonthsNow: portedRemainingMonthsNow }))
+        ? currentLoanParts.map((p) => ({ ...p, remainingMonthsNow: portedRemainingMonthsNow }))
         : []),
       ...additionalLoanParts.map((p) => ({ ...p, remainingMonthsNow: TERM_MONTHS })),
     ];
@@ -3384,7 +3588,7 @@ function MortgageCalculatorForm({ onReset }) {
     }
     return points;
   }, [
-    loanParts,
+    currentLoanParts,
     additionalLoanParts,
     elapsedMonthsSinceStart,
     takeOverMortgage,
@@ -3503,13 +3707,19 @@ function MortgageCalculatorForm({ onReset }) {
     bridgeLoanRate,
   ]);
 
-  // Eén samenvattend eindoordeel voor de voortgangsbalk: haalbaar zonder bestaande woning
-  // betekent dat de inkomensgebaseerde leencapaciteit de aanschafprijs dekt, met een
-  // bestaande woning betekent het dat het financieringsgat (indien van toepassing) binnen de
-  // bijleenruimte past.
+  // Eén eindoordeel voor de hele app (chip, resultaat, rail, mobiele balk en de solver): voor
+  // starters past de benodigde hypotheek (na eigen geld en kosten koper) binnen inkomen en
+  // geldverstrekkersmaximum; voor doorstromers past het financieringsgat binnen de
+  // bijleenruimte (incl. eventuele familielening). Zie evaluateAffordability.
   const overallAffordable = hasExistingHome
     ? combinedGapCalc.withinCapacityAfterFamilyLoan
-    : calc.incomeBasedMax >= safeNum(purchasePrice);
+    : starterGapCalc.feasible;
+  const affordabilityShortfall = hasExistingHome
+    ? combinedGapCalc.remainingShortfall
+    : starterGapCalc.shortfall;
+  // Schiet een starter alléén eigen geld voor kosten koper tekort, dan is "verlaag de prijs"
+  // geen zinvol advies: de vaste kosten (notaris, taxatie, advies) domineren.
+  const showPriceLever = hasExistingHome || starterGapCalc.capacityShortfall > 0;
 
   // "Wat bepaalt nu mijn maximum?" — maakt de causaliteit achter het getal zichtbaar
   // i.p.v. dat een schuif alleen een nieuw bedrag oplevert zonder uitleg waarom. Eén
@@ -3537,7 +3747,7 @@ function MortgageCalculatorForm({ onReset }) {
         return {
           label: 'Uw maximum bij de geldverstrekker',
           explanation: `Uw totale hypotheek (meegenomen plus aanvullend) komt boven de ${formatEuro(
-            safeNum(lenderCapThreshold)
+            getLenderCap(lenderCapThreshold)
           )} die u heeft ingesteld als maximum bij uw geldverstrekker.`,
         };
       }
@@ -3555,7 +3765,7 @@ function MortgageCalculatorForm({ onReset }) {
             : 'Uw bijleenruimte',
           explanation: combinedGapCalc.bindingCapIsLender
             ? `De aanvullende hypotheek die nodig is past niet binnen het ingestelde maximum van ${formatEuro(
-                safeNum(lenderCapThreshold)
+                getLenderCap(lenderCapThreshold)
               )} bij uw geldverstrekker.`
             : 'De aanvullende hypotheek die nodig is voor deze aanschafprijs past niet binnen wat u op basis van inkomen (nog) kunt bijlenen — ook niet met een eventuele familielening.',
         };
@@ -3573,6 +3783,31 @@ function MortgageCalculatorForm({ onReset }) {
           'Er speelt op dit moment geen bijzondere beperking — uw inkomen via de Nibud-woonquote is de normale grondslag voor uw bijleenruimte.',
       };
     }
+    if (starterGapCalc.cashShortfall > 0) {
+      return {
+        label: 'Uw eigen geld voor kosten koper',
+        explanation: `Kosten koper (${formatEuro(
+          starterGapCalc.kostenKoperCash
+        )}) kunnen niet worden meegefinancierd en moeten uit eigen middelen komen; uw direct beschikbare eigen vermogen is daarvoor niet toereikend.`,
+      };
+    }
+    if (starterGapCalc.capacityShortfall > 0) {
+      return starterGapCalc.bindingCapIsLender
+        ? {
+            label: 'Uw geldverstrekkersmaximum',
+            explanation: `De benodigde hypotheek past niet binnen het ingestelde maximum van ${formatEuro(
+              getLenderCap(lenderCapThreshold)
+            )} bij uw geldverstrekker.`,
+          }
+        : {
+            label: 'Uw woonquote (inkomen)',
+            explanation: `De benodigde hypotheek (${formatEuro(
+              starterGapCalc.requiredMortgage
+            )}) is hoger dan wat u op basis van uw inkomen kunt lenen (${formatEuro(
+              calc.incomeBasedMax
+            )}).`,
+          };
+    }
     if (calc.cappedByPropertyValue) {
       return {
         label: 'De aanschafprijs',
@@ -3585,7 +3820,7 @@ function MortgageCalculatorForm({ onReset }) {
       explanation:
         'Er speelt op dit moment geen bijzondere beperking — uw inkomen via de Nibud-woonquote bepaalt uw maximale hypotheek.',
     };
-  }, [calc, currentMortgage, combinedGapCalc, hasExistingHome, lenderCapThreshold]);
+  }, [calc, currentMortgage, combinedGapCalc, starterGapCalc, hasExistingHome, lenderCapThreshold]);
 
   // Dit is bewust GEEN wizard met gating: elke sectie is altijd tegelijk zichtbaar en in
   // elke volgorde te bewerken. De chips hieronder zijn dus anker-navigatie ("spring naar"),
@@ -3619,7 +3854,7 @@ function MortgageCalculatorForm({ onReset }) {
         id: 'sectie-scenarios',
         label: "Scenario's",
         status: scenarios.length > 0 ? 'done' : 'ignored',
-        guidedHidden: true,
+        guidedHidden: scenarios.length === 0,
       },
       {
         id: 'sectie-beoogde-woning',
@@ -3673,7 +3908,7 @@ function MortgageCalculatorForm({ onReset }) {
         : {
             id: 'sectie-starter-hypotheek',
             label: 'Uw hypotheek',
-            status: calc.cappedByPropertyValue
+            status: !starterGapCalc.feasible
               ? 'attention'
               : safeNum(purchasePrice) > 0 && incomeStepDone
                 ? 'done'
@@ -3695,6 +3930,7 @@ function MortgageCalculatorForm({ onReset }) {
     overallAffordable,
     calc,
     combinedGapCalc,
+    starterGapCalc,
     currentMortgage,
     purchasePrice,
     marketValue,
@@ -3740,9 +3976,7 @@ function MortgageCalculatorForm({ onReset }) {
   // haalbaar (niet bij elke wijziging, alleen bij die ene overgang) een korte, speelse
   // wiebel/schaal-animatie op de statuspil in de sidebar, in plaats van dat de kleur
   // stilletjes van rood/amber naar groen verspringt.
-  const isAffordableNow = hasExistingHome
-    ? combinedGapCalc.withinCapacity
-    : !calc.isOverIndebted && !calc.cappedByPropertyValue;
+  const isAffordableNow = overallAffordable;
   const [celebrate, setCelebrate] = useState(false);
   const wasAffordable = useRef(isAffordableNow);
   useEffect(() => {
@@ -4135,18 +4369,28 @@ function MortgageCalculatorForm({ onReset }) {
           </div>
         </div>
 
-        {!guided && (
+        {(!guided || scenarios.length > 0) && (
         <div id="sectie-scenarios" className="mb-6 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
           <button
             type="button"
             onClick={() => setShowScenarios((prev) => !prev)}
+            aria-expanded={showScenarios}
             className="flex w-full items-center justify-between gap-3 p-4 text-left transition-colors duration-200 hover:bg-slate-50"
           >
             <div className="flex items-center gap-2">
-              <Save className="h-4 w-4 text-slate-500" />
-              <span className="text-sm font-medium text-slate-700">
-                Scenario's {scenarios.length > 0 ? `(${scenarios.length})` : ''}
-              </span>
+              <Save className="h-4 w-4 flex-shrink-0 text-slate-500" />
+              <div>
+                <span className="text-sm font-medium text-slate-700">
+                  Scenario's vergelijken {scenarios.length > 0 ? `(${scenarios.length})` : ''}
+                </span>
+                {!showScenarios && (
+                  <p className="text-xs text-slate-400">
+                    {scenarios.length > 0
+                      ? 'Bekijk uw opgeslagen varianten naast de huidige invoer'
+                      : 'Sla varianten op (andere prijs, rente, aflosvorm) en zet ze naast elkaar'}
+                  </p>
+                )}
+              </div>
             </div>
             {showScenarios ? (
               <ChevronUp className="h-4 w-4 text-slate-400" />
@@ -5580,66 +5824,42 @@ function MortgageCalculatorForm({ onReset }) {
                     : { scale: 1, rotate: 0 }
                 }
                 transition={{ duration: 0.7, ease: 'easeOut' }}
-                className={`mb-5 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
-                  hasExistingHome
-                    ? combinedGapCalc.withinCapacity
-                      ? 'bg-emerald-500/20 text-emerald-50'
-                      : 'bg-red-500/20 text-red-50'
-                    : calc.isOverIndebted
-                    ? 'bg-red-500/20 text-red-50'
-                    : calc.cappedByPropertyValue
-                    ? 'bg-amber-500/20 text-amber-50'
-                    : 'bg-emerald-500/20 text-emerald-50'
+                className={`mb-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
+                  overallAffordable ? 'bg-emerald-500/20 text-emerald-50' : 'bg-red-500/20 text-red-50'
                 }`}
               >
-                {hasExistingHome ? (
-                  combinedGapCalc.withinCapacity ? (
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  ) : (
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                  )
-                ) : calc.isOverIndebted ? (
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                ) : calc.cappedByPropertyValue ? (
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                ) : (
+                {overallAffordable ? (
                   <CheckCircle2 className="h-3.5 w-3.5" />
+                ) : (
+                  <AlertTriangle className="h-3.5 w-3.5" />
                 )}
-                {hasExistingHome
-                  ? combinedGapCalc.withinCapacity
-                    ? 'Haalbaar incl. overwaarde'
-                    : 'Aanvullende hypotheek te hoog'
-                  : calc.isOverIndebted
-                  ? 'Schulden hoger dan leencapaciteit'
-                  : calc.cappedByPropertyValue
-                  ? 'Begrensd door aanschafprijs'
-                  : 'Haalbaar op basis van inkomen'}
+                {overallAffordable ? 'Haalbaar' : 'Nog niet haalbaar'}
               </motion.div>
 
-              <AnimatePresence mode="wait">
-                {bindingFactor && (
-                  <motion.div
-                    key={bindingFactor.label}
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 4 }}
-                    transition={{ duration: 0.2 }}
-                    className="mb-5 rounded-xl bg-white/10 px-4 py-3"
-                  >
-                    <p className="text-[11px] uppercase tracking-wide text-blue-200">
-                      Bepalend voor uw maximum nu
-                    </p>
-                    <p className="mt-0.5 text-sm font-semibold text-white">
-                      {bindingFactor.label}
-                    </p>
-                    <p className="mt-1 text-xs leading-relaxed text-blue-100/80">
-                      {bindingFactor.explanation}
-                    </p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              <p className="text-lg font-semibold leading-snug text-white">
+                {calc.combinedIncome <= 0
+                  ? 'Vul uw inkomen in om te zien of deze woning haalbaar is.'
+                  : overallAffordable
+                    ? `U kunt een woning van ${formatEuro(purchasePrice)} financieren.`
+                    : `Voor een woning van ${formatEuro(purchasePrice)} komt u ${formatEuro(
+                        affordabilityShortfall
+                      )} tekort.`}
+              </p>
+              {bindingFactor && (
+                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-blue-100">
+                  <span>
+                    Bepalend: <span className="font-semibold text-white">{bindingFactor.label}</span>
+                  </span>
+                  <InfoTooltip variant="light" text={bindingFactor.explanation} />
+                </p>
+              )}
+              {calc.pensionIncomplete && (
+                <p className="mt-1.5 text-xs text-amber-200">
+                  Let op: vul het verwachte pensioeninkomen in — de AOW-toets is nog onvolledig.
+                </p>
+              )}
 
-              <div className="space-y-1">
+              <div className="mt-6 space-y-1">
                 <p className="text-sm text-blue-100">
                   {hasExistingHome ? 'Maximaal aankoopbudget' : 'Maximale hypotheek'}
                 </p>
@@ -5654,347 +5874,481 @@ function MortgageCalculatorForm({ onReset }) {
                 )}
               </div>
 
-              {hasExistingHome && (
-                <div className="mt-4 flex flex-col gap-1 rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                  <div>
-                    <p className="text-xs font-medium text-amber-100">O.b.v. inkomen alleen</p>
-                    <p className="text-[11px] text-amber-200/70">
-                      zonder overwaarde of meeneemregeling
-                    </p>
-                  </div>
-                  <p className="text-lg font-bold text-amber-50">{formatEuro(calc.maxMortgage)}</p>
+              {calc.combinedIncome > 0 && (
+                <div className="mt-5 rounded-xl bg-white/10 px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-200">
+                    {overallAffordable ? 'Uw ruimte' : 'Zo wordt het haalbaar'}
+                  </p>
+                  {overallAffordable ? (
+                    affordabilityLevers.maxPrice != null && (
+                      <p className="mt-1 text-sm leading-relaxed text-blue-50">
+                        Met deze invoer kunt u een woning kopen tot ca.{' '}
+                        <span className="font-semibold text-white">
+                          {affordabilityLevers.maxPrice >= SOLVER_PRICE_CEILING
+                            ? `meer dan ${formatEuro(SOLVER_PRICE_CEILING)}`
+                            : formatEuro(affordabilityLevers.maxPrice)}
+                        </span>
+                        {includeKostenKoperInCalc && ' (kosten koper al meegerekend)'}.
+                      </p>
+                    )
+                  ) : (
+                    <ul className="mt-2 space-y-2.5 text-sm text-blue-50">
+                      {showPriceLever && (
+                        <li className="flex flex-col items-start gap-1.5">
+                          <span>
+                            {affordabilityLevers.maxPrice != null ? (
+                              <>
+                                Verlaag de aanschafprijs naar max.{' '}
+                                <span className="font-semibold text-white">
+                                  {formatEuro(affordabilityLevers.maxPrice)}
+                                </span>
+                              </>
+                            ) : (
+                              'Met deze invoer is geen enkele aanschafprijs haalbaar.'
+                            )}
+                          </span>
+                          {affordabilityLevers.maxPrice != null && (
+                            <button
+                              type="button"
+                              onClick={() => setPurchasePrice(affordabilityLevers.maxPrice)}
+                              className="flex-shrink-0 rounded-md bg-white/15 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-white/25"
+                            >
+                              Toepassen
+                            </button>
+                          )}
+                        </li>
+                      )}
+                      {affordabilityLevers.extraOwnCapital > 0 && (
+                        <li>
+                          {showPriceLever ? 'Of breng' : 'Breng'}{' '}
+                          <span className="font-semibold text-white">
+                            {formatEuro(affordabilityLevers.extraOwnCapital)}
+                          </span>{' '}
+                          extra direct beschikbaar eigen geld in
+                        </li>
+                      )}
+                      {affordabilityLevers.extraOwnCapital == null && limitOwnContribution && hasExistingHome && (
+                        <li className="text-xs text-blue-200">
+                          Extra eigen geld helpt niet zolang uw eigen-inleg-limiet (kaart Extra
+                          bijleenruimte) actief is.
+                        </li>
+                      )}
+                      {affordabilityLevers.fixedRate && (
+                        <li className="flex flex-col items-start gap-1.5">
+                          <span>
+                            Of kies een rentevastperiode van 10 jaar of langer —{' '}
+                            {affordabilityLevers.fixedRate.affordable
+                              ? 'dan vervalt de toetsrente en is het haalbaar'
+                              : `dan vervalt de toetsrente en daalt het tekort naar ${formatEuro(
+                                  affordabilityLevers.fixedRate.shortfall
+                                )}`}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setFixedRatePeriod(10)}
+                            className="flex-shrink-0 rounded-md bg-white/15 px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-white/25"
+                          >
+                            Toepassen
+                          </button>
+                        </li>
+                      )}
+                    </ul>
+                  )}
                 </div>
               )}
 
-              {!hasExistingHome && (
-                <div className="mt-4 space-y-2 rounded-xl bg-white/10 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex items-center gap-1.5 text-xs text-blue-100">
-                      Leencapaciteit zonder afslagen
-                      <InfoTooltip
-                        variant="light"
-                        text="Uw leencapaciteit op basis van de Nibud-woonquote en uw werkelijke rente, zonder rekening te houden met bestaande schulden of renterisico."
-                      />
-                    </span>
-                    <span className="text-sm font-semibold text-white">
-                      {formatEuro(calc.maxLoanIncomeOnly)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex items-center gap-1.5 text-xs text-blue-100">
-                      Met afslag schulden
-                      <InfoTooltip
-                        variant="light"
-                        text="Hetzelfde bedrag, nu met de maandlast van uw overige schulden en studieschuld erin verwerkt (die verlagen de beschikbare ruimte voor woonlasten)."
-                      />
-                    </span>
-                    <span className="text-sm font-semibold text-white">
-                      {formatEuro(calc.incomeBasedMaxAtActualRate)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 border-t border-white/15 pt-2">
-                    <span className="flex items-center gap-1.5 text-xs font-medium text-blue-50">
-                      Met afslag schulden + renterisico
-                      <InfoTooltip
-                        variant="light"
-                        text="Definitief bindend bedrag: ook getoetst tegen de (hogere) AFM-toetsrente zodra een leningdeel korter dan 10 jaar rentevast is, en tegen het verwachte pensioeninkomen indien van toepassing. Is uw rente al 10 jaar of langer vast en geen AOW-toets van toepassing, dan is dit gelijk aan de regel hierboven."
-                      />
-                    </span>
-                    <span className="text-base font-bold text-white">
-                      {formatEuro(calc.incomeBasedMax)}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              <AnimatePresence>
-                {!hasExistingHome && calc.cappedByPropertyValue && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8, scale: 0.97 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 8, scale: 0.97 }}
-                    transition={{ duration: 0.25, ease: 'easeOut' }}
-                    className="mt-4 flex items-start gap-2 rounded-xl border border-amber-300/30 bg-amber-500/20 p-3"
-                  >
-                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-200" />
-                    <p className="text-xs text-amber-50">
-                      Uw leencapaciteit o.b.v. inkomen is {formatEuro(calc.incomeBasedMax)}, hoger
-                      dan de aanschafprijs. Een hypotheek kan nooit boven de aanschafprijs uitkomen.
-                    </p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <div className="mt-4 flex flex-col gap-1 rounded-xl bg-white/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                <span className="text-sm text-blue-100">
-                  {hasExistingHome
-                    ? 'Aanvullende hypotheek voor huidige aanschafprijs'
-                    : 'Totaal aankoopvermogen (incl. eigen vermogen)'}
-                </span>
-                <span className="text-xl font-bold">
-                  {formatEuro(hasExistingHome ? combinedGapCalc.additionalMortgage : calc.purchasingPower)}
-                </span>
-              </div>
-
-              <div className="my-6 h-px w-full bg-white/15" />
-
-              <div className="space-y-4">
-                <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-sm text-blue-100">Geschat eigen geld (kosten koper)</p>
-                  <p className="text-lg font-semibold">{formatEuro(calc.ownMoney)}</p>
-                </div>
-                {!includeKostenKoperInCalc && (
-                  <p className="-mt-2.5 text-[11px] text-blue-200/70">
-                    Kosten koper ({formatEuro(calc.kostenKoper.total)}) telt nog niet mee — zet
-                    "Meenemen in berekening" aan in de kaart Kosten koper.
-                  </p>
-                )}
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-blue-100">Ingebracht eigen vermogen</p>
-                  <p className="text-sm font-medium">{formatEuro(calc.totalOwnCapital)}</p>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-sm text-blue-100">
-                    Gezamenlijk toetsinkomen
-                    <InfoTooltip
-                      variant="light"
-                      text="Het inkomen waarmee de leencapaciteit wordt getoetst: bruto inkomen plus structureel/gemiddeld extra inkomen, minus betaalde partneralimentatie. Niet per se hetzelfde als uw bruto jaarinkomen."
-                    />
-                  </span>
-                  <p className="text-sm font-medium">{formatEuro(calc.combinedIncome)}</p>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-sm text-blue-100">
-                    Woonquote (Nibud 2026)
-                    <InfoTooltip
-                      variant="light"
-                      text="Het percentage van uw toetsinkomen dat u volgens de officiële Nibud-tabel maximaal aan woonlasten mag besteden. Hoger inkomen en hogere toetsrente geven doorgaans een hogere woonquote."
-                    />
-                  </span>
-                  <p className="text-sm font-medium">
-                    {(calc.woonquote * 100).toFixed(1).replace('.', ',')}%
-                  </p>
-                </div>
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-blue-100">Max. bruto woonlast p/m</p>
-                  <p className="text-sm font-medium">{formatEuro(calc.maxWoonlastMonthly)}</p>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-sm text-blue-100">
-                    Effectieve leenfactor
-                    <InfoTooltip
-                      variant="light"
-                      text="Uw maximale hypotheek gedeeld door uw toetsinkomen, puur ter illustratie. De daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor."
-                    />
-                  </span>
-                  <p className="text-sm font-medium">
-                    {calc.effectiveFactor.toFixed(1).replace('.', ',')}x
-                  </p>
-                </div>
-                {calc.debtDeduction > 0 && (
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-blue-100">Afslag i.v.m. schulden</p>
-                    <p className="text-sm font-medium text-red-200">
-                      -{formatEuro(calc.debtDeduction)}
-                    </p>
-                  </div>
-                )}
-                {calc.pensionBinding && (
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-amber-200">AOW-toets bindend (pensioeninkomen)</p>
-                    <p className="text-sm font-medium text-amber-200">
-                      {formatEuro(calc.pensionScenarioMax)}
-                    </p>
-                  </div>
-                )}
-                {calc.pensionIncomplete && (
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-amber-200">AOW-toets onvolledig</p>
-                    <p className="text-sm font-medium text-amber-200">pensioeninkomen?</p>
-                  </div>
-                )}
-              </div>
-
-              <AnimatePresence>
-                {calc.showSustainability && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8, scale: 0.97 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 8, scale: 0.97 }}
-                    transition={{ duration: 0.25, ease: 'easeOut' }}
-                    className="mt-6 flex items-start gap-2 rounded-xl bg-emerald-500/20 border border-emerald-300/30 p-3"
-                  >
-                    <Sparkles className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-200" />
-                    <p className="text-xs text-emerald-50">
-                      + €20.000 extra budget beschikbaar (uitsluitend te besteden aan
-                      verduurzaming)
-                    </p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <AnimatePresence>
-                {calc.isOverIndebted && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8, scale: 0.97 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: 8, scale: 0.97 }}
-                    transition={{ duration: 0.25, ease: 'easeOut' }}
-                    className="mt-6 flex items-start gap-2 rounded-xl bg-red-500/20 border border-red-300/30 p-3"
-                  >
-                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-200" />
-                    <p className="text-xs text-red-50">
-                      De opgegeven schulden zijn hoger dan de totale leencapaciteit. De maximale
-                      hypotheek is op €0 gezet.
-                    </p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <div className="mt-6 border-t border-white/15 pt-4">
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-white/15 pt-4">
                 <button
                   type="button"
-                  onClick={() => setShowAuditTrail((prev) => !prev)}
-                  className="flex w-full items-center justify-between gap-3 text-left"
+                  onClick={toggleResultDetails}
+                  aria-expanded={showResultDetails}
+                  className="flex items-center gap-1.5 text-sm font-medium text-blue-100 transition-colors hover:text-white"
                 >
-                  <span className="flex items-center gap-2 text-sm font-medium text-blue-100">
-                    <Calculator className="h-4 w-4" />
-                    Uw rekensom stap voor stap
-                  </span>
-                  {showAuditTrail ? (
-                    <ChevronUp className="h-4 w-4 flex-shrink-0 text-blue-200" />
+                  {showResultDetails ? 'Verberg details' : 'Toon alle details'}
+                  {showResultDetails ? (
+                    <ChevronUp className="h-4 w-4" />
                   ) : (
-                    <ChevronDown className="h-4 w-4 flex-shrink-0 text-blue-200" />
+                    <ChevronDown className="h-4 w-4" />
                   )}
                 </button>
-                <AnimatePresence initial={false}>
-                  {showAuditTrail && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3, ease: 'easeOut' }}
-                      className="overflow-hidden"
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={quickSaveScenario}
+                    className="flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/25"
+                  >
+                    {scenarioJustSaved ? (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
+                    {scenarioJustSaved ? 'Opgeslagen' : 'Bewaar als scenario'}
+                  </button>
+                  {scenarios.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={openScenarioComparison}
+                      className="rounded-lg px-2.5 py-1.5 text-xs font-medium text-blue-100 underline-offset-2 transition-colors hover:text-white hover:underline"
                     >
-                      <ol className="mt-4 space-y-3 text-xs text-blue-100">
-                        <li className="rounded-lg bg-white/10 p-3">
-                          <p className="font-semibold text-white">1. Toetsinkomen</p>
-                          <div className="mt-1.5 space-y-1">
-                            <p>
-                              {hasPartner2 ? 'Partner 1' : 'Aanvrager'}: {formatEuro(calc.toets1.base)}
-                              {calc.toets1.structural > 0 && (
-                                <> + {formatEuro(calc.toets1.structural)} structureel</>
-                              )}
-                              {calc.toets1.alimonyDeduction > 0 && (
-                                <> − {formatEuro(calc.toets1.alimonyDeduction)} alimentatie</>
-                              )}{' '}
-                              = {formatEuro(calc.toets1.toetsinkomen)}
-                              {calc.toets1.usesHistory &&
-                                calc.toets1.cappedAtLastYear &&
-                                ' (gemaximeerd op laatste jaar)'}
-                            </p>
-                            {hasPartner2 && (
-                              <p>
-                                Partner 2: {formatEuro(calc.toets2.base)}
-                                {calc.toets2.structural > 0 && (
-                                  <> + {formatEuro(calc.toets2.structural)} structureel</>
-                                )}
-                                {calc.toets2.alimonyDeduction > 0 && (
-                                  <> − {formatEuro(calc.toets2.alimonyDeduction)} alimentatie</>
-                                )}{' '}
-                                = {formatEuro(calc.toets2.toetsinkomen)}
-                                {calc.toets2.usesHistory &&
-                                  calc.toets2.cappedAtLastYear &&
-                                  ' (gemaximeerd op laatste jaar)'}
-                              </p>
-                            )}
-                            <p className="font-medium text-white">
-                              Gezamenlijk toetsinkomen = {formatEuro(calc.combinedIncome)}
-                            </p>
-                          </div>
-                        </li>
-                        <li className="rounded-lg bg-white/10 p-3">
-                          <p className="font-semibold text-white">2. Woonquote</p>
-                          <p className="mt-1.5">
-                            Bij {formatEuro(calc.combinedIncome)} toetsinkomen en{' '}
-                            {formatRate(calc.testRate)} toetsrente
-                            {calc.toetsrenteApplies &&
-                              ' (AFM-toetsrente, hoger dan uw eigen rente)'}
-                            : woonquote = {(calc.woonquote * 100).toFixed(1).replace('.', ',')}%
-                          </p>
-                        </li>
-                        <li className="rounded-lg bg-white/10 p-3">
-                          <p className="font-semibold text-white">3. Maximale bruto woonlast</p>
-                          <p className="mt-1.5">
-                            {(calc.woonquote * 100).toFixed(1).replace('.', ',')}% ×{' '}
-                            {formatEuro(calc.combinedIncome)} ÷ 12 = {formatEuro(calc.maxWoonlastMonthly)}
-                            /mnd
-                          </p>
-                        </li>
-                        {calc.monthlyDebt > 0 && (
-                          <li className="rounded-lg bg-white/10 p-3">
-                            <p className="font-semibold text-white">4. Schulden maandlast</p>
-                            <p className="mt-1.5">
-                              {calc.otherDebtMonthly > 0 && (
-                                <>
-                                  Overige schulden: −{formatEuro(calc.otherDebtMonthly)}/mnd
-                                  <br />
-                                </>
-                              )}
-                              {calc.studyDebtMonthly > 0 && (
-                                <>
-                                  Studieschuld: −{formatEuro(calc.studyDebtMonthly)}/mnd
-                                  <br />
-                                </>
-                              )}
-                              {formatEuro(calc.maxWoonlastMonthly)} − {formatEuro(calc.monthlyDebt)} ={' '}
-                              {formatEuro(calc.availableMonthly)}/mnd beschikbaar
-                            </p>
-                          </li>
-                        )}
-                        <li className="rounded-lg bg-white/10 p-3">
-                          <p className="font-semibold text-white">
-                            {calc.monthlyDebt > 0 ? '5' : '4'}. Kapitaliseren naar hypotheek
-                          </p>
-                          <p className="mt-1.5">
-                            {formatEuro(calc.availableMonthly)}/mnd × annuïteitenfactor{' '}
-                            {calc.annuityFactor.toFixed(1).replace('.', ',')} (360 mnd bij{' '}
-                            {formatRate(calc.testRate)}) ={' '}
-                            {formatEuro(calc.availableMonthly * calc.annuityFactor)}
-                          </p>
-                          {calc.pensionBinding && (
-                            <p className="mt-1 text-amber-200">
-                              De AOW-toets komt met het verwachte pensioeninkomen lager uit (
-                              {formatEuro(calc.pensionScenarioMax)}) en is hier bindend in plaats
-                              van dit bedrag.
-                            </p>
-                          )}
-                        </li>
-                        {calc.energyBonus > 0 && (
-                          <li className="rounded-lg bg-white/10 p-3">
-                            <p className="font-semibold text-white">Energielabelbonus</p>
-                            <p className="mt-1.5">
-                              + {formatEuro(calc.energyBonus)} vanwege energielabel {energyLabel}
-                            </p>
-                          </li>
-                        )}
-                        <li className="rounded-lg bg-white/15 p-3">
-                          <p className="font-semibold text-white">= Hypotheek o.b.v. inkomen</p>
-                          <p className="mt-1.5 text-base font-bold text-white">
-                            {formatEuro(calc.incomeBasedMax)}
-                          </p>
-                          {calc.cappedByPropertyValue && (
-                            <p className="mt-1 text-amber-200">
-                              Begrensd door de aanschafprijs (max. 100% LTV):{' '}
-                              {formatEuro(calc.maxMortgage)}
-                            </p>
-                          )}
-                        </li>
-                      </ol>
-                    </motion.div>
+                      Vergelijk ({scenarios.length})
+                    </button>
                   )}
-                </AnimatePresence>
+                </div>
               </div>
+
+              <AnimatePresence initial={false}>
+                {showResultDetails && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.3, ease: 'easeOut' }}
+                    className="overflow-hidden"
+                  >
+                  {hasExistingHome && (
+                    <div className="mt-4 flex flex-col gap-1 rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                      <div>
+                        <p className="text-xs font-medium text-amber-100">O.b.v. inkomen alleen</p>
+                        <p className="text-[11px] text-amber-200/70">
+                          zonder overwaarde of meeneemregeling
+                        </p>
+                      </div>
+                      <p className="text-lg font-bold text-amber-50">{formatEuro(calc.maxMortgage)}</p>
+                    </div>
+                  )}
+
+                  {!hasExistingHome && (
+                    <div className="mt-4 space-y-2 rounded-xl bg-white/10 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="flex items-center gap-1.5 text-xs text-blue-100">
+                          Leencapaciteit zonder afslagen
+                          <InfoTooltip
+                            variant="light"
+                            text="Uw leencapaciteit op basis van de Nibud-woonquote en uw werkelijke rente, zonder rekening te houden met bestaande schulden of renterisico."
+                          />
+                        </span>
+                        <span className="text-sm font-semibold text-white">
+                          {formatEuro(calc.maxLoanIncomeOnly)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="flex items-center gap-1.5 text-xs text-blue-100">
+                          Met afslag schulden
+                          <InfoTooltip
+                            variant="light"
+                            text="Hetzelfde bedrag, nu met de maandlast van uw overige schulden en studieschuld erin verwerkt (die verlagen de beschikbare ruimte voor woonlasten)."
+                          />
+                        </span>
+                        <span className="text-sm font-semibold text-white">
+                          {formatEuro(calc.incomeBasedMaxAtActualRate)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 border-t border-white/15 pt-2">
+                        <span className="flex items-center gap-1.5 text-xs font-medium text-blue-50">
+                          Met afslag schulden + renterisico
+                          <InfoTooltip
+                            variant="light"
+                            text="Definitief bindend bedrag: ook getoetst tegen de (hogere) AFM-toetsrente zodra een leningdeel korter dan 10 jaar rentevast is, en tegen het verwachte pensioeninkomen indien van toepassing. Is uw rente al 10 jaar of langer vast en geen AOW-toets van toepassing, dan is dit gelijk aan de regel hierboven."
+                          />
+                        </span>
+                        <span className="text-base font-bold text-white">
+                          {formatEuro(calc.incomeBasedMax)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  <AnimatePresence>
+                    {!hasExistingHome && calc.cappedByPropertyValue && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                        transition={{ duration: 0.25, ease: 'easeOut' }}
+                        className="mt-4 flex items-start gap-2 rounded-xl border border-amber-300/30 bg-amber-500/20 p-3"
+                      >
+                        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-200" />
+                        <p className="text-xs text-amber-50">
+                          Uw leencapaciteit o.b.v. inkomen is {formatEuro(calc.incomeBasedMax)}, hoger
+                          dan de aanschafprijs. Een hypotheek kan nooit boven de aanschafprijs uitkomen.
+                        </p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <div className="mt-4 flex flex-col gap-1 rounded-xl bg-white/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                    <span className="text-sm text-blue-100">
+                      {hasExistingHome
+                        ? 'Aanvullende hypotheek voor huidige aanschafprijs'
+                        : 'Totaal aankoopvermogen (incl. eigen vermogen)'}
+                    </span>
+                    <span className="text-xl font-bold">
+                      {formatEuro(hasExistingHome ? combinedGapCalc.additionalMortgage : calc.purchasingPower)}
+                    </span>
+                  </div>
+
+                  <div className="my-6 h-px w-full bg-white/15" />
+
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm text-blue-100">Geschat eigen geld (kosten koper)</p>
+                      <p className="text-lg font-semibold">{formatEuro(calc.ownMoney)}</p>
+                    </div>
+                    {!includeKostenKoperInCalc && (
+                      <p className="-mt-2.5 text-[11px] text-blue-200/70">
+                        Kosten koper ({formatEuro(calc.kostenKoper.total)}) telt nog niet mee — zet
+                        "Meenemen in berekening" aan in de kaart Kosten koper.
+                      </p>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-blue-100">Ingebracht eigen vermogen</p>
+                      <p className="text-sm font-medium">{formatEuro(calc.totalOwnCapital)}</p>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-sm text-blue-100">
+                        Gezamenlijk toetsinkomen
+                        <InfoTooltip
+                          variant="light"
+                          text="Het inkomen waarmee de leencapaciteit wordt getoetst: bruto inkomen plus structureel/gemiddeld extra inkomen, minus betaalde partneralimentatie. Niet per se hetzelfde als uw bruto jaarinkomen."
+                        />
+                      </span>
+                      <p className="text-sm font-medium">{formatEuro(calc.combinedIncome)}</p>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-sm text-blue-100">
+                        Woonquote (Nibud 2026)
+                        <InfoTooltip
+                          variant="light"
+                          text="Het percentage van uw toetsinkomen dat u volgens de officiële Nibud-tabel maximaal aan woonlasten mag besteden. Hoger inkomen en hogere toetsrente geven doorgaans een hogere woonquote."
+                        />
+                      </span>
+                      <p className="text-sm font-medium">
+                        {(calc.woonquote * 100).toFixed(1).replace('.', ',')}%
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-blue-100">Max. bruto woonlast p/m</p>
+                      <p className="text-sm font-medium">{formatEuro(calc.maxWoonlastMonthly)}</p>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-sm text-blue-100">
+                        Effectieve leenfactor
+                        <InfoTooltip
+                          variant="light"
+                          text="Uw maximale hypotheek gedeeld door uw toetsinkomen, puur ter illustratie. De daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor."
+                        />
+                      </span>
+                      <p className="text-sm font-medium">
+                        {calc.effectiveFactor.toFixed(1).replace('.', ',')}x
+                      </p>
+                    </div>
+                    {calc.debtDeduction > 0 && (
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-blue-100">Afslag i.v.m. schulden</p>
+                        <p className="text-sm font-medium text-red-200">
+                          -{formatEuro(calc.debtDeduction)}
+                        </p>
+                      </div>
+                    )}
+                    {calc.pensionBinding && (
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-amber-200">AOW-toets bindend (pensioeninkomen)</p>
+                        <p className="text-sm font-medium text-amber-200">
+                          {formatEuro(calc.pensionScenarioMax)}
+                        </p>
+                      </div>
+                    )}
+                    {calc.pensionIncomplete && (
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-amber-200">AOW-toets onvolledig</p>
+                        <p className="text-sm font-medium text-amber-200">pensioeninkomen?</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <AnimatePresence>
+                    {calc.showSustainability && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                        transition={{ duration: 0.25, ease: 'easeOut' }}
+                        className="mt-6 flex items-start gap-2 rounded-xl bg-emerald-500/20 border border-emerald-300/30 p-3"
+                      >
+                        <Sparkles className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-200" />
+                        <p className="text-xs text-emerald-50">
+                          + €20.000 extra budget beschikbaar (uitsluitend te besteden aan
+                          verduurzaming)
+                        </p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <AnimatePresence>
+                    {calc.isOverIndebted && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 8, scale: 0.97 }}
+                        transition={{ duration: 0.25, ease: 'easeOut' }}
+                        className="mt-6 flex items-start gap-2 rounded-xl bg-red-500/20 border border-red-300/30 p-3"
+                      >
+                        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-200" />
+                        <p className="text-xs text-red-50">
+                          De opgegeven schulden zijn hoger dan de totale leencapaciteit. De maximale
+                          hypotheek is op €0 gezet.
+                        </p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <div className="mt-6 border-t border-white/15 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowAuditTrail((prev) => !prev)}
+                      className="flex w-full items-center justify-between gap-3 text-left"
+                    >
+                      <span className="flex items-center gap-2 text-sm font-medium text-blue-100">
+                        <Calculator className="h-4 w-4" />
+                        Uw rekensom stap voor stap
+                      </span>
+                      {showAuditTrail ? (
+                        <ChevronUp className="h-4 w-4 flex-shrink-0 text-blue-200" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 flex-shrink-0 text-blue-200" />
+                      )}
+                    </button>
+                    <AnimatePresence initial={false}>
+                      {showAuditTrail && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.3, ease: 'easeOut' }}
+                          className="overflow-hidden"
+                        >
+                          <ol className="mt-4 space-y-3 text-xs text-blue-100">
+                            <li className="rounded-lg bg-white/10 p-3">
+                              <p className="font-semibold text-white">1. Toetsinkomen</p>
+                              <div className="mt-1.5 space-y-1">
+                                <p>
+                                  {hasPartner2 ? 'Partner 1' : 'Aanvrager'}: {formatEuro(calc.toets1.base)}
+                                  {calc.toets1.structural > 0 && (
+                                    <> + {formatEuro(calc.toets1.structural)} structureel</>
+                                  )}
+                                  {calc.toets1.alimonyDeduction > 0 && (
+                                    <> − {formatEuro(calc.toets1.alimonyDeduction)} alimentatie</>
+                                  )}{' '}
+                                  = {formatEuro(calc.toets1.toetsinkomen)}
+                                  {calc.toets1.usesHistory &&
+                                    calc.toets1.cappedAtLastYear &&
+                                    ' (gemaximeerd op laatste jaar)'}
+                                </p>
+                                {hasPartner2 && (
+                                  <p>
+                                    Partner 2: {formatEuro(calc.toets2.base)}
+                                    {calc.toets2.structural > 0 && (
+                                      <> + {formatEuro(calc.toets2.structural)} structureel</>
+                                    )}
+                                    {calc.toets2.alimonyDeduction > 0 && (
+                                      <> − {formatEuro(calc.toets2.alimonyDeduction)} alimentatie</>
+                                    )}{' '}
+                                    = {formatEuro(calc.toets2.toetsinkomen)}
+                                    {calc.toets2.usesHistory &&
+                                      calc.toets2.cappedAtLastYear &&
+                                      ' (gemaximeerd op laatste jaar)'}
+                                  </p>
+                                )}
+                                <p className="font-medium text-white">
+                                  Gezamenlijk toetsinkomen = {formatEuro(calc.combinedIncome)}
+                                </p>
+                              </div>
+                            </li>
+                            <li className="rounded-lg bg-white/10 p-3">
+                              <p className="font-semibold text-white">2. Woonquote</p>
+                              <p className="mt-1.5">
+                                Bij {formatEuro(calc.combinedIncome)} toetsinkomen en{' '}
+                                {formatRate(calc.testRate)} toetsrente
+                                {calc.toetsrenteApplies &&
+                                  ' (AFM-toetsrente, hoger dan uw eigen rente)'}
+                                : woonquote = {(calc.woonquote * 100).toFixed(1).replace('.', ',')}%
+                              </p>
+                            </li>
+                            <li className="rounded-lg bg-white/10 p-3">
+                              <p className="font-semibold text-white">3. Maximale bruto woonlast</p>
+                              <p className="mt-1.5">
+                                {(calc.woonquote * 100).toFixed(1).replace('.', ',')}% ×{' '}
+                                {formatEuro(calc.combinedIncome)} ÷ 12 = {formatEuro(calc.maxWoonlastMonthly)}
+                                /mnd
+                              </p>
+                            </li>
+                            {calc.monthlyDebt > 0 && (
+                              <li className="rounded-lg bg-white/10 p-3">
+                                <p className="font-semibold text-white">4. Schulden maandlast</p>
+                                <p className="mt-1.5">
+                                  {calc.otherDebtMonthly > 0 && (
+                                    <>
+                                      Overige schulden: −{formatEuro(calc.otherDebtMonthly)}/mnd
+                                      <br />
+                                    </>
+                                  )}
+                                  {calc.studyDebtMonthly > 0 && (
+                                    <>
+                                      Studieschuld: −{formatEuro(calc.studyDebtMonthly)}/mnd
+                                      <br />
+                                    </>
+                                  )}
+                                  {formatEuro(calc.maxWoonlastMonthly)} − {formatEuro(calc.monthlyDebt)} ={' '}
+                                  {formatEuro(calc.availableMonthly)}/mnd beschikbaar
+                                </p>
+                              </li>
+                            )}
+                            <li className="rounded-lg bg-white/10 p-3">
+                              <p className="font-semibold text-white">
+                                {calc.monthlyDebt > 0 ? '5' : '4'}. Kapitaliseren naar hypotheek
+                              </p>
+                              <p className="mt-1.5">
+                                {formatEuro(calc.availableMonthly)}/mnd × annuïteitenfactor{' '}
+                                {calc.annuityFactor.toFixed(1).replace('.', ',')} (360 mnd bij{' '}
+                                {formatRate(calc.testRate)}) ={' '}
+                                {formatEuro(calc.availableMonthly * calc.annuityFactor)}
+                              </p>
+                              {calc.pensionBinding && (
+                                <p className="mt-1 text-amber-200">
+                                  De AOW-toets komt met het verwachte pensioeninkomen lager uit (
+                                  {formatEuro(calc.pensionScenarioMax)}) en is hier bindend in plaats
+                                  van dit bedrag.
+                                </p>
+                              )}
+                            </li>
+                            {calc.energyBonus > 0 && (
+                              <li className="rounded-lg bg-white/10 p-3">
+                                <p className="font-semibold text-white">Energielabelbonus</p>
+                                <p className="mt-1.5">
+                                  + {formatEuro(calc.energyBonus)} vanwege energielabel {energyLabel}
+                                </p>
+                              </li>
+                            )}
+                            <li className="rounded-lg bg-white/15 p-3">
+                              <p className="font-semibold text-white">= Hypotheek o.b.v. inkomen</p>
+                              <p className="mt-1.5 text-base font-bold text-white">
+                                {formatEuro(calc.incomeBasedMax)}
+                              </p>
+                              {calc.cappedByPropertyValue && (
+                                <p className="mt-1 text-amber-200">
+                                  Begrensd door de aanschafprijs (max. 100% LTV):{' '}
+                                  {formatEuro(calc.maxMortgage)}
+                                </p>
+                              )}
+                            </li>
+                          </ol>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
             </BorderGlow>
           </div>
@@ -6011,9 +6365,9 @@ function MortgageCalculatorForm({ onReset }) {
               <p className="text-xs text-slate-500">
                 Splits uw benodigde hypotheek in maximaal 3 leningdelen, elk met een eigen
                 aflosvorm, rente en rentevastperiode, en zie direct uw bruto en netto
-                maandlasten. De benodigde hypotheek is de aanschafprijs minus uw ingebrachte
-                eigen vermogen, begrensd op uw maximale hypotheek o.b.v. inkomen. Kosten koper
-                betaalt u apart uit eigen middelen.
+                maandlasten. De benodigde hypotheek is de aanschafprijs minus het eigen vermogen
+                dat overblijft nadat de kosten koper (niet mee te financieren) eruit zijn betaald,
+                begrensd op uw maximale hypotheek o.b.v. inkomen.
               </p>
 
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -6023,9 +6377,11 @@ function MortgageCalculatorForm({ onReset }) {
                     {formatEuro(starterRequiredMortgage)}
                   </p>
                   <span className="text-[11px] text-slate-400">
-                    {safeNum(purchasePrice) - calc.totalOwnCapital > calc.maxMortgage
+                    {starterGapCalc.requiredMortgage > calc.maxMortgage
                       ? `Begrensd op max. hypotheek o.b.v. inkomen (${formatEuro(calc.maxMortgage)})`
-                      : `Aanschafprijs ${formatEuro(purchasePrice)} − eigen vermogen ${formatEuro(calc.totalOwnCapital)}`}
+                      : `Aanschafprijs ${formatEuro(purchasePrice)} − eigen vermogen${
+                          includeKostenKoperInCalc ? ' na kosten koper' : ''
+                        } ${formatEuro(Math.max(0, starterGapCalc.ownCapitalAfterCosts))}`}
                   </span>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4">
@@ -6057,7 +6413,7 @@ function MortgageCalculatorForm({ onReset }) {
                     <StatusBadge status="warning">
                       Let op: uw totale hypotheek voor de nieuwe woning komt uit op{' '}
                       {formatEuro(starterLoanCalc.totalPrincipal)}, boven het ingestelde
-                      maximum van {formatEuro(safeNum(lenderCapThreshold))} bij uw
+                      maximum van {formatEuro(getLenderCap(lenderCapThreshold))} bij uw
                       geldverstrekker (in te stellen bij "Uw situatie"). Dit kan aanvullende
                       acceptatie-eisen of een ander acceptatietraject betekenen.
                     </StatusBadge>
@@ -6261,7 +6617,7 @@ function MortgageCalculatorForm({ onReset }) {
                         {currentMortgage.ltv.toFixed(0)}%
                       </span>
                       <span className="text-xs text-slate-400">
-                        Restschuld {formatEuro(currentMortgage.currentDebtBalance)}
+                        Restschuld per vandaag {formatEuro(currentMortgage.currentDebtBalance)}
                       </span>
                     </div>
                   </div>
@@ -6355,21 +6711,25 @@ function MortgageCalculatorForm({ onReset }) {
                       value={currentEnergyLabel}
                       onChange={setCurrentEnergyLabel}
                     />
-                    <CurrencyField
-                      id="originalDebt"
-                      label="Oorspronkelijke hypotheekschuld"
-                      icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
-                      value={originalDebt}
-                      onChange={setOriginalDebt}
-                      placeholder="675000"
-                    />
+                    <div className="space-y-1.5">
+                      <span className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                        <Euro className="h-3.5 w-3.5 text-slate-400" />
+                        Oorspronkelijke hypotheekschuld
+                      </span>
+                      <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-base text-slate-800">
+                        {formatEuro(originalDebtTotal)}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        Som van de hoofdsommen bij aanvang van de leningdelen hieronder
+                      </p>
+                    </div>
                     <DateField
                       id="startDate"
                       label="Ingangsdatum hypotheek"
                       icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
                       value={startDate}
                       onChange={setStartDate}
-                      hint="Geldt voor alle leningdelen, deze starten normaliter gelijktijdig"
+                      hint="Geldt voor alle leningdelen; bepaalt samen met de rente de restschuld per vandaag"
                     />
                   </div>
                   </div>
@@ -6918,7 +7278,7 @@ function MortgageCalculatorForm({ onReset }) {
                                 aanvullend) komt uit op{' '}
                                 {formatEuro(combinedGapCalc.totalMortgageAfterMove)}, boven het
                                 door u ingestelde maximum van{' '}
-                                {formatEuro(safeNum(lenderCapThreshold))} bij uw geldverstrekker
+                                {formatEuro(getLenderCap(lenderCapThreshold))} bij uw geldverstrekker
                                 (aan te passen bij "Uw situatie").
                               </StatusBadge>
                             </div>
@@ -7400,7 +7760,7 @@ function MortgageCalculatorForm({ onReset }) {
                           <p className="mt-3 flex items-start gap-1.5 text-xs text-amber-600">
                             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
                             Boven het ingestelde maximum van{' '}
-                            {formatEuro(safeNum(lenderCapThreshold))} bij uw geldverstrekker
+                            {formatEuro(getLenderCap(lenderCapThreshold))} bij uw geldverstrekker
                             (aan te passen bij "Uw situatie"), mogelijk aanvullende
                             acceptatie-eisen.
                           </p>
