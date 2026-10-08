@@ -89,7 +89,7 @@ export function exportHypotheekAdviesPdf(data) {
     woonquote,
     maxWoonlastMonthly,
     monthlyDebt,
-    studyDebt, // { toetslast, factor, debetrente, afslag } | null
+    capacity, // { summary: [[label, tekst]], rows: [[label, tekst]] } | null
     bindingFactor,
     resultLabel,
     resultValue,
@@ -167,15 +167,16 @@ export function exportHypotheekAdviesPdf(data) {
   incomeRows.push(['Woonquote (Nibud 2026)', formatPct(woonquote)]);
   incomeRows.push(['Max. bruto woonlast per maand', formatEuro(maxWoonlastMonthly)]);
   if (monthlyDebt > 0) incomeRows.push(['Maandlast schulden (afgetrokken)', `- ${formatEuro(monthlyDebt)}`]);
-  if (studyDebt && studyDebt.afslag > 0) {
-    const factor = studyDebt.factor.toFixed(2).replace('.', ',');
-    const debetrente = studyDebt.debetrente.toFixed(3).replace('.', ',');
-    incomeRows.push([
-      `Studieschuld (toetslast ${formatEuro(studyDebt.toetslast)}/mnd, factor ${factor} bij ${debetrente}%)`,
-      `- ${formatEuro(studyDebt.afslag)} op de hypotheek`,
-    ]);
-  }
   y = keyValueTable(doc, y, incomeRows);
+
+  // De opbouw van wat u kunt lenen, met elke afslag apart (zelfde cijfers als op het scherm).
+  if (capacity) {
+    y = ensureSpace(doc, y, 70);
+    y = addSectionHeader(doc, 'Wat kunt u lenen?', y);
+    y = keyValueTable(doc, y, capacity.summary);
+    y = ensureSpace(doc, y, 40);
+    y = keyValueTable(doc, y, capacity.rows);
+  }
 
   if (hasExistingHome && current) {
     y = ensureSpace(doc, y, 55);

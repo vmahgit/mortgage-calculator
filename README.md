@@ -10,6 +10,27 @@ npm run build   # productiebuild
 npm run lint    # oxlint
 ```
 
+## Wat kunt u lenen? (opbouw van de leencapaciteit)
+
+De sectie 'Wat kunt u lenen?' en de samenvatting in het resultaatpaneel tonen de leencapaciteit als een
+rekenstaat, met elke afslag apart. De opbouw komt uit [`src/capacityBreakdown.js`](src/capacityBreakdown.js)
+en gebruikt dezelfde rekenkern ([`src/calcEngine.js`](src/calcEngine.js)) als de rest van de app:
+
+1. leencapaciteit op basis van inkomen (woonquote × toetsinkomen, gekapitaliseerd tegen de toetsrente);
+2. − afslag tweede woning, overige schulden en een maandelijkse familielening (maandlast × kapitalisatiefactor);
+3. − afslag studieschuld (per lening zichtbaar), en een correctieregel als de afslagen de capaciteit onder € 0 zouden brengen;
+4. − AOW-toets (alleen als het pensioeninkomen bindend is) en + energielabelbonus = maximale hypotheek o.b.v. inkomen;
+5. doorstromer: − renterisico van meegenomen leningdelen met minder dan 10 jaar rentevast = werkelijke
+   leencapaciteit; − meegenomen hypotheek = ruimte voor nieuw geld; − plafond van de geldverstrekker (alleen als dat lager is)
+   = maximaal nieuw te lenen. Starter: − plafond van de geldverstrekker = maximale hypotheek.
+
+Elke regel krijgt het lopende bedrag; `reconciles` is alleen waar als dat op elk tussentotaal en aan het eind gelijk is
+aan wat de berekening zelf oplevert (en de pagina toont die controle). De tests rekenen het standaardscenario
+onafhankelijk na met alleen basisformules en controleren de sluiting in 19 uiteenlopende situaties.
+
+Het maximaal aankoopbudget (`computeMaxBudget`) gebruikt dezelfde nieuwe-hypotheekruimte als de haalbaarheidscontrole,
+inclusief het plafond van de geldverstrekker, zodat budget en oordeel elkaar niet kunnen tegenspreken.
+
 ## Studieschuld (DUO) in de leencapaciteit
 
 **Bron:** Tijdelijke regeling hypothecair krediet, art. 3a (Wijzigingsregeling 2025; de

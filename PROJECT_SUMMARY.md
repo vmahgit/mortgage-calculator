@@ -1,5 +1,26 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (3): rekenkern los, 'Wat kunt u lenen?' en standaardprijs €1.330.000
+- **Rekenkern uit het component**: alle zuivere rekenlogica staat nu in `src/calcEngine.js` (49 exports; het
+  component importeert wat het nodig heeft). Verplaatsing is output-identiek geverifieerd op 7 scenario's × 6 secties
+  (UI-vergelijking vóór/na, 0 verschillen). Daardoor is de rekenkern testbaar zonder React.
+- **Nieuw `src/capacityBreakdown.js`** (`buildCapacityBreakdown`): rekenstaat van inkomenscapaciteit tot nieuw te lenen,
+  met alle afslagen apart en een sluitingscontrole (`reconciles`, `maxError`). `computeCalc` geeft hiervoor
+  `calc.capacity` terug; `computeCurrentMortgage` geeft `rateRiskParts` (renterisico per leningdeel).
+- **UI**: sectie `sectie-leencapaciteit` (KPI-tegels, waterval met balken, studieschuld per lening, controleregel) en een
+  samenvatting `CapacitySummary` in het resultaatpaneel; de PDF heeft dezelfde opbouw (sectie 'Wat kunt u lenen?').
+- **Standaard aanschafprijs €1.330.000** (ook de `useState`-beginwaarde in het component verwees nog naar €1.350.000;
+  nu naar `DOSSIER_DEFAULTS`; een verse bezoeker krijgt exact de 82 standaardvelden).
+- **Correcties**: (1) het maximaal aankoopbudget negeerde het plafond van de geldverstrekker (nu
+  `computeMaxBudget`, vaste invariant met de haalbaarheidscheck, getest); (2) bij 'Bepalend voor uw maximum' stond
+  'plafond geldverstrekker' ook als de inkomensruimte de strengste grens was; (3) starters: de hoofdbedrag-kop volgt nu
+  ook het plafond van de geldverstrekker.
+- **Tests**: 112 (`npm test`): studieschuld (68), opbouw + onafhankelijke nacontrole + 19 sluitingsscenario's (42), PDF (2).
+  De fake-datum (`vi.setSystemTime('2026-10-08')`) is nodig omdat de restschuld en rentevaste perioden van de dag afhangen.
+- **Testkader-valkuil**: in een verborgen browsertab lopen exit-animaties (AnimatePresence) niet af, waardoor in een
+  iframe-harnas oude blokken (bijv. het renterisico-notitieblok) in de DOM kunnen blijven staan. Vergelijk getallen dus
+  tussen twee runs en vertrouw niet op één meting.
+
 ## Sessie okt. 2026 (2): studieschuld volgens art. 3a + aflos-optimalisatie
 - **Nieuw: `src/studieschuld.js`** (zuivere rekenlogica, geen React) + `src/studieschuld.test.js`
   (Vitest, `npm test`, 68 tests). Termijn per lening (werkelijk DUO-bedrag of annuïteit bij
