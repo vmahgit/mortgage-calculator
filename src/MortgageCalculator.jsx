@@ -42,6 +42,17 @@ import { getBouwdepotEstimate } from './bouwdepot';
 import { getIncomeBasedMortgage } from './nibud2026';
 import { getToetsinkomen, INCOME_TYPES } from './toetsinkomen';
 import {
+  AFSLAG_METHODS,
+  DEBETRENTE_MODES,
+  STUDY_LOAN_PRESETS,
+  STUDY_LOAN_STATUSES,
+  computeStudyDebt,
+  getStudyDebtConfig,
+  getWeightedDebetrente,
+  optimizeRepayment,
+  projectRateRevision,
+} from './studieschuld';
+import {
   getTransferTaxRate,
   getKostenKoperBreakdown,
   STARTER_EXEMPTION_PRICE_CAP,
@@ -100,7 +111,10 @@ const SCENARIO_PERCENTAGES = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5];
 // getKostenKoperBreakdown() in kostenKoper.js.
 // AFM-toetsrente 2026 (elk kwartaal vastgesteld, tot nu toe steeds 5%). Verplicht te
 // gebruiken zodra de rentevastperiode van de nieuwe hypotheek korter is dan 10 jaar.
-const TOETSRENTE = 5.0;
+// Het kalenderjaar van de regeling waarmee de app rekent (Nibud-tabellen, AFM-toetsrente en
+// de studieschuld-opslagfactoren); de waarden staan per jaar in studieschuld.js.
+const REGULATION_YEAR = 2026;
+const TOETSRENTE = getStudyDebtConfig(REGULATION_YEAR).afmToetsrente;
 // Sommige geldverstrekkers hanteren een interne acceptatiegrens voor de totale
 // hypotheeksom, waarboven aanvullende eisen of een ander acceptatietraject gelden. Dit is
 // een redelijke default; gebruikers met een afwijkend maximum bij hun eigen
@@ -115,24 +129,8 @@ function getLenderCap(value) {
 // voor consumptief krediet (doorlopend krediet, persoonlijke lening).
 const OTHER_DEBT_MONTHLY_WEIGHT = 0.02;
 
-// Studieschuld telt sinds 1 januari 2024 niet meer mee via een vaste wegingsfactor op de
-// oorspronkelijke schuld, maar op basis van de daadwerkelijke DUO-terugbetaalregeling: de
-// actuele DUO-rente 2026 en de aflostermijn die bij het stelsel hoort, toegepast op de
-// openstaande restschuld, net als een annuïtaire lening.
-const STUDY_DEBT_REGIMES = {
-  nieuw: { label: 'Nieuw stelsel (vanaf sept. 2015, SF35)', rate: 2.33, termYears: 35 },
-  oud: { label: 'Oud stelsel (vóór sept. 2015, SF15)', rate: 2.29, termYears: 15 },
-};
-
-function getStudyDebtMonthlyBurden(debtAmount, regimeKey) {
-  const debt = safeNum(debtAmount);
-  if (debt <= 0) return 0;
-  const regime = STUDY_DEBT_REGIMES[regimeKey] || STUDY_DEBT_REGIMES.nieuw;
-  const r = regime.rate / 100 / 12;
-  const n = regime.termYears * 12;
-  if (r === 0) return debt / n;
-  return (debt * r) / (1 - Math.pow(1 + r, -n));
-}
+// Studieschuld (DUO) wordt berekend in studieschuld.js: toetslast = termijnbedrag ×
+// opslagfactor, als afslag in euro op de maximale hypotheek (zie computeCalc en de README).
 
 // Kapitaliseert een vaste maandlast naar een hypotheekbedrag met de annuïteitenfactor
 // bij een gegeven rente over 30 jaar, dezelfde methodiek als Nibud gebruikt om
@@ -208,16 +206,40 @@ function projectRemainingBalance(principal, ratePct, type, remainingMonthsNow, m
   return Math.max(0, balance);
 }
 
-// Bestaande leningdelen worden ingevoerd met hun hoofdsom bij aanvang; de restschuld volgt uit
-// de maanden sinds de ingangsdatum tot de dag waarop de site gebruikt wordt (30 jaar looptijd,
-// geen extra aflossingen). De rest van de berekening werkt met deze actuele restschuld.
-function toCurrentLoanParts(loanParts, elapsedMonths) {
+// Restschuld van een bestaand leningdeel op de dag van gebruik. Staat er een restsaldo van de
+// bank met opgavedatum bij (knownBalance + balanceAsOf), dan wordt dat vanaf die datum
+// doorgerekend: de bank hanteert eigen afrondingen en een eigen aflosschema, dus het opgegeven
+// saldo is nauwkeuriger dan een berekening uit de hoofdsom. Anders volgt de restschuld uit de
+// hoofdsom bij aanvang (30 jaar looptijd vanaf de ingangsdatum, geen extra aflossingen).
+function getCurrentLoanBalance(part, startDate, refDate = new Date()) {
+  const elapsedNow = getElapsedMonths(startDate, refDate);
+  const anchorDate = new Date(part.balanceAsOf);
+  const hasAnchor =
+    String(part.knownBalance ?? '').trim() !== '' && !isNaN(anchorDate.getTime());
+  if (!hasAnchor) {
+    return projectRemainingBalance(part.principal, part.rate, part.type, TERM_MONTHS, elapsedNow);
+  }
+  const elapsedAtAnchor = getElapsedMonths(startDate, anchorDate);
+  return projectRemainingBalance(
+    part.knownBalance,
+    part.rate,
+    part.type,
+    Math.max(0, TERM_MONTHS - elapsedAtAnchor),
+    Math.max(0, elapsedNow - elapsedAtAnchor)
+  );
+}
+
+function toCurrentLoanParts(loanParts, startDate, refDate = new Date()) {
   return loanParts.map((part) => ({
     ...part,
-    principal: String(
-      projectRemainingBalance(part.principal, part.rate, part.type, TERM_MONTHS, elapsedMonths)
-    ),
+    principal: String(getCurrentLoanBalance(part, startDate, refDate)),
   }));
+}
+
+function getTodayIsoLocal() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 // Omgekeerde van toCurrentLoanParts, voor dossiers van vóór die wijziging: daarin was de
@@ -327,9 +349,26 @@ const DOSSIER_DEFAULTS = {
   hasPartner2: true,
   debt1: '0',
   debt2: '0',
-  studyDebt1: '14000',
-  studyDebt2: '0',
-  studyDebtRegime: 'oud',
+  // Studieleningen (DUO): zie studieschuld.js. Eigenaar 1 = Partner 1/aanvrager, 2 = Partner 2.
+  // Standaard de aflosplan-gegevens van Partner 1 per okt. 2026 (SF15-oud): saldo €13.803,67,
+  // maandbedrag €142,00, 111 van 180 maanden in de aflosfase, 0 aflosvrije maanden over. De rente
+  // van 2,95% is geldig t/m 31-12-2028, dus de renteherziening staat op 1 jan. 2029 (nieuwe rente
+  // nog onbekend, daarom leeg).
+  studyLoans: [
+    {
+      id: 1,
+      owner: 1,
+      balance: '13803.67',
+      ratePct: 2.95,
+      remainingMonths: 111,
+      monthlyPayment: '142',
+      status: 'regulier',
+      revisionDate: '2029-01-01',
+      revisionRatePct: '',
+    },
+  ],
+  studyDebtRateMode: 'gewogenToets',
+  studyDebtAfslagMethod: 'marginaal',
   propertyUsage: 'zelfbewoning',
   starterExemption1: false,
   starterExemption2: false,
@@ -386,10 +425,27 @@ const DOSSIER_DEFAULTS = {
   saleDiscountPercentage: 95,
   currentEnergyLabel: 'A',
   startDate: '2021-01-15',
-  // Hoofdsommen bij aanvang (samen €675.000); de restschuld wordt per vandaag berekend.
+  // Hoofdsom bij aanvang (samen €675.000) plus het restsaldo volgens het hypotheekoverzicht van
+  // 8 okt. 2026; vanaf die opgavedatum wordt de restschuld doorgerekend tot de dag van gebruik.
   loanParts: [
-    { id: 1, type: 'Annuïteit', principal: '320731', rate: 1.25, originalFixedYears: 10 },
-    { id: 2, type: 'Aflossingsvrij', principal: '354269', rate: 1.85, originalFixedYears: 20 },
+    {
+      id: 1,
+      type: 'Annuïteit',
+      principal: '320000',
+      knownBalance: '269480.64',
+      balanceAsOf: '2026-10-08',
+      rate: 1.25,
+      originalFixedYears: 10,
+    },
+    {
+      id: 2,
+      type: 'Aflossingsvrij',
+      principal: '355000',
+      knownBalance: '354269.27',
+      balanceAsOf: '2026-10-08',
+      rate: 1.85,
+      originalFixedYears: 20,
+    },
   ],
   loanPartsBasis: 'aanvang',
   additionalLoanParts: [
@@ -429,79 +485,79 @@ function fillDossierDefaults(partial) {
     }));
   }
   result.loanPartsBasis = 'aanvang';
+
+  // Oudere dossiers kenden één studieschuldbedrag per partner met een globaal stelsel. Dat
+  // wordt één lening per partner met de rente en looptijd van dat stelsel.
+  if (partial && partial.studyLoans === undefined && partial.studyDebt1 !== undefined) {
+    const preset = STUDY_LOAN_PRESETS[partial.studyDebtRegime] || STUDY_LOAN_PRESETS.nieuw;
+    result.studyLoans = [
+      [1, partial.studyDebt1],
+      [2, partial.studyDebt2],
+    ]
+      .filter(([, balance]) => safeNum(balance) > 0)
+      .map(([owner, balance]) => ({
+        id: owner,
+        owner,
+        balance: String(balance),
+        ratePct: preset.ratePct,
+        remainingMonths: preset.months,
+        monthlyPayment: '',
+        status: 'regulier',
+        revisionDate: '',
+        revisionRatePct: '',
+      }));
+  }
   return result;
 }
 
-// Pure samenvattingsberekening voor scenario-vergelijking: herhaalt het inkomens- en
-// schulden-deel van de hoofdberekening (getToetsinkomen/getIncomeBasedMortgage, dezelfde
-// pure functies als de live berekening) op een losstaand dossier-object, zonder React
-// state. Bewust beperkt tot de kern-Nibud-uitkomst (leencapaciteit, woonquote, maandlast);
-// de bijleenruimte/financieringsgat-keten voor wie al een woning heeft, is hier niet
-// meegenomen — dat blijft voorbehouden aan de actieve, live berekening.
+// Samenvatting voor de scenario-vergelijking: dezelfde volledige berekening als het hoofdscherm
+// (computeCore), dus een opgeslagen scenario laat exact het getal zien dat u na laden krijgt.
 function computeScenarioSummary(d) {
-  const toets1 = getToetsinkomen({
-    incomeType: d.incomeType1,
-    income: d.income1,
-    history: d.incomeHistory1,
-    thirteenthMonth: d.thirteenthMonth1,
-    avgBonus: d.avgBonus1,
-    alimonyMonthly: d.partnerAlimony1,
-  });
-  const toets2 = d.hasPartner2
-    ? getToetsinkomen({
-        incomeType: d.incomeType2,
-        income: d.income2,
-        history: d.incomeHistory2,
-        thirteenthMonth: d.thirteenthMonth2,
-        avgBonus: d.avgBonus2,
-        alimonyMonthly: d.partnerAlimony2,
-      })
-    : getToetsinkomen({ incomeType: 'vast', income: 0 });
-  const combinedIncome = toets1.toetsinkomen + toets2.toetsinkomen;
-
-  const testRate = getTestRate(d.rate, d.fixedRatePeriod);
-  const energyBonus = getEnergyBonus(d.energyLabel);
-
-  const otherDebtMonthly =
-    (safeNum(d.debt1) + (d.hasPartner2 ? safeNum(d.debt2) : 0)) * OTHER_DEBT_MONTHLY_WEIGHT;
-  const studyDebtMonthly = getStudyDebtMonthlyBurden(
-    safeNum(d.studyDebt1) + (d.hasPartner2 ? safeNum(d.studyDebt2) : 0),
-    d.studyDebtRegime
-  );
-  const secondHomeMonthly =
-    d.hasSecondHome && !d.secondHomeWillSell
-      ? calculateSimpleMortgagePayment(
-          d.secondHomeMortgageDebt,
-          d.secondHomeInterestRate,
-          d.secondHomeRepaymentType,
-          d.secondHomeRemainingYears
-        )
-      : 0;
-  const monthlyDebt = otherDebtMonthly + studyDebtMonthly + secondHomeMonthly;
-
-  const nibud = getIncomeBasedMortgage(combinedIncome, testRate, monthlyDebt);
-  const incomeBasedMax = Math.max(0, nibud.maxLoan + energyBonus);
-  const priceNum = safeNum(d.purchasePrice);
-  const cappedByPropertyValue = priceNum > 0 && incomeBasedMax > priceNum;
-  const maxMortgage = priceNum > 0 ? Math.min(incomeBasedMax, priceNum) : incomeBasedMax;
-
+  const { calc } = computeCore(d);
   return {
-    combinedIncome,
-    woonquote: nibud.woonquote,
-    maxWoonlastMonthly: nibud.maxWoonlastMonthly,
-    monthlyDebt,
-    incomeBasedMax,
-    maxMortgage,
-    cappedByPropertyValue,
-    purchasePrice: priceNum,
-    isOverIndebted: monthlyDebt > nibud.maxWoonlastMonthly,
+    combinedIncome: calc.combinedIncome,
+    woonquote: calc.woonquote,
+    maxWoonlastMonthly: calc.maxWoonlastMonthly,
+    monthlyDebt: calc.monthlyDebt + calc.studyToetslast,
+    incomeBasedMax: calc.incomeBasedMax,
+    maxMortgage: calc.maxMortgage,
+    cappedByPropertyValue: calc.cappedByPropertyValue,
+    purchasePrice: safeNum(d.purchasePrice),
+    isOverIndebted: calc.isOverIndebted,
   };
+}
+
+// Leningdelen van de nieuwe hypotheek waarover de debetrente voor de studieschuld-opslagfactor
+// wordt gewogen: de meegenomen delen (restschuld vandaag, resterende rentevaste periode) plus
+// de nieuwe geldlening tegen de beoogde rente en rentevastperiode. Een overbruggingskrediet
+// hoort er niet bij. Zonder meegenomen delen en zonder bekend bedrag aan nieuw geld telt de
+// nieuwe geldlening als enige deel (gewicht 1), zodat de beoogde rente de debetrente is.
+function buildDebetrenteParts(d, newMoney) {
+  const parts = [];
+  if (d.hasExistingHome && d.takeOverMortgage) {
+    const elapsed = getElapsedMonths(d.startDate);
+    toCurrentLoanParts(d.loanParts, d.startDate).forEach((part) => {
+      parts.push({
+        balance: safeNum(part.principal),
+        ratePct: safeNum(part.rate),
+        remainingFixedYears: getRemainingFixedPeriod(part.originalFixedYears, elapsed).fractionalYears,
+      });
+    });
+  }
+  const hasPorted = parts.some((p) => p.balance > 0);
+  parts.push({
+    balance: newMoney > 0 ? newMoney : hasPorted ? 0 : 1,
+    ratePct: safeNum(d.rate),
+    remainingFixedYears: safeNum(d.fixedRatePeriod),
+  });
+  return parts;
 }
 
 // Kern-rekenketen als pure functies op een dossier-object: dezelfde code draait voor de
 // live weergave (via useMemo op dossierSnapshot) én voor de haalbaarheids-solver, die
 // hypothetische varianten (andere aanschafprijs, extra eigen geld) doorrekent.
-function computeCalc(d, { extraLiquidCapital = 0 } = {}) {
+// newMoney: het bedrag aan nieuw te lenen geld dat meeweegt in de debetrente (zie computeCore).
+function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
   const {
     income1,
     income2,
@@ -510,9 +566,9 @@ function computeCalc(d, { extraLiquidCapital = 0 } = {}) {
     energyLabel,
     debt1,
     debt2,
-    studyDebt1,
-    studyDebt2,
-    studyDebtRegime,
+    studyLoans,
+    studyDebtRateMode,
+    studyDebtAfslagMethod,
     ownCapital1Liquid,
     ownCapital2Liquid,
     useFamilyLoan,
@@ -593,15 +649,39 @@ function computeCalc(d, { extraLiquidCapital = 0 } = {}) {
   const energyBonus = getEnergyBonus(energyLabel);
 
   // A3: schulden worden eerst omgerekend naar een maandlast (2% van het schuldbedrag
-  // voor overige schulden). Studieschuld wordt sinds 2024 berekend op basis van de
-  // werkelijke DUO-terugbetaalregeling (rente en aflostermijn van het gekozen stelsel),
-  // toegepast op de restschuld.
+  // voor overige schulden).
   const otherDebtMonthly =
     (safeNum(debt1) + (hasPartner2 ? safeNum(debt2) : 0)) * OTHER_DEBT_MONTHLY_WEIGHT;
-  const studyDebtMonthly = getStudyDebtMonthlyBurden(
-    safeNum(studyDebt1) + (hasPartner2 ? safeNum(studyDebt2) : 0),
-    studyDebtRegime
-  );
+
+  // Studieschuld (Tijdelijke regeling hypothecair krediet, art. 3a): toetslast = termijnbedrag ×
+  // opslagfactor, en de afslag op de maximale hypotheek is die toetslast gekapitaliseerd. Dat
+  // gebeurt in euro's op de uitkomst van de woonquote-toets en niet als maandlast erin, omdat de
+  // opslagfactor en de kapitalisatierente van de samenstelling van de hypotheek afhangen.
+  const activeStudyLoans = (studyLoans || [])
+    .filter((loan) => (Number(loan.owner) === 2 ? hasPartner2 : true))
+    .map((loan) => ({
+      id: loan.id,
+      owner: Number(loan.owner) === 2 ? 2 : 1,
+      balance: safeNum(loan.balance),
+      ratePct: safeNum(loan.ratePct),
+      remainingMonths: safeNum(loan.remainingMonths),
+      monthlyPayment: safeNum(loan.monthlyPayment),
+      status: loan.status,
+    }));
+  const debetrenteWeights = getWeightedDebetrente(buildDebetrenteParts(d, newMoney), {
+    afmToetsrente: TOETSRENTE,
+  });
+  const studyDebt = computeStudyDebt({
+    loans: activeStudyLoans,
+    weightedToets: debetrenteWeights.weightedToets,
+    weightedContract: debetrenteWeights.weightedContract,
+    debetrenteMode: studyDebtRateMode,
+    afslagMethod: studyDebtAfslagMethod,
+    marginalRatePct: testRate,
+    year: REGULATION_YEAR,
+  });
+  const studyAfslag = studyDebt.totalAfslag;
+  const applyStudyAfslag = (loan) => Math.max(0, loan - studyAfslag);
 
   // Tweede woning met eigen hypotheekschuld: bij aanhouden telt de volledige,
   // werkelijke bruto maandlast mee als schuld (geen 2%-vuistregel, want het exacte
@@ -645,18 +725,20 @@ function computeCalc(d, { extraLiquidCapital = 0 } = {}) {
       ? safeNum(familyLoanMonthlyRepayment)
       : 0;
 
-  const monthlyDebt =
-    otherDebtMonthly + studyDebtMonthly + secondHomeMonthly + familyLoanMonthlyDebt;
+  const monthlyDebt = otherDebtMonthly + secondHomeMonthly + familyLoanMonthlyDebt;
 
   // A1-A3: echte Nibud-woonquote-systematiek 2026. De woonquote bij (toetsinkomen,
   // toetsrente) bepaalt de maximale bruto woonlast; de maandlast van bestaande schulden
-  // gaat daar direct vanaf; het restant wordt gekapitaliseerd tegen de toetsrente.
+  // (zonder studieschuld) gaat daar direct vanaf; het restant wordt gekapitaliseerd tegen de
+  // toetsrente. De afslag voor de studieschuld volgt daarna in euro's (applyStudyAfslag).
   const nibud = getIncomeBasedMortgage(combinedIncome, testRate, monthlyDebt);
   const woonquote = nibud.woonquote;
+  const nibudLoan = applyStudyAfslag(nibud.maxLoan);
 
   // Ter weergave: hoeveel maximale hypotheek er wegvalt door de schulden (de
-  // gekapitaliseerde waarde van de schuldmaandlast tegen de toetsrente).
-  const debtDeduction = monthlyDebt * nibud.annuityFactor;
+  // gekapitaliseerde waarde van de schuldmaandlast tegen de toetsrente, plus de afslag voor de
+  // studieschuld).
+  const debtDeduction = monthlyDebt * nibud.annuityFactor + studyAfslag;
 
   // Ter weergave: het specifieke aandeel van de tweede-woning-hypotheek in die
   // afslag op de leencapaciteit (dezelfde kapitalisatie, alleen voor dit ene deel van
@@ -701,17 +783,14 @@ function computeCalc(d, { extraLiquidCapital = 0 } = {}) {
   const nibudPension = pensionActive
     ? getIncomeBasedMortgage(pensionCombinedIncome, testRate, monthlyDebt, { aow: true })
     : null;
-  const pensionBinding = pensionActive && nibudPension.maxLoan < nibud.maxLoan;
-  const boundMaxLoan = pensionActive
-    ? Math.min(nibud.maxLoan, nibudPension.maxLoan)
-    : nibud.maxLoan;
+  const pensionLoan = pensionActive ? applyStudyAfslag(nibudPension.maxLoan) : null;
+  const pensionBinding = pensionActive && pensionLoan < nibudLoan;
+  const boundMaxLoan = pensionActive ? Math.min(nibudLoan, pensionLoan) : nibudLoan;
 
   // Scenariobedragen voor de vergelijkings-UI (beide inclusief energiebonus, zodat ze
   // één-op-één vergelijkbaar zijn met de getoonde maximale hypotheek).
-  const currentScenarioMax = Math.max(0, nibud.maxLoan + energyBonus);
-  const pensionScenarioMax = pensionActive
-    ? Math.max(0, nibudPension.maxLoan + energyBonus)
-    : null;
+  const currentScenarioMax = Math.max(0, nibudLoan + energyBonus);
+  const pensionScenarioMax = pensionActive ? Math.max(0, pensionLoan + energyBonus) : null;
 
   const incomeBasedMax = Math.max(0, boundMaxLoan + energyBonus);
 
@@ -800,7 +879,8 @@ function computeCalc(d, { extraLiquidCapital = 0 } = {}) {
   const financingCostsHraRate = getHraRate(toets1.toetsinkomen, toets2.toetsinkomen);
   const financingCostsTaxBenefit = deductibleFinancingCosts * financingCostsHraRate;
 
-  const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly;
+  // De studieschuld is te hoog zodra de afslag méér is dan wat de woonquote-toets nog toelaat.
+  const isOverIndebted = monthlyDebt > nibud.maxWoonlastMonthly || studyAfslag > nibud.maxLoan;
   const showSustainability = ['E', 'F', 'G'].includes(energyLabel);
   const purchasingPower = maxMortgage + totalOwnCapital;
 
@@ -812,11 +892,13 @@ function computeCalc(d, { extraLiquidCapital = 0 } = {}) {
   const nibudAtActualRate = getIncomeBasedMortgage(combinedIncome, safeNum(rate), monthlyDebt);
   const boundMaxLoanAtActualRate = pensionActive
     ? Math.min(
-        nibudAtActualRate.maxLoan,
-        getIncomeBasedMortgage(pensionCombinedIncome, safeNum(rate), monthlyDebt, { aow: true })
-          .maxLoan
+        applyStudyAfslag(nibudAtActualRate.maxLoan),
+        applyStudyAfslag(
+          getIncomeBasedMortgage(pensionCombinedIncome, safeNum(rate), monthlyDebt, { aow: true })
+            .maxLoan
+        )
       )
-    : nibudAtActualRate.maxLoan;
+    : applyStudyAfslag(nibudAtActualRate.maxLoan);
   const incomeBasedMaxAtActualRate = Math.max(0, boundMaxLoanAtActualRate + energyBonus);
 
   // Drie leencapaciteit-stappen voor de resultaatweergave, zodat zichtbaar is waar de
@@ -849,7 +931,10 @@ function computeCalc(d, { extraLiquidCapital = 0 } = {}) {
     energyBonus,
     debtDeduction,
     otherDebtMonthly,
-    studyDebtMonthly,
+    studyDebt,
+    studyAfslag,
+    studyToetslast: studyDebt.totalToetslast,
+    maxLoanBeforeStudy: nibud.maxLoan,
     secondHomeMonthly,
     secondHomeSaleCosts,
     secondHomeNetProceeds,
@@ -903,7 +988,7 @@ function computeCurrentMortgage(d, calc) {
   } = d;
 
   const elapsedMonths = getElapsedMonths(startDate);
-  const loanParts = toCurrentLoanParts(d.loanParts, elapsedMonths);
+  const loanParts = toCurrentLoanParts(d.loanParts, startDate);
 
   const partResults = loanParts.map((part) => calculateLoanPart(part, elapsedMonths, startDate));
 
@@ -1136,12 +1221,36 @@ function computeStarterGap(d, calc) {
   };
 }
 
+// De rekenketen calc → currentMortgage → combinedGap in één keer. Bij een doorstromer hangt de
+// studieschuld-opslagfactor af van het gewicht van het nieuwe geld in de hypotheek (zie
+// buildDebetrenteParts), en dat bedrag volgt weer uit het financieringsgat. Dat verloopt in een
+// paar ronden naar een vast punt: het gat hangt alleen nog via de NHG-provisie van de
+// leencapaciteit af. Live weergave, scenario-samenvatting en solver gebruiken allemaal deze
+// functie, zodat ze altijd hetzelfde antwoord geven.
+function computeCore(d, { extraLiquidCapital = 0 } = {}) {
+  let newMoney = 0;
+  let result = null;
+  for (let round = 0; round < 3; round++) {
+    const calc = computeCalc(d, { extraLiquidCapital, newMoney });
+    const currentMortgage = computeCurrentMortgage(d, calc);
+    const combinedGap = computeCombinedGap(d, calc, currentMortgage);
+    result = { calc, currentMortgage, combinedGap };
+    if (!d.hasExistingHome) break;
+    const needed = combinedGap.additionalMortgage;
+    if (Math.abs(needed - newMoney) < 1) break;
+    newMoney = needed;
+  }
+  return result;
+}
+
 // Eén haalbaarheidsoordeel voor zowel de live weergave als de solver.
 function evaluateAffordability(d, { extraLiquidCapital = 0 } = {}) {
-  const calc = computeCalc(d, { extraLiquidCapital });
+  const { calc, combinedGap } = computeCore(d, { extraLiquidCapital });
   if (d.hasExistingHome) {
-    const gap = computeCombinedGap(d, calc, computeCurrentMortgage(d, calc));
-    return { affordable: gap.withinCapacityAfterFamilyLoan, shortfall: gap.remainingShortfall };
+    return {
+      affordable: combinedGap.withinCapacityAfterFamilyLoan,
+      shortfall: combinedGap.remainingShortfall,
+    };
   }
   const starter = computeStarterGap(d, calc);
   return { affordable: starter.feasible, shortfall: starter.shortfall };
@@ -1347,7 +1456,7 @@ function LiquidityToggle({ amount, liquid, onChange }) {
   );
 }
 
-function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hint, min = 0, max }) {
+function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hint, min = 0, max, step }) {
   // Klemt tijdens het typen alleen de max (voorkomt absurd hoge invoer zonder het typen van
   // een lagere waarde te blokkeren); de min wordt pas bij het verlaten van het veld
   // toegepast, zodat je bijv. van 36 naar 28 kunt tikken zonder dat elke tussenstap al op
@@ -1391,6 +1500,7 @@ function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hi
           inputMode="numeric"
           min={min}
           max={max}
+          step={step}
           value={value}
           onChange={handleChange}
           onBlur={handleBlur}
@@ -1786,17 +1896,12 @@ function InfoTooltip({ text, variant = 'default' }) {
   );
 }
 
-function LoanPartCard({ part, index, onChange, onRemove, canRemove, elapsedMonths }) {
+function LoanPartCard({ part, index, onChange, onRemove, canRemove, elapsedMonths, currentBalance }) {
   const fixedPeriod = getRemainingFixedPeriod(part.originalFixedYears, elapsedMonths);
   const testRate = getTestRate(part.rate, fixedPeriod.fractionalYears);
   const toetsrenteAppliesToPart = testRate !== safeNum(part.rate);
-  const currentBalance = projectRemainingBalance(
-    part.principal,
-    part.rate,
-    part.type,
-    TERM_MONTHS,
-    elapsedMonths
-  );
+  const hasAnchor =
+    String(part.knownBalance ?? '').trim() !== '' && !isNaN(new Date(part.balanceAsOf).getTime());
 
   return (
     <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-4 transition-all duration-200">
@@ -1832,16 +1937,30 @@ function LoanPartCard({ part, index, onChange, onRemove, canRemove, elapsedMonth
           onChange={(v) => onChange('principal', v)}
           placeholder="0"
         />
+        <CurrencyField
+          id={`known-balance-${part.id}`}
+          label="Restsaldo volgens uw bank (optioneel)"
+          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+          value={part.knownBalance ?? ''}
+          onChange={(v) => onChange('knownBalance', v)}
+          placeholder="Leeg = berekend uit hoofdsom"
+        />
         <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-3 py-2">
           <span className="text-xs text-slate-500">Restschuld per {formatDateNL(new Date())}</span>
           <span className="text-sm font-semibold text-slate-800">{formatEuro(currentBalance)}</span>
         </div>
         <p className="text-[11px] text-slate-400">
-          {part.type === 'Aflossingsvrij'
-            ? 'Aflossingsvrij: de restschuld blijft gelijk aan de hoofdsom.'
-            : `Berekend uit rente en ingangsdatum: ${elapsedMonths} ${
-                elapsedMonths === 1 ? 'maandtermijn' : 'maandtermijnen'
-              } betaald (30 jaar looptijd, zonder extra aflossingen).`}
+          {hasAnchor
+            ? `Restsaldo uit uw hypotheekoverzicht van ${formatDateNL(part.balanceAsOf)}${
+                part.type === 'Aflossingsvrij'
+                  ? ' (aflossingsvrij: blijft gelijk).'
+                  : ', doorgerekend tot vandaag met uw rente en looptijd.'
+              }`
+            : part.type === 'Aflossingsvrij'
+              ? 'Aflossingsvrij: de restschuld blijft gelijk aan de hoofdsom.'
+              : `Berekend uit rente en ingangsdatum: ${elapsedMonths} ${
+                  elapsedMonths === 1 ? 'maandtermijn' : 'maandtermijnen'
+                } betaald (30 jaar looptijd, zonder extra aflossingen).`}
         </p>
       </div>
       <Slider
@@ -2350,6 +2469,491 @@ function AflossingsvrijMaxToggle({ value, onChange }) {
   );
 }
 
+// ---------------------------------------------------------------------------------------
+// Studieschuld (DUO): per lening termijn, opslagfactor, toetslast en afslag, plus een
+// aflos-optimalisatie. De rekenregels staan in studieschuld.js en README.md.
+// ---------------------------------------------------------------------------------------
+
+function formatPct3(value) {
+  return safeNum(value).toFixed(3).replace('.', ',') + '%';
+}
+
+function formatFactor(value) {
+  return safeNum(value).toFixed(2).replace('.', ',');
+}
+
+function SegmentedToggle({ value, onChange, options, label }) {
+  return (
+    <div
+      role="group"
+      aria-label={label}
+      className="inline-flex flex-wrap rounded-lg border border-slate-100 bg-slate-50 p-1"
+    >
+      {options.map(([key, text]) => (
+        <button
+          key={key}
+          type="button"
+          aria-pressed={value === key}
+          onClick={() => onChange(key)}
+          className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+            value === key
+              ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const TERMIJN_SOURCE_LABELS = {
+  duo: 'werkelijk DUO-maandbedrag',
+  schatting: 'geschat als annuïteit — vul uw DUO-maandbedrag in',
+  annuiteit: 'annuïteit op restschuld, rente en looptijd',
+  geen: 'geen restschuld',
+};
+
+function StudyLoanCard({ loan, label, result, onChange, onRemove }) {
+  const revision = projectRateRevision({
+    loan: {
+      balance: safeNum(loan.balance),
+      ratePct: safeNum(loan.ratePct),
+      remainingMonths: safeNum(loan.remainingMonths),
+      monthlyPayment: safeNum(loan.monthlyPayment),
+      status: loan.status,
+      revisionDate: loan.revisionDate,
+      revisionRatePct: loan.revisionRatePct,
+    },
+    factor: result ? result.factor : 0,
+  });
+  const idp = `study-${loan.id}`;
+
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <GraduationCap className="h-3.5 w-3.5" />
+          {label}
+        </span>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-slate-400 transition-all duration-200 hover:bg-red-50 hover:text-red-500"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Verwijderen
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <CurrencyField
+          id={`${idp}-balance`}
+          label="Restschuld"
+          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+          value={loan.balance}
+          onChange={(v) => onChange('balance', v)}
+          placeholder="0"
+        />
+        <NumberField
+          id={`${idp}-rate`}
+          label="DUO-rente"
+          icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
+          value={loan.ratePct}
+          onChange={(v) => onChange('ratePct', v)}
+          suffix="%"
+          step="0.01"
+          min={0}
+          max={15}
+        />
+        <NumberField
+          id={`${idp}-months`}
+          label="Resterende looptijd"
+          icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+          value={loan.remainingMonths}
+          onChange={(v) => onChange('remainingMonths', v)}
+          suffix="mnd"
+          min={0}
+          max={600}
+        />
+        <CurrencyField
+          id={`${idp}-payment`}
+          label="Werkelijk DUO-maandbedrag (optioneel)"
+          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+          value={loan.monthlyPayment}
+          onChange={(v) => onChange('monthlyPayment', v)}
+          placeholder="Leeg = berekend"
+          hint="Rente + aflossing, zoals DUO het vastgesteld heeft"
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <label htmlFor={`${idp}-status`} className="text-sm font-medium text-slate-700">
+          Status van de lening
+        </label>
+        <select
+          id={`${idp}-status`}
+          value={loan.status}
+          onChange={(e) => onChange('status', e.target.value)}
+          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        >
+          {Object.entries(STUDY_LOAN_STATUSES).map(([key, text]) => (
+            <option key={key} value={key}>
+              {text}
+            </option>
+          ))}
+        </select>
+        {loan.status !== 'regulier' && (
+          <p className="text-xs text-slate-400">
+            Bij een aanloopfase, aflosvrije periode of verlaagd maandbedrag (draagkracht) telt niet
+            het huidige DUO-bedrag, maar een annuïteit op de actuele restschuld, rente en
+            resterende looptijd.
+          </p>
+        )}
+      </div>
+
+      <AdvancedFieldsToggle label="Geplande renteherziening (optioneel)">
+        <DateField
+          id={`${idp}-revdate`}
+          label="Datum renteherziening"
+          icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+          value={loan.revisionDate}
+          onChange={(v) => onChange('revisionDate', v)}
+        />
+        <NumberField
+          id={`${idp}-revrate`}
+          label="Nieuwe DUO-rente"
+          icon={<Percent className="h-3.5 w-3.5 text-slate-400" />}
+          value={loan.revisionRatePct}
+          onChange={(v) => onChange('revisionRatePct', v)}
+          suffix="%"
+          step="0.01"
+          min={0}
+          max={15}
+        />
+      </AdvancedFieldsToggle>
+
+      {result && (
+        <div className="rounded-lg border border-slate-100 bg-white p-3">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
+            <div>
+              <dt className="text-slate-400">Termijnbedrag</dt>
+              <dd className="text-sm font-semibold text-slate-800">{formatEuro(result.termijn)}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Opslagfactor</dt>
+              <dd className="text-sm font-semibold text-slate-800">{formatFactor(result.factor)}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Toetslast p/m</dt>
+              <dd className="text-sm font-semibold text-slate-800">{formatEuro(result.toetslast)}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Afslag hypotheek</dt>
+              <dd className="text-sm font-semibold text-red-600">−{formatEuro(result.afslag)}</dd>
+            </div>
+          </dl>
+          <p className="mt-2 text-[11px] text-slate-400">
+            Termijn: {TERMIJN_SOURCE_LABELS[result.termijnSource]}.
+          </p>
+          {result.warning && <p className="mt-1 text-xs text-amber-600">{result.warning}</p>}
+        </div>
+      )}
+
+      {revision && (
+        <div className="rounded-lg border border-blue-100 bg-blue-50/60 p-3 text-xs text-blue-900">
+          <p className="font-semibold">
+            Renteherziening over {revision.monthsUntilRevision}{' '}
+            {revision.monthsUntilRevision === 1 ? 'maand' : 'maanden'}
+          </p>
+          <p className="mt-1">
+            Toetslast vóór: <strong>{formatEuro(revision.toetslastBefore)}</strong> per maand
+            (termijn {formatEuro(revision.termijnBefore)}). Na de herziening:{' '}
+            <strong>{formatEuro(revision.toetslastAfter)}</strong> per maand (termijn{' '}
+            {formatEuro(revision.termijnAfter)}, restschuld op die datum{' '}
+            {formatEuro(revision.balanceAtRevision)}). De leencapaciteit rekent met de toetslast van
+            nu.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StudyRepaymentOptimizer({ study, budget, onBudgetChange, labelFor }) {
+  const optimization = optimizeRepayment({
+    perLoan: study.perLoan,
+    budget: safeNum(budget),
+    factor: study.factor,
+    paymentFactor: study.paymentFactor,
+  });
+  const hasBudget = safeNum(budget) > 0;
+  const byId = Object.fromEntries(optimization.rows.map((r) => [r.id, r]));
+  const ranked = optimization.ranking.map((id) => byId[id]);
+
+  return (
+    <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4">
+      <h4 className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+        <PiggyBank className="h-4 w-4 text-indigo-500" />
+        Aflos-optimalisatie
+      </h4>
+      <p className="mt-1 text-xs text-slate-500">
+        Welke studielening loont het meest om af te lossen? De volgorde is op extra leenruimte per
+        afgeloste euro.
+      </p>
+      <div className="mt-3 max-w-xs">
+        <CurrencyField
+          id="studyRepayBudget"
+          label="Aflosbudget"
+          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+          value={budget}
+          onChange={onBudgetChange}
+          placeholder="0"
+        />
+      </div>
+
+      {ranked.length > 0 && (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[480px] text-xs">
+            <thead>
+              <tr className="border-b border-indigo-100 text-left text-slate-400">
+                <th className="py-2 pr-3 font-medium">Lening</th>
+                <th className="py-2 pr-3 font-medium">Restschuld</th>
+                <th className="py-2 pr-3 font-medium">Per € 1.000 afgelost</th>
+                <th className="py-2 pr-3 font-medium">Aflossen</th>
+                <th className="py-2 font-medium">Extra leenruimte</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ranked.map((row, position) => (
+                <tr key={row.id} className="border-b border-indigo-50">
+                  <td className="py-2 pr-3 font-medium text-slate-700">
+                    {position + 1}. {labelFor(row.id)}
+                  </td>
+                  <td className="py-2 pr-3 text-slate-600">{formatEuro(row.balance)}</td>
+                  <td className="py-2 pr-3 text-slate-600">+{formatEuro(row.perEuro * 1000)}</td>
+                  <td className="py-2 pr-3 text-slate-700">
+                    {hasBudget ? formatEuro(row.allocated) : '–'}
+                    {row.fullyRepaid && (
+                      <span className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                        volledig
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 font-semibold text-slate-800">
+                    {hasBudget ? `+${formatEuro(row.gain)}` : '–'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {hasBudget && ranked.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 text-xs">
+          <span className="text-slate-500">
+            Totaal extra leenruimte{' '}
+            <strong className="text-sm text-emerald-700">+{formatEuro(optimization.totalGain)}</strong>
+          </span>
+          <span className="text-slate-500">
+            Restbudget <strong className="text-slate-700">{formatEuro(optimization.remainingBudget)}</strong>
+          </span>
+        </div>
+      )}
+
+      {hasBudget && optimization.fullyRepayable.length > 0 && (
+        <p className="mt-3 text-xs text-slate-600">
+          <span className="font-semibold">Volledig af te lossen met dit budget:</span>{' '}
+          {optimization.fullyRepayable
+            .map(
+              (item) =>
+                `${labelFor(item.id)} (${formatEuro(item.cost)} aflossen = +${formatEuro(item.gain)} leenruimte)`
+            )
+            .join('; ')}
+          .
+        </p>
+      )}
+
+      <StatusBadge status="warning" className="mt-3">
+        Gedeeltelijke aflossing telt pas mee voor de leencapaciteit zodra DUO het nieuwe maandbedrag
+        heeft vastgesteld. Alleen een volledige aflossing is direct zeker.
+      </StatusBadge>
+    </div>
+  );
+}
+
+function StudyDebtPanel({
+  loans,
+  hasPartner2,
+  study,
+  rateMode,
+  onRateModeChange,
+  afslagMethod,
+  onAfslagMethodChange,
+  onAdd,
+  onUpdate,
+  onRemove,
+  budget,
+  onBudgetChange,
+}) {
+  const visible = loans.filter((l) => (Number(l.owner) === 2 ? hasPartner2 : true));
+  const ownerName = (owner) =>
+    hasPartner2 ? (Number(owner) === 2 ? 'Partner 2' : 'Partner 1') : 'Aanvrager';
+  const labelFor = (id) => {
+    const index = visible.findIndex((l) => l.id === id);
+    return index === -1 ? '' : `Studielening ${index + 1} (${ownerName(visible[index].owner)})`;
+  };
+  const resultById = Object.fromEntries(study.perLoan.map((r) => [r.id, r]));
+  const aboveTable = study.totalBalance > 0;
+
+  return (
+    <div id="studieschuld" className="mt-6 border-t border-slate-100 pt-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <GraduationCap className="h-4 w-4 text-amber-500" />
+          Studieschuld (DUO)
+        </h3>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onAdd(1)}
+            className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-50"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Studielening {hasPartner2 ? 'Partner 1' : 'toevoegen'}
+          </button>
+          {hasPartner2 && (
+            <button
+              type="button"
+              onClick={() => onAdd(2)}
+              className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-all duration-200 hover:bg-slate-50"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Studielening Partner 2
+            </button>
+          )}
+        </div>
+      </div>
+      <p className="mt-2 text-xs text-slate-400">
+        De toetslast is het DUO-termijnbedrag × een opslagfactor die afhangt van de debetrente van
+        uw hypotheek. Die toetslast wordt gekapitaliseerd en gaat als afslag van de maximale
+        hypotheek af (Tijdelijke regeling hypothecair krediet, art. 3a).
+      </p>
+
+      {visible.length === 0 ? (
+        <p className="mt-4 rounded-lg border border-dashed border-slate-200 p-4 text-center text-xs text-slate-400">
+          Geen studieschuld ingevuld.
+        </p>
+      ) : (
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {visible.map((loan) => (
+            <StudyLoanCard
+              key={loan.id}
+              loan={loan}
+              label={labelFor(loan.id)}
+              result={resultById[loan.id]}
+              onChange={(field, value) => onUpdate(loan.id, field, value)}
+              onRemove={() => onRemove(loan.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {visible.length > 0 && (
+        <>
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+                Debetrente voor de opslagfactor
+                <InfoTooltip text="Gewogen toetsrente: per leningdeel de contractrente bij 10 jaar of langer rentevast, anders de AFM-toetsrente (hoogste van de twee). Gewogen contractrente: alleen de contractrentes. Een overbruggingskrediet telt niet mee." />
+              </span>
+              <SegmentedToggle
+                label="Debetrente"
+                value={rateMode}
+                onChange={onRateModeChange}
+                options={Object.entries(DEBETRENTE_MODES)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <span className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+                Afslagmethode
+                <InfoTooltip text="Marginaal: de toetslast wordt gekapitaliseerd tegen de toetsrente van de nieuwe geldlening. Gewogen: tegen de gewogen toetsrente van alle leningdelen. Beide over 360 maanden." />
+              </span>
+              <SegmentedToggle
+                label="Afslagmethode"
+                value={afslagMethod}
+                onChange={onAfslagMethodChange}
+                options={Object.entries(AFSLAG_METHODS)}
+              />
+            </div>
+          </div>
+
+          <dl className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-4 text-xs sm:grid-cols-4">
+            <div>
+              <dt className="text-slate-400">Gewogen toetsrente</dt>
+              <dd
+                className={`text-sm font-semibold ${
+                  rateMode === 'gewogenToets' ? 'text-blue-700' : 'text-slate-700'
+                }`}
+              >
+                {formatPct3(study.weightedToets)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Gewogen contractrente</dt>
+              <dd
+                className={`text-sm font-semibold ${
+                  rateMode === 'contract' ? 'text-blue-700' : 'text-slate-700'
+                }`}
+              >
+                {formatPct3(study.weightedContract)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Opslagfactor</dt>
+              <dd className="text-sm font-semibold text-slate-800">
+                {formatFactor(study.factor)}
+                <span className="ml-1 text-[11px] font-normal text-slate-400">
+                  (bij {formatPct3(study.debetrente)})
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Kapitalisatierente</dt>
+              <dd className="text-sm font-semibold text-slate-800">{formatPct3(study.afslagRatePct)}</dd>
+            </div>
+            <div className="col-span-2 sm:col-span-2">
+              <dt className="text-slate-400">Totale toetslast p/m</dt>
+              <dd className="text-sm font-semibold text-slate-800">{formatEuro(study.totalToetslast)}</dd>
+            </div>
+            <div className="col-span-2 sm:col-span-2">
+              <dt className="text-slate-400">Totale afslag op de hypotheek</dt>
+              <dd className="text-sm font-semibold text-red-600">−{formatEuro(study.totalAfslag)}</dd>
+            </div>
+          </dl>
+          <p className="mt-2 text-[11px] text-slate-400">
+            Methode: {AFSLAG_METHODS[afslagMethod]}, factor uit {DEBETRENTE_MODES[rateMode].toLowerCase()}{' '}
+            (regeling {study.year}). De samenstelling van de nieuwe hypotheek (meegenomen leningdelen en
+            het benodigde nieuwe bedrag) bepaalt de weging.
+          </p>
+
+          {aboveTable && (
+            <StudyRepaymentOptimizer
+              study={study}
+              budget={budget}
+              onBudgetChange={onBudgetChange}
+              labelFor={labelFor}
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
 function MortgageCalculatorForm({ onReset }) {
   const [income1, setIncome1] = useState(118000);
   const [income2, setIncome2] = useState(115000);
@@ -2371,9 +2975,36 @@ function MortgageCalculatorForm({ onReset }) {
   const [hasPartner2, setHasPartner2] = useState(true);
   const [debt1, setDebt1] = useState('0');
   const [debt2, setDebt2] = useState('0');
-  const [studyDebt1, setStudyDebt1] = useState('14000');
-  const [studyDebt2, setStudyDebt2] = useState('0');
-  const [studyDebtRegime, setStudyDebtRegime] = useState('oud');
+  const [studyLoans, setStudyLoans] = useState(DOSSIER_DEFAULTS.studyLoans);
+  const [studyDebtRateMode, setStudyDebtRateMode] = useState(DOSSIER_DEFAULTS.studyDebtRateMode);
+  const [studyDebtAfslagMethod, setStudyDebtAfslagMethod] = useState(
+    DOSSIER_DEFAULTS.studyDebtAfslagMethod
+  );
+  // Aflosbudget voor de optimalisatie is een hulpmiddel en geen onderdeel van het dossier.
+  const [studyRepayBudget, setStudyRepayBudget] = useState('');
+
+  const addStudyLoan = (owner) => {
+    setStudyLoans((prev) => [
+      ...prev,
+      {
+        id: Date.now(),
+        owner,
+        balance: '',
+        ratePct: STUDY_LOAN_PRESETS.oud.ratePct,
+        remainingMonths: STUDY_LOAN_PRESETS.oud.months,
+        monthlyPayment: '',
+        status: 'regulier',
+        revisionDate: '',
+        revisionRatePct: '',
+      },
+    ]);
+  };
+  const updateStudyLoan = (id, field, value) => {
+    setStudyLoans((prev) => prev.map((l) => (l.id === id ? { ...l, [field]: value } : l)));
+  };
+  const removeStudyLoan = (id) => {
+    setStudyLoans((prev) => prev.filter((l) => l.id !== id));
+  };
 
   // Overdrachtsbelasting: gebruiksdoel van de beoogde woning en, per koper, of de
   // startersvrijstelling nog beschikbaar is (niet eerder gebruikt).
@@ -2558,7 +3189,15 @@ function MortgageCalculatorForm({ onReset }) {
   };
 
   const updateLoanPart = (id, field, value) => {
-    setLoanParts((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+    setLoanParts((prev) =>
+      prev.map((p) => {
+        if (p.id !== id) return p;
+        const next = { ...p, [field]: value };
+        // Een nieuw ingevuld restsaldo geldt per vandaag; vanaf dan wordt het doorgerekend.
+        if (field === 'knownBalance') next.balanceAsOf = getTodayIsoLocal();
+        return next;
+      })
+    );
   };
 
   // Aanvullende leningdelen: de nieuwe financiering bovenop de meegenomen hypotheek. Deze
@@ -2638,9 +3277,9 @@ function MortgageCalculatorForm({ onReset }) {
       hasPartner2,
       debt1,
       debt2,
-      studyDebt1,
-      studyDebt2,
-      studyDebtRegime,
+      studyLoans,
+      studyDebtRateMode,
+      studyDebtAfslagMethod,
       propertyUsage,
       starterExemption1,
       starterExemption2,
@@ -2709,7 +3348,7 @@ function MortgageCalculatorForm({ onReset }) {
     [
       income1, income2, age1, age2, ownCapital1, ownCapital2, ownCapital1Liquid,
       ownCapital2Liquid, rate, fixedRatePeriod, energyLabel, purchasePrice, hasPartner2,
-      debt1, debt2, studyDebt1, studyDebt2, studyDebtRegime, propertyUsage,
+      debt1, debt2, studyLoans, studyDebtRateMode, studyDebtAfslagMethod, propertyUsage,
       starterExemption1, starterExemption2, bouwdepotAmount, constructionMonths,
       notaryCosts, valuationCosts, advisoryCosts, includeBankGuarantee, includeBuyersAgent,
       includeNhgFee, includeEwfInNetCalc, includeKostenKoperInCalc, partnerAlimony1,
@@ -2748,9 +3387,9 @@ function MortgageCalculatorForm({ onReset }) {
     setHasPartner2(snap.hasPartner2);
     setDebt1(snap.debt1);
     setDebt2(snap.debt2);
-    setStudyDebt1(snap.studyDebt1);
-    setStudyDebt2(snap.studyDebt2);
-    setStudyDebtRegime(snap.studyDebtRegime);
+    setStudyLoans(snap.studyLoans);
+    setStudyDebtRateMode(snap.studyDebtRateMode);
+    setStudyDebtAfslagMethod(snap.studyDebtAfslagMethod);
     setPropertyUsage(snap.propertyUsage);
     setStarterExemption1(snap.starterExemption1);
     setStarterExemption2(snap.starterExemption2);
@@ -2950,7 +3589,10 @@ function MortgageCalculatorForm({ onReset }) {
     if (propertyUsage === 'nieuwbouw') setIncludeBuyersAgent(false);
   }, [propertyUsage]);
 
-  const calc = useMemo(() => computeCalc(dossierSnapshot), [dossierSnapshot]);
+  const core = useMemo(() => computeCore(dossierSnapshot), [dossierSnapshot]);
+  const calc = core.calc;
+  const currentMortgage = core.currentMortgage;
+  const combinedGapCalc = core.combinedGap;
 
   // Bouwdepot (nieuwbouw): puur informatief, telt niet mee in de leencapaciteit. Leeg
   // bouwdepotAmount valt terug op de aanschafprijs als redelijke default.
@@ -2967,12 +3609,11 @@ function MortgageCalculatorForm({ onReset }) {
 
   const elapsedMonthsSinceStart = useMemo(() => getElapsedMonths(startDate), [startDate]);
   const currentLoanParts = useMemo(
-    () => toCurrentLoanParts(loanParts, elapsedMonthsSinceStart),
-    [loanParts, elapsedMonthsSinceStart]
+    () => toCurrentLoanParts(loanParts, startDate),
+    [loanParts, startDate]
   );
   const originalDebtTotal = loanParts.reduce((sum, p) => sum + safeNum(p.principal), 0);
 
-  const currentMortgage = useMemo(() => computeCurrentMortgage(dossierSnapshot, calc), [dossierSnapshot, calc]);
 
   const newHomeCalc = useMemo(() => {
     const price = safeNum(purchasePrice);
@@ -3006,7 +3647,6 @@ function MortgageCalculatorForm({ onReset }) {
     };
   }, [purchasePrice, calc, currentMortgage]);
 
-  const combinedGapCalc = useMemo(() => computeCombinedGap(dossierSnapshot, calc, currentMortgage), [dossierSnapshot, calc, currentMortgage]);
   const starterGapCalc = useMemo(() => computeStarterGap(dossierSnapshot, calc), [dossierSnapshot, calc]);
   const affordabilityLevers = useMemo(() => solveAffordabilityLevers(dossierSnapshot), [dossierSnapshot]);
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -3847,7 +4487,7 @@ function MortgageCalculatorForm({ onReset }) {
   // (`guidedHidden` eruit gefilterd); expert-modus toont alles.
   const railSections = useMemo(() => {
     const hasAnyDebt =
-      safeNum(debt1) + safeNum(debt2) + safeNum(studyDebt1) + safeNum(studyDebt2) > 0;
+      safeNum(debt1) + safeNum(debt2) + studyLoans.reduce((s, l) => s + safeNum(l.balance), 0) > 0;
     const all = [
       { id: 'sectie-situatie', label: guided ? 'Intake' : 'Uw situatie', status: 'done' },
       {
@@ -3938,8 +4578,7 @@ function MortgageCalculatorForm({ onReset }) {
     bouwdepotAmount,
     debt1,
     debt2,
-    studyDebt1,
-    studyDebt2,
+    studyLoans,
     scenarios.length,
   ]);
   const railIds = useMemo(() => railSections.map((s) => s.id), [railSections]);
@@ -4017,6 +4656,12 @@ function MortgageCalculatorForm({ onReset }) {
       woonquote: calc.woonquote,
       maxWoonlastMonthly: calc.maxWoonlastMonthly,
       monthlyDebt: calc.monthlyDebt,
+      studyDebt: {
+        toetslast: calc.studyToetslast,
+        factor: calc.studyDebt.factor,
+        debetrente: calc.studyDebt.debetrente,
+        afslag: calc.studyAfslag,
+      },
       bindingFactor,
       resultLabel: hasExistingHome ? 'Maximaal aankoopbudget' : 'Maximale hypotheek',
       resultValue: hasExistingHome ? maxBudgetCalc.maxBudget : calc.maxMortgage,
@@ -4462,7 +5107,7 @@ function MortgageCalculatorForm({ onReset }) {
                               {formatEuro(calc.maxWoonlastMonthly)}
                             </td>
                             <td className="py-2 pr-3 text-slate-600">
-                              {formatEuro(calc.monthlyDebt)}
+                              {formatEuro(calc.monthlyDebt + calc.studyToetslast)}
                             </td>
                             <td className="py-2"></td>
                           </tr>
@@ -4516,11 +5161,10 @@ function MortgageCalculatorForm({ onReset }) {
                         </tbody>
                       </table>
                       <p className="mt-2 text-[11px] text-slate-400">
-                        "Huidig" toont de volledige berekening (incl. AOW-toets en
-                        energiebonus). Opgeslagen scenario's tonen de kern-Nibud-uitkomst
-                        (inkomen, schulden, energiebonus) zonder de AOW-toets of de
-                        bijleenruimte-keten van een bestaande woning — bij een verschil is
-                        de volledige berekening (na laden) bindend, niet dit tabelgetal.
+                        Alle rijen, ook de opgeslagen scenario's, zijn met dezelfde volledige
+                        berekening doorgerekend (inkomen, schulden incl. studieschuld, AOW-toets,
+                        energiebonus). De restschuld van uw bestaande hypotheek wordt daarbij
+                        per vandaag berekend, niet per de dag van opslaan.
                       </p>
                     </div>
                   )}
@@ -5014,15 +5658,6 @@ function MortgageCalculatorForm({ onReset }) {
                     onChange={setDebt1}
                     placeholder="0"
                   />
-                  <CurrencyField
-                    id="studyDebt1"
-                    label="Studieschuld"
-                    icon={<GraduationCap className="h-3.5 w-3.5 text-slate-400" />}
-                    value={studyDebt1}
-                    onChange={setStudyDebt1}
-                    placeholder="0"
-                    hint="Totale openstaande schuld, niet het maandbedrag"
-                  />
                   <AdvancedFieldsToggle label="Meer opties (alimentatie)">
                     <CurrencyField
                       id="partnerAlimony1"
@@ -5044,15 +5679,6 @@ function MortgageCalculatorForm({ onReset }) {
                     onChange={setDebt2}
                     placeholder="0"
                   />
-                  <CurrencyField
-                    id="studyDebt2"
-                    label="Studieschuld"
-                    icon={<GraduationCap className="h-3.5 w-3.5 text-slate-400" />}
-                    value={studyDebt2}
-                    onChange={setStudyDebt2}
-                    placeholder="0"
-                    hint="Totale openstaande schuld, niet het maandbedrag"
-                  />
                   <AdvancedFieldsToggle label="Meer opties (alimentatie)">
                     <CurrencyField
                       id="partnerAlimony2"
@@ -5066,41 +5692,23 @@ function MortgageCalculatorForm({ onReset }) {
                 </PartnerSubCard>
                 )}
               </div>
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-medium text-slate-600">Studieschuld stelsel</span>
-                <div className="inline-flex rounded-lg border border-slate-100 bg-slate-50 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setStudyDebtRegime('nieuw')}
-                    className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
-                      studyDebtRegime === 'nieuw'
-                        ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    Nieuw (vanaf 2015)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setStudyDebtRegime('oud')}
-                    className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
-                      studyDebtRegime === 'oud'
-                        ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    Oud (vóór 2015)
-                  </button>
-                </div>
-              </div>
+              <StudyDebtPanel
+                loans={studyLoans}
+                hasPartner2={hasPartner2}
+                study={calc.studyDebt}
+                rateMode={studyDebtRateMode}
+                onRateModeChange={setStudyDebtRateMode}
+                afslagMethod={studyDebtAfslagMethod}
+                onAfslagMethodChange={setStudyDebtAfslagMethod}
+                onAdd={addStudyLoan}
+                onUpdate={updateStudyLoan}
+                onRemove={removeStudyLoan}
+                budget={studyRepayBudget}
+                onBudgetChange={setStudyRepayBudget}
+              />
               <p className="mt-3 text-xs text-slate-400">
-                Overige schulden tellen mee als 2% van het schuldbedrag per maand. Studieschuld
-                wordt sinds 2024 berekend op basis van de werkelijke DUO-terugbetaalregeling:{' '}
-                {STUDY_DEBT_REGIMES[studyDebtRegime].label.toLowerCase()}, met{' '}
-                {formatRate(STUDY_DEBT_REGIMES[studyDebtRegime].rate)} rente over{' '}
-                {STUDY_DEBT_REGIMES[studyDebtRegime].termYears} jaar, toegepast op de
-                openstaande restschuld. Deze maandlasten worden vervolgens gekapitaliseerd tegen
-                de toetsrente en in mindering gebracht op de leencapaciteit.
+                Overige schulden tellen mee als 2% van het schuldbedrag per maand en worden van de
+                maximale woonlast afgetrokken.
               </p>
               <p className="mt-2 text-xs text-slate-400">
                 Betaalde partneralimentatie werkt anders: die gaat bruto (×12) van het
@@ -6292,12 +6900,6 @@ function MortgageCalculatorForm({ onReset }) {
                                       <br />
                                     </>
                                   )}
-                                  {calc.studyDebtMonthly > 0 && (
-                                    <>
-                                      Studieschuld: −{formatEuro(calc.studyDebtMonthly)}/mnd
-                                      <br />
-                                    </>
-                                  )}
                                   {formatEuro(calc.maxWoonlastMonthly)} − {formatEuro(calc.monthlyDebt)} ={' '}
                                   {formatEuro(calc.availableMonthly)}/mnd beschikbaar
                                 </p>
@@ -6321,6 +6923,24 @@ function MortgageCalculatorForm({ onReset }) {
                                 </p>
                               )}
                             </li>
+                            {calc.studyAfslag > 0 && (
+                              <li className="rounded-lg bg-white/10 p-3">
+                                <p className="font-semibold text-white">
+                                  {calc.monthlyDebt > 0 ? '6' : '5'}. Studieschuld (DUO)
+                                </p>
+                                <p className="mt-1.5">
+                                  Termijnen {formatEuro(calc.studyDebt.totalTermijn)}/mnd × opslagfactor{' '}
+                                  {formatFactor(calc.studyDebt.factor)} (debetrente{' '}
+                                  {formatPct3(calc.studyDebt.debetrente)}) ={' '}
+                                  {formatEuro(calc.studyToetslast)}/mnd toetslast
+                                </p>
+                                <p className="mt-1">
+                                  Gekapitaliseerd tegen {formatPct3(calc.studyDebt.afslagRatePct)} (
+                                  {AFSLAG_METHODS[calc.studyDebt.afslagMethod].toLowerCase()}, 360 mnd):
+                                  −{formatEuro(calc.studyAfslag)} afslag
+                                </p>
+                              </li>
+                            )}
                             {calc.energyBonus > 0 && (
                               <li className="rounded-lg bg-white/10 p-3">
                                 <p className="font-semibold text-white">Energielabelbonus</p>
@@ -6720,7 +7340,8 @@ function MortgageCalculatorForm({ onReset }) {
                         {formatEuro(originalDebtTotal)}
                       </p>
                       <p className="text-xs text-slate-400">
-                        Som van de hoofdsommen bij aanvang van de leningdelen hieronder
+                        Som van de hoofdsommen bij aanvang van de leningdelen hieronder (niet de
+                        restschuld)
                       </p>
                     </div>
                     <DateField
@@ -6759,6 +7380,7 @@ function MortgageCalculatorForm({ onReset }) {
                           onRemove={() => removeLoanPart(part.id)}
                           canRemove={loanParts.length > 1}
                           elapsedMonths={elapsedMonthsSinceStart}
+                          currentBalance={safeNum(currentLoanParts[index]?.principal)}
                         />
                       ))}
                     </div>

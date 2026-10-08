@@ -1,5 +1,33 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (2): studieschuld volgens art. 3a + aflos-optimalisatie
+- **Nieuw: `src/studieschuld.js`** (zuivere rekenlogica, geen React) + `src/studieschuld.test.js`
+  (Vitest, `npm test`, 68 tests). Termijn per lening (werkelijk DUO-bedrag of annuïteit bij
+  aanloopfase/aflosvrij/draagkracht, effectieve maandrente `(1+j)^(1/12)−1`), opslagfactor-tabel en
+  AFM-toetsrente per kalenderjaar in `STUDY_DEBT_CONFIG_BY_YEAR`, gewogen toets-/contractrente,
+  afslag (marginaal | gewogen), renteherziening en `optimizeRepayment` (greedy, optimaal omdat de
+  winst per euro constant is). Uitleg en aannames staan in `README.md`.
+- **Datamodel**: dossier heeft nu `studyLoans` (per lening eigenaar, restschuld, rente, resterende
+  maanden, optioneel DUO-maandbedrag, status, optionele renteherziening) plus
+  `studyDebtRateMode` en `studyDebtAfslagMethod`. De oude velden `studyDebt1/2/Regime` zijn weg;
+  `fillDossierDefaults` zet oude dossiers/links om naar één lening per partner.
+- **Rekenketen**: studieschuld zit niet meer als maandlast in `getIncomeBasedMortgage`, maar is een
+  afslag in euro op de uitkomst (`applyStudyAfslag` in `computeCalc`, ook voor het AOW-scenario en
+  de toets tegen de werkelijke rente). De debetrente hangt af van de samenstelling van de nieuwe
+  hypotheek (`buildDebetrenteParts`: meegenomen delen + benodigd nieuw geld), en dat bedrag hangt
+  weer van het financieringsgat af → `computeCore` itereert maximaal 3 ronden. Component, solver
+  en scenario-samenvatting (`computeScenarioSummary`, nu volledig i.p.v. vereenvoudigd) gebruiken
+  allemaal `computeCore`.
+- **UI**: `StudyDebtPanel` in de Schulden-sectie (lening-kaarten met termijn/factor/toetslast/afslag,
+  twee instellingen, gewogen rentes, aflos-optimizer met waarschuwing, renteherziening vóór/ná).
+  Rekensom-stappen en PDF tonen de studieschuld-afslag.
+- **Standaard studieschuld** = echte lening van Partner 1 (DUO-aflosplan okt. 2026, SF15-oud):
+  saldo €13.803,67, maandbedrag €142,00, 2,95%, 111 maanden, 0 aflosvrije maanden; renteherziening
+  1 jan. 2029 (rente geldig t/m 31-12-2028), nieuwe rente nog leeg. Browsers met een eerder
+  opgeslagen dossier houden hun oude invoer tot "Opnieuw beginnen".
+- **Let op**: `npm audit` meldt 4 bestaande kwetsbaarheden in dompurify/nanoid/postcss/source-map-js
+  (niet door Vitest); niet aangepakt.
+
 ## Sessie okt. 2026: kort antwoord, haalbaarheids-solver, restschuld per vandaag
 - **Pure rekenketen**: `computeCalc` / `computeCurrentMortgage` / `computeCombinedGap` /
   `computeStarterGap` staan nu op moduleniveau en werken op een dossier-object; de component
@@ -21,6 +49,17 @@
   aflossingen). Oude dossiers/links (zonder `loanPartsBasis: 'aanvang'`) worden in
   `fillDossierDefaults` teruggerekend zodat hun restschuld van vandaag gelijk blijft. Het losse
   veld "Oorspronkelijke hypotheekschuld" is vervallen; het is nu de som van de leningdelen.
+- **Restsaldo van de bank als anker** (`knownBalance` + `balanceAsOf` per leningdeel,
+  `getCurrentLoanBalance`): een door de bank opgegeven restsaldo wordt vanaf de opgavedatum
+  doorgerekend tot vandaag (resterende looptijd = 360 − maanden tussen ingangsdatum en
+  opgavedatum). Nodig omdat een berekening uit de hoofdsom ~€1.100 afwijkt van het echte saldo
+  (bank hanteert eigen aflosschema). Typen in het veld zet `balanceAsOf` op vandaag; leeg =
+  terugval op berekening uit hoofdsom. De standaardwaarden zijn de echte leningdelen van de
+  eigenaar (hoofdsom €320.000/€355.000, saldo €269.480,64/€354.269,27 per 8 okt. 2026);
+  de rentevastperiode van deel 2 (20 jaar) is een aanname — stond niet op het overzicht. De
+  marktwaarde-default (€935.000) is bewust ongemoeid gelaten (overzicht noemt €1.028.000).
+  Let op: browsers met een eerder opgeslagen dossier houden hun oude leningdelen; "Opnieuw
+  beginnen" haalt de nieuwe standaard op.
 - **Test-tip**: in de preview-pane is `document.hidden` vaak true — dan lopen
   `requestAnimationFrame`-animaties (AnimatedEuro, exit-animaties) niet. Lees getallen buiten
   AnimatedEuro om en check uitklapstatus via `aria-expanded`.
