@@ -85,6 +85,7 @@ import {
   computeMaxBudget,
   SOLVER_PRICE_CEILING,
   solveAffordabilityLevers,
+  testLoanComposition,
 } from './calcEngine';
 
 function formatDateNL(dateStr) {
@@ -1746,6 +1747,114 @@ function formatPct1(fraction) {
   return (safeNum(fraction) * 100).toFixed(1).replace('.', ',') + '%';
 }
 
+function formatPct2(fraction) {
+  return (safeNum(fraction) * 100).toFixed(2).replace('.', ',') + '%';
+}
+
+// Kolom van de woonquote-tabel als tekst, bijv. "3,001–3,500%"; geschatte kolommen gemarkeerd.
+function bandLabel(band) {
+  if (!band) return '';
+  const fmt = (v) => v.toFixed(3).replace('.', ',');
+  const range = band.lower == null ? `t/m ${fmt(band.upper)}%` : `${fmt(band.lower)}–${fmt(band.upper)}%`;
+  return `${range}${band.exact ? '' : ' (kolom geschat)'}`;
+}
+
+function formatMonthsAsYears(months) {
+  const y = Math.floor(months / 12);
+  const m = Math.round(months % 12);
+  return m === 0 ? `${y} jaar` : `${y} jaar ${m} mnd`;
+}
+
+// Toets van de mee te nemen leningdelen, zoals een geldverstrekker die bij meenemen doet: per deel
+// de toetsrente, de looptijd en de toetslast, en hoeveel leenruimte het deel daarmee inneemt.
+function PortedPartsTest({ currentMortgage: cm, calc, portedTermBasis, onChangeTermBasis }) {
+  const comp = cm.compositeBinding;
+  const f = comp.capitalizationFactor;
+  return (
+    <div className="rounded-xl border border-slate-100 bg-white p-4" data-ported-test>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-slate-800">Toets per meegenomen leningdeel</p>
+          <p className="mt-0.5 max-w-xl text-xs text-slate-500">
+            Elk deel telt mee met een toetslast: annuïtair tegen de contractrente als het nog 10 jaar of
+            langer vaststaat, anders tegen de AFM-toetsrente van {formatRate(TOETSRENTE)}. Omgerekend
+            tegen de rente van het nieuwe geld ({formatRate(calc.testRate)}, factor{' '}
+            {f.toFixed(2).replace('.', ',')}) ziet u hoeveel leenruimte elk deel inneemt.
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-xs text-slate-600">
+          Looptijd toetslast
+          <select
+            value={portedTermBasis}
+            onChange={(e) => onChangeTermBasis(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs"
+          >
+            <option value="resterend">Resterende looptijd (standaard)</option>
+            <option value="30jaar">30 jaar (als uw geldverstrekker dat toestaat)</option>
+          </select>
+        </label>
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[520px] text-xs">
+          <thead>
+            <tr className="text-left text-slate-400">
+              <th className="py-1.5 pr-2 font-medium">Deel</th>
+              <th className="py-1.5 pr-2 text-right font-medium">Saldo</th>
+              <th className="py-1.5 pr-2 font-medium">Getoetst tegen</th>
+              <th className="py-1.5 pr-2 text-right font-medium">Toetslast p/m</th>
+              <th className="py-1.5 pr-2 text-right font-medium">Neemt aan ruimte</th>
+              <th className="py-1.5 text-right font-medium">t.o.v. saldo</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 text-slate-700">
+            {comp.parts.map((p) => {
+              const diff = p.capacityUsed - p.balance;
+              return (
+                <tr key={p.id} data-ported-part={p.index + 1}>
+                  <td className="py-1.5 pr-2">
+                    {p.index + 1}. {p.type}, {formatRate(p.rate)}
+                    <span className="block text-[11px] text-slate-400">
+                      nog {formatMonthsAsYears(p.remainingFixedMonths)} rentevast
+                    </span>
+                  </td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{formatEuro(p.balance)}</td>
+                  <td className="py-1.5 pr-2">
+                    {formatRate(p.testRate)} over {p.termMonths} mnd
+                    <span className="block text-[11px] text-slate-400">
+                      {p.testRateIsAfm ? 'AFM-toetsrente (< 10 jaar vast)' : 'contractrente (10+ jaar vast)'}
+                    </span>
+                  </td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{formatEuro(p.toetslast)}</td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{formatEuro(p.capacityUsed)}</td>
+                  <td
+                    className={`py-1.5 text-right tabular-nums ${diff > 0 ? 'text-red-600' : 'text-emerald-600'}`}
+                  >
+                    {signedEuro(diff)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-xs text-slate-500">
+        Gewogen toetsrente van de hele nieuwe hypotheek: {formatPct3(comp.weightedRate)} → woonquote-kolom{' '}
+        {bandLabel(comp.band)}, woonquote {formatPct2(comp.woonquote)}
+        {comp === cm.compositePension ? ' (AOW-tabel, pensioeninkomen bindend)' : ''}.
+        {comp.cappedAtBand
+          ? ' Het maximum ligt op de rand van deze kolom: meer lenen verschuift de gewogen rente naar een kolom met een lagere woonquote.'
+          : ''}
+      </p>
+      {!comp.band.exact && (
+        <p className="mt-1 text-[11px] text-amber-600">
+          De waarden van deze tabelkolom zijn geschat tussen de twee naastliggende kolommen; controleer ze
+          in Bijlage 1 van de Tijdelijke regeling hypothecair krediet 2026.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function signedEuro(amount) {
   return `${amount < 0 ? '−' : '+'} ${formatEuro(Math.abs(amount))}`;
 }
@@ -1802,22 +1911,51 @@ function describeCapacityRow(row, ctx) {
         text: 'Binnen 10 jaar van de AOW-leeftijd is het verwachte pensioeninkomen bindend.',
       };
     case 'energy':
-      return { label: `Energielabelbonus (label ${ctx.energyLabel})`, text: 'Extra leenruimte voor een energiezuinige woning.' };
-    case 'incomeMax':
-      return { label: 'Maximale hypotheek o.b.v. inkomen', text: 'Na alle afslagen en bonussen hierboven.' };
-    case 'rateRisk':
       return {
-        label: 'Renterisico meegenomen leningdelen',
-        text: `Leningdelen met minder dan 10 jaar rentevast worden getoetst tegen de AFM-toetsrente (${formatRate(
-          TOETSRENTE
-        )}) in plaats van hun lage contractrente.`,
+        label: `Energielabelbonus (label ${ctx.energyLabel})`,
+        text: 'Extra leenruimte voor een energiezuinige woning, buiten de woonlasttoets om.',
       };
-    case 'effectiveMax':
-      return { label: 'Werkelijke leencapaciteit (totale hypotheek)', text: 'Meegenomen én nieuw geld samen.' };
+    case 'single':
+      return {
+        label: 'Alleenstaandenbedrag',
+        text: 'Eén aanvrager met een toetsinkomen vanaf € 30.000 mag € 17.000 extra lenen, buiten de woonlasttoets om.',
+      };
+    case 'incomeMax':
+      return {
+        label: ctx.doorstromer ? `Maximale hypotheek als alles nieuw geld tegen ${formatRate(m.rate)} was` : 'Maximale hypotheek o.b.v. inkomen',
+        text: 'Na alle afslagen en bonussen hierboven.',
+      };
     case 'ported':
-      return { label: 'Al geleend: meegenomen hypotheek', text: 'Restschuld van uw huidige hypotheek per vandaag.' };
+      return {
+        label: 'Meegenomen hypotheek: toetslast per leningdeel',
+        text: `Restschuld ${formatEuro(m.portedDebt)}. Elk deel neemt zijn toetslast uit de woonlast (contractrente bij 10+ jaar vast, anders ${formatRate(
+          TOETSRENTE
+        )}), omgerekend met factor ${cf(m.capitalizationFactor)}.`,
+      };
+    case 'woonquoteMix':
+      return {
+        label: `Woonquote bij gewogen toetsrente ${formatPct3(m.weightedRate)}`,
+        text: `Kolom ${bandLabel(m.band)}: woonquote ${formatPct2(m.woonquote)} i.p.v. ${formatPct2(
+          m.baseWoonquote
+        )} bij ${formatRate(m.newRate)}.`,
+      };
+    case 'bandEdge':
+      return {
+        label: 'Begrensd op de rand van een woonquote-kolom',
+        text: `Meer lenen trekt de gewogen toetsrente (${formatPct3(m.weightedRate)}) naar een kolom met een lagere woonquote.`,
+      };
+    case 'aowComposite':
+      return {
+        label: 'AOW-toets op de samenstelling',
+        text: 'Getoetst op het verwachte pensioeninkomen (AOW-tabel) is de ruimte voor nieuw geld lager.',
+      };
+    case 'compositeRest':
+      return {
+        label: 'Woonquote en toets van de samenstelling',
+        text: `Gewogen toetsrente ${formatPct3(m.weightedRate)} (kolom ${bandLabel(m.band)}).`,
+      };
     case 'noRoom':
-      return { label: 'Geen ruimte meer', text: 'De meegenomen hypotheek is groter dan de leencapaciteit.' };
+      return { label: 'Geen ruimte meer', text: 'De toetslast van de meegenomen hypotheek vult de woonlast al.' };
     case 'newMaxNibud':
       return { label: 'Ruimte voor nieuw geld (inkomen)', text: 'Wat uw inkomen nog toelaat bovenop de meegenomen hypotheek.' };
     case 'lenderCap':
@@ -1838,9 +1976,10 @@ function describeCapacityRow(row, ctx) {
 
 // Dezelfde regels als op het scherm, als platte tekst voor de PDF (ASCII-tekens, want de
 // standaardlettertypen van jsPDF kennen geen minteken of vinkje).
-function buildCapacityPdfRows(b, ctx) {
+function buildCapacityPdfRows(b, baseCtx) {
   const euro = (v) => formatEuro(Math.abs(v));
   const doorstromer = b.kind === 'doorstromer';
+  const ctx = { ...baseCtx, doorstromer };
   const margin = doorstromer ? b.need.netMargin : b.need.margin;
   const summary = [
     [doorstromer ? 'Maximale totale hypotheek' : 'Maximale hypotheek', euro(b.maxTotalMortgage)],
@@ -1878,15 +2017,15 @@ function CapacityRowChildren({ row, hasPartner2 }) {
             </li>
           );
         }
-        if (row.key === 'rateRisk') {
+        if (row.key === 'ported') {
           return (
             <li key={child.id} className="flex flex-wrap items-baseline justify-between gap-x-3">
               <span>
-                Leningdeel {child.index + 1}: {formatEuro(child.balance)} van {formatRate(child.rate)} getoetst tegen{' '}
-                {formatRate(child.testRate)} (nog {Math.floor(child.remainingFixedYears)} jaar{' '}
-                {Math.round((child.remainingFixedYears % 1) * 12)} mnd rentevast)
+                Deel {child.index + 1}: {formatEuro(child.balance)} ({formatRate(child.rate)}, nog{' '}
+                {formatMonthsAsYears(child.remainingFixedMonths)} vast) getoetst tegen {formatRate(child.testRate)} over{' '}
+                {child.termMonths} mnd = {formatEuro(child.toetslast)} per maand
               </span>
-              <span className="font-medium text-red-600">−{formatEuro(child.haircut)}</span>
+              <span className="font-medium text-red-600">−{formatEuro(child.capacityUsed)}</span>
             </li>
           );
         }
@@ -1961,7 +2100,7 @@ function CapacityBreakdownSection({ breakdown: b, price, energyLabel, hasPartner
   const barMax = Math.max(1, ...b.rows.map((r) => Math.max(r.running, r.type === 'delta' ? r.running - r.amount : r.amount)));
   const need = b.need;
   const doorstromer = b.kind === 'doorstromer';
-  const ctx = { energyLabel, hasPartner2 };
+  const ctx = { energyLabel, hasPartner2, doorstromer };
   const margin = doorstromer ? need.netMargin : need.margin;
 
   return (
@@ -2033,7 +2172,7 @@ function CapacityBreakdownSection({ breakdown: b, price, energyLabel, hasPartner
           <dt className="text-xs text-slate-400">Totaal aan afslagen</dt>
           <dd className="text-xl font-bold text-red-600">−{formatEuro(b.afslagen.total)}</dd>
           <p className="mt-0.5 text-[11px] text-slate-400">schulden, studieschuld
-            {doorstromer ? ', renterisico' : ''}
+            {doorstromer && b.afslagen.composite > 0 ? ', toets meegenomen delen' : ''}
             {b.afslagen.aow > 0 ? ', AOW' : ''}
           </p>
         </div>
@@ -2074,7 +2213,7 @@ function CapacitySummary({ breakdown: b, price, onOpen }) {
   const lines = [
     ['Schulden en tweede woning', a.debts - a.floor],
     ['Studieschuld', a.study],
-    ['Renterisico meegenomen delen', a.rateRisk],
+    ['Toets meegenomen leningdelen', a.composite],
     ['AOW-toets', a.aow],
   ].filter(([, v]) => v > 0.5);
 
@@ -2121,6 +2260,12 @@ function CapacitySummary({ breakdown: b, price, onOpen }) {
               <dt className="font-medium text-blue-50">Totaal</dt>
               <dd className="font-semibold text-red-200">−{formatEuro(a.total)}</dd>
             </div>
+            {a.compositeBenefit > 0.5 && (
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-blue-100">Voordeel lage rente meegenomen delen</dt>
+                <dd className="font-medium text-emerald-200">+{formatEuro(a.compositeBenefit)}</dd>
+              </div>
+            )}
           </dl>
         </>
       )}
@@ -2393,6 +2538,8 @@ function MortgageCalculatorForm({ onReset }) {
   // 30/50/100%, default 50% — de gangbare bancaire norm. Gedeeld door de doorstromer- en
   // de starters-toets (die sluiten elkaar uit via hasExistingHome).
   const [aflossingsvrijMaxPct, setAflossingsvrijMaxPct] = useState(50);
+  // Looptijd voor de toetslast van meegenomen annuïtaire/lineaire delen (zie getPortedPartTests).
+  const [portedTermBasis, setPortedTermBasis] = useState(DOSSIER_DEFAULTS.portedTermBasis);
 
   // Maandelijks aflosschema nieuwe situatie: welk venster van maanden en welke jaarlijkse
   // waardestijging-aanname worden getoond in de maandtabel bij "Aflosschema nieuwe situatie".
@@ -2520,6 +2667,7 @@ function MortgageCalculatorForm({ onReset }) {
       startDate,
       loanParts,
       loanPartsBasis: 'aanvang',
+      portedTermBasis,
       additionalLoanParts,
       additionalLoanTouched,
       aflossingsvrijMaxPct,
@@ -2544,7 +2692,7 @@ function MortgageCalculatorForm({ onReset }) {
       familyLoanBufferPct, takeOverMortgage, oldMortgageStance, bridgePeriodMonths,
       includeOwnCapitalInDoubleTest, liquidityBuffer, useBridgeLoan, bridgeLoanAmount,
       bridgeLoanRate, marketValue, saleDiscountPercentage, currentEnergyLabel,
-      startDate, loanParts, additionalLoanParts, additionalLoanTouched, aflossingsvrijMaxPct,
+      startDate, loanParts, portedTermBasis, additionalLoanParts, additionalLoanTouched, aflossingsvrijMaxPct,
       scheduleWindowStartMonth, scheduleAppreciationPct, starterLoanParts,
     ]
   );
@@ -2629,6 +2777,7 @@ function MortgageCalculatorForm({ onReset }) {
     setCurrentEnergyLabel(snap.currentEnergyLabel);
     setStartDate(snap.startDate);
     setLoanParts(snap.loanParts);
+    setPortedTermBasis(snap.portedTermBasis ?? DOSSIER_DEFAULTS.portedTermBasis);
     setAdditionalLoanParts(snap.additionalLoanParts);
     setAdditionalLoanTouched(snap.additionalLoanTouched ?? false);
     setAflossingsvrijMaxPct(snap.aflossingsvrijMaxPct);
@@ -3049,31 +3198,47 @@ function MortgageCalculatorForm({ onReset }) {
     const totalNet = totalGross - taxBenefit;
     const netInterestComponent = Math.max(0, totalInterest - taxBenefit);
 
-    // Rekenrente per nieuw leningdeel: bij een rentevastperiode korter dan 10 jaar geldt de
-    // AFM-toetsrente in plaats van de daadwerkelijke, vaak lagere rente. Dit werkt door in
-    // de leencapaciteit hieronder, niet in de daadwerkelijke bruto/netto maandlasten hierboven.
-    const rateRiskHaircut = additionalLoanParts.reduce((sum, part, i) => {
-      const testRate = getTestRate(part.rate, part.originalFixedYears);
-      const actualRate = safeNum(part.rate);
-      if (testRate === actualRate) return sum;
-      const stress = calculateLoanPart({ ...part, rate: testRate }, 0, todayIso);
-      const extra = Math.max(0, stress.grossMonthly - partResults[i].grossMonthly);
-      return sum + extra * getCapitalizationFactor(testRate);
-    }, 0);
-    const hasRateRisk = rateRiskHaircut > 0;
-
-    // Leencapaciteit voor deze toets: inkomensgebaseerde capaciteit bij de daadwerkelijke
-    // rente, gecorrigeerd voor het renterisico van zowel de meegenomen als de nieuwe
-    // leningdelen. Bewust los van de algemene rentevastperiode-slider bij Beoogde woning,
-    // aangezien elk nieuw leningdeel hier zijn eigen rentevastperiode heeft.
-    const effectiveCapacity = Math.max(
-      0,
-      calc.incomeBasedMaxAtActualRate -
-        (takeOverMortgage ? currentMortgage.rateRiskCapacityHaircut : 0) -
-        rateRiskHaircut
-    );
+    // Toets van deze concrete samenstelling, zoals de geldverstrekker die doet: meegenomen delen
+    // plus deze nieuwe delen, elk annuïtair tegen zijn eigen toetsrente (AFM-toetsrente bij
+    // minder dan 10 jaar rentevast), en de woonquote uit de gewogen toetsrente. Bewust los van de
+    // algemene rentevastperiode-slider bij Beoogde woning: elk nieuw deel heeft hier zijn eigen
+    // rentevastperiode. De toets werkt door in de leencapaciteit, niet in de werkelijke
+    // bruto/netto maandlasten hierboven.
+    const newPartTests = additionalLoanParts.map((part) => ({
+      balance: safeNum(part.principal),
+      rate: safeNum(part.rate),
+      testRate: getTestRate(part.rate, part.originalFixedYears),
+      termMonths: TERM_MONTHS,
+    }));
+    const ratePartsAtAfm = newPartTests.filter((p) => p.balance > 0 && p.testRate !== p.rate);
+    const hasRateRisk = ratePartsAtAfm.length > 0;
+    const compositionArgs = {
+      ported: takeOverMortgage ? currentMortgage.portedParts : [],
+      newParts: newPartTests,
+      refRate: calc.testRate,
+      monthlyDebt: calc.monthlyDebt,
+      studyAfslag: calc.studyAfslag,
+    };
+    const composition = testLoanComposition({
+      ...compositionArgs,
+      income: calc.combinedIncome,
+      bonus: calc.energyBonus + calc.singleBonus,
+    });
+    const compositionPension = calc.pensionActive
+      ? testLoanComposition({
+          ...compositionArgs,
+          income: calc.pensionCombinedIncome,
+          aow: true,
+          bonus: calc.energyBonus + calc.pensionSingleBonus,
+        })
+      : null;
+    const bindingComposition =
+      compositionPension && compositionPension.margin < composition.margin
+        ? compositionPension
+        : composition;
     const totalDebtAfterMove = currentMortgage.portedDebt + totalPrincipal;
-    const capacityMargin = effectiveCapacity - totalDebtAfterMove;
+    const capacityMargin = bindingComposition.margin;
+    const effectiveCapacity = Math.max(0, totalDebtAfterMove + capacityMargin);
     const withinIncomeCapacity = capacityMargin >= 0;
     const exceedsLenderCap = totalDebtAfterMove > getLenderCap(lenderCapThreshold);
 
@@ -3119,8 +3284,9 @@ function MortgageCalculatorForm({ onReset }) {
       taxBenefit,
       totalNet,
       netInterestComponent,
-      rateRiskHaircut,
+      ratePartsAtAfm,
       hasRateRisk,
+      composition: bindingComposition,
       effectiveCapacity,
       totalDebtAfterMove,
       capacityMargin,
@@ -3568,11 +3734,14 @@ function MortgageCalculatorForm({ onReset }) {
             : 'De aanvullende hypotheek die nodig is voor deze aanschafprijs past niet binnen wat u op basis van inkomen (nog) kunt bijlenen — ook niet met een eventuele familielening.',
         };
       }
-      if (currentMortgage.hasRateRiskOnPortedDebt) {
+      if (currentMortgage.compositeEffect > 0.5 && currentMortgage.hasRateRiskOnPortedDebt) {
         return {
-          label: 'Het renterisico op uw meegenomen hypotheek',
-          explanation:
-            'Een deel van uw huidige hypotheek heeft een rentevastperiode korter dan 10 jaar en wordt daarom getoetst tegen de hogere AFM-toetsrente.',
+          label: 'De toets van uw meegenomen hypotheek',
+          explanation: `Een deel van uw huidige hypotheek staat korter dan 10 jaar vast en telt daarom mee tegen de AFM-toetsrente van ${formatRate(
+            TOETSRENTE
+          )}; samen met de woonquote bij de gewogen toetsrente kost dat ${formatEuro(
+            currentMortgage.compositeEffect
+          )} leenruimte.`,
         };
       }
       return {
@@ -6760,20 +6929,22 @@ function MortgageCalculatorForm({ onReset }) {
                       </div>
                       <div>
                         <span className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
-                          Met afslag schulden + renterisico
-                          <InfoTooltip text="Definitief bindend bedrag: ook getoetst tegen de AFM-toetsrente zodra een leningdeel — nieuw of meegenomen — korter dan 10 jaar rentevast is." />
+                          {takeOverMortgage ? 'Getoetst per leningdeel' : 'Met afslag schulden + toetsrente'}
+                          <InfoTooltip text="Definitief bindend bedrag (totale hypotheek). Bij meenemen toetst de geldverstrekker elk leningdeel tegen zijn eigen toetsrente: de contractrente bij nog 10+ jaar rentevast, anders de AFM-toetsrente. De woonquote volgt uit de gewogen toetsrente van alle delen samen." />
                         </span>
-                        <p
-                          className={`text-lg font-bold ${
-                            currentMortgage.hasRateRiskOnPortedDebt
-                              ? 'text-amber-600'
-                              : 'text-slate-900'
-                          }`}
-                        >
+                        <p className="text-lg font-bold text-slate-900">
                           {formatEuro(currentMortgage.effectiveMaxMortgage)}
                         </p>
-                        {currentMortgage.hasRateRiskOnPortedDebt && (
-                          <span className="text-[11px] text-amber-600">Na renterisicocorrectie</span>
+                        {takeOverMortgage && Math.abs(currentMortgage.compositeEffect) > 0.5 && (
+                          <span
+                            className={`text-[11px] ${
+                              currentMortgage.compositeEffect > 0 ? 'text-amber-600' : 'text-emerald-600'
+                            }`}
+                          >
+                            {currentMortgage.compositeEffect > 0 ? '−' : '+'}
+                            {formatEuro(Math.abs(currentMortgage.compositeEffect))} t.o.v. alles tegen{' '}
+                            {formatRate(calc.testRate)}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -6825,30 +6996,14 @@ function MortgageCalculatorForm({ onReset }) {
                       )}
                     </AnimatePresence>
 
-                    <AnimatePresence>
-                      {currentMortgage.hasRateRiskOnPortedDebt && (
-                        <motion.div
-                          initial={{ opacity: 0, y: 8, scale: 0.97 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, y: 8, scale: 0.97 }}
-                          transition={{ duration: 0.25, ease: 'easeOut' }}
-                          className="mt-4"
-                        >
-                          <InlineNote className="mt-0">
-                            Een deel van uw mee te nemen hypotheek heeft een rentevastperiode
-                            korter dan 10 jaar tegen een rente onder de AFM-toetsrente van{' '}
-                            {formatRate(TOETSRENTE)}. Voor de leencapaciteit wordt dit deel
-                            getoetst tegen de toetsrente in plaats van de daadwerkelijke, lagere
-                            rente. Dit verlaagt uw leencapaciteit met{' '}
-                            {formatEuro(currentMortgage.rateRiskCapacityHaircut)}, van{' '}
-                            {formatEuro(calc.incomeBasedMax)} naar een werkelijke leencapaciteit
-                            van {formatEuro(currentMortgage.effectiveMaxMortgage)}. Dit werkt
-                            door in uw bijleenruimte, het financieringsgat en de resterende
-                            aanvullende hypotheek hieronder.
-                          </InlineNote>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                    {takeOverMortgage && currentMortgage.compositeBinding && (
+                      <PortedPartsTest
+                        currentMortgage={currentMortgage}
+                        calc={calc}
+                        portedTermBasis={portedTermBasis}
+                        onChangeTermBasis={setPortedTermBasis}
+                      />
+                    )}
 
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
                       <div>
@@ -6946,20 +7101,14 @@ function MortgageCalculatorForm({ onReset }) {
                         </div>
                         <div>
                           <span className="text-xs text-slate-400">Werkelijke leencapaciteit</span>
-                          <p
-                            className={`text-sm font-semibold ${
-                              currentMortgage.hasRateRiskOnPortedDebt
-                                ? 'text-amber-600'
-                                : 'text-slate-800'
-                            }`}
-                          >
+                          <p className="text-sm font-semibold text-slate-800">
                             {formatEuro(currentMortgage.effectiveMaxMortgage)}
                           </p>
-                          {currentMortgage.hasRateRiskOnPortedDebt && (
-                            <span className="text-[11px] text-amber-600">
-                              O.b.v. inkomen {formatEuro(calc.incomeBasedMax)}, min{' '}
-                              {formatEuro(currentMortgage.rateRiskCapacityHaircut)}{' '}
-                              renterisicocorrectie
+                          {takeOverMortgage && currentMortgage.compositeBinding && (
+                            <span className="text-[11px] text-slate-400">
+                              Getoetst per leningdeel, woonquote{' '}
+                              {formatPct2(currentMortgage.compositeBinding.woonquote)} bij gewogen
+                              toetsrente {formatPct3(currentMortgage.compositeBinding.weightedRate)}
                             </span>
                           )}
                         </div>
@@ -7693,10 +7842,13 @@ function MortgageCalculatorForm({ onReset }) {
                             className="mt-4"
                           >
                             <InlineNote className="mt-0">
-                              Voor de leencapaciteitstoets hieronder is uw effectieve capaciteit
-                              verlaagd met {formatEuro(additionalLoanCalc.rateRiskHaircut)}{' '}
-                              vanwege een rentevastperiode korter dan 10 jaar op één of meer
-                              nieuwe leningdelen.
+                              {additionalLoanCalc.ratePartsAtAfm.length === 1 ? 'Eén nieuw leningdeel staat' : 'Meerdere nieuwe leningdelen staan'}{' '}
+                              korter dan 10 jaar vast en {additionalLoanCalc.ratePartsAtAfm.length === 1 ? 'telt' : 'tellen'}{' '}
+                              in de toets hieronder mee tegen de AFM-toetsrente van{' '}
+                              {formatRate(TOETSRENTE)} in plaats van de werkelijke rente. Dat
+                              verhoogt de toetslast én de gewogen toetsrente (woonquote{' '}
+                              {formatPct2(additionalLoanCalc.composition.woonquote)} bij{' '}
+                              {formatPct3(additionalLoanCalc.composition.weightedRate)}).
                             </InlineNote>
                           </motion.div>
                         )}

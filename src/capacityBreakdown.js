@@ -8,6 +8,7 @@
 // berekening zelf oplevert.
 
 import { computeStarterGap, getLenderCap } from './calcEngine';
+import { getWoonquote } from './nibud2026';
 
 const EPS = 0.005;
 
@@ -85,10 +86,11 @@ export function buildCapacityBreakdown(d, core, starterGap = computeStarterGap(d
   const aowDelta = cap.boundMaxLoan - cap.loanAfterStudy;
   if (calc.pensionBinding && Math.abs(aowDelta) > EPS) delta('aow', aowDelta);
 
-  // 4. Energielabelbonus.
+  // 4. Energielabelbonus en alleenstaandenbedrag (beide buiten de financieringslast).
   if (calc.energyBonus > 0) delta('energy', calc.energyBonus);
+  if (calc.singleBonus > 0) delta('single', calc.singleBonus);
 
-  total('incomeMax', calc.incomeBasedMax);
+  total('incomeMax', calc.incomeBasedMax, 'subtotal', { rate: cap.rate });
 
   let finalAmount;
   let maxTotalMortgage;
@@ -96,19 +98,51 @@ export function buildCapacityBreakdown(d, core, starterGap = computeStarterGap(d
   let need;
 
   if (doorstromer) {
-    // 5. Renterisico: meegenomen leningdelen korter dan 10 jaar rentevast worden tegen de
-    //    toetsrente getoetst.
-    const rateRisk = calc.incomeBasedMax - cm.effectiveMaxMortgage;
-    if (rateRisk > EPS) {
-      delta('rateRisk', -rateRisk, { children: cm.rateRiskParts.filter((p) => p.haircut > EPS) });
+    const comp = cm.compositeBinding;
+    if (comp) {
+      // 5. Meegenomen leningdelen: elk deel neemt zijn eigen toetslast (eigen toetsrente,
+      //    annuïtair) uit de woonlast; omgerekend naar euro's tegen de rente van het nieuwe geld.
+      //    Een deel met een lang vastgezette lage rente kost zo minder leenruimte dan zijn saldo.
+      const used = comp.parts.reduce((s, p) => s + p.capacityUsed, 0);
+      delta('ported', -used, {
+        children: comp.parts,
+        meta: { portedDebt: cm.portedDebt, capitalizationFactor: comp.capitalizationFactor },
+      });
+      // 6. Woonquote bij de gewogen toetsrente van de hele samenstelling i.p.v. de rente van het
+      //    nieuwe geld (andere tabelkolom).
+      const baseWoonquote = calc.pensionBinding
+        ? null
+        : getWoonquote(calc.combinedIncome, cap.rate);
+      if (baseWoonquote !== null && comp === cm.composite) {
+        const mix =
+          ((comp.woonquote - baseWoonquote) * calc.combinedIncome) / 12 * comp.capitalizationFactor;
+        if (Math.abs(mix) > EPS && cm.extraBorrowCapacity > EPS && !comp.cappedAtBand) {
+          delta('woonquoteMix', mix, {
+            meta: {
+              woonquote: comp.woonquote,
+              baseWoonquote,
+              weightedRate: comp.weightedRate,
+              band: comp.band,
+              newRate: cap.rate,
+            },
+          });
+        }
+      }
+      // 7. Restverschil: ondergrens € 0, een bedrag op de rand van een tabelkolom of een AOW-toets
+      //    die pas in de samenstelling bindend wordt.
+      const rest = cm.extraBorrowCapacity - running;
+      if (Math.abs(rest) > EPS) {
+        const key =
+          cm.extraBorrowCapacity <= EPS
+            ? 'noRoom'
+            : comp.cappedAtBand
+              ? 'bandEdge'
+              : comp === cm.compositePension
+                ? 'aowComposite'
+                : 'compositeRest';
+        delta(key, rest, { meta: { band: comp.band, weightedRate: comp.weightedRate } });
+      }
     }
-    total('effectiveMax', cm.effectiveMaxMortgage);
-
-    // 6. Wat al geleend is (meegenomen) gaat er af; de rest is de ruimte voor nieuw geld.
-    if (cm.portedDebt > EPS) {
-      delta('ported', -cm.portedDebt, { children: cm.rateRiskParts });
-    }
-    if (running < -EPS) delta('noRoom', -running);
     total('newMaxNibud', cm.extraBorrowCapacity);
 
     // 7. Plafond van de geldverstrekker op de totale hypotheek.
@@ -161,11 +195,19 @@ export function buildCapacityBreakdown(d, core, starterGap = computeStarterGap(d
     study: -sumOf('study'),
     floor: sumOf('floor'),
     aow: -sumOf('aow'),
-    rateRisk: -sumOf('rateRisk'),
     lenderCap: -sumOf('lenderCap'),
   };
-  // Alle verlagingen van de leencapaciteit vóór het meegenomen bedrag, zonder energiebonus.
-  afslagen.total = afslagen.debts + afslagen.study - afslagen.floor + afslagen.aow + afslagen.rateRisk;
+  // Effect van de toets per leningdeel t.o.v. "meegenomen saldo telt euro voor euro": positief =
+  // de samenstelling kost leenruimte (deel tegen AFM-toetsrente, hogere woonquote-kolom e.d.),
+  // negatief = lang vastgezette lage rente levert ruimte op.
+  const compositeKeys = ['ported', 'woonquoteMix', 'bandEdge', 'aowComposite', 'compositeRest', 'noRoom'];
+  const compositeNet = compositeKeys.reduce((s, k) => s + sumOf(k), 0);
+  const portedDebt = doorstromer ? cm.portedDebt : 0;
+  const compositeEffect = doorstromer && cm.compositeBinding ? -(compositeNet + portedDebt) : 0;
+  afslagen.composite = Math.max(0, compositeEffect);
+  afslagen.compositeBenefit = Math.max(0, -compositeEffect);
+  // Alle verlagingen van de leencapaciteit vóór het meegenomen bedrag, zonder bonussen.
+  afslagen.total = afslagen.debts + afslagen.study - afslagen.floor + afslagen.aow + afslagen.composite;
 
   return {
     kind: doorstromer ? 'doorstromer' : 'starter',

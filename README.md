@@ -19,10 +19,29 @@ en gebruikt dezelfde rekenkern ([`src/calcEngine.js`](src/calcEngine.js)) als de
 1. leencapaciteit op basis van inkomen (woonquote × toetsinkomen, gekapitaliseerd tegen de toetsrente);
 2. − afslag tweede woning, overige schulden en een maandelijkse familielening (maandlast × kapitalisatiefactor);
 3. − afslag studieschuld (per lening zichtbaar), en een correctieregel als de afslagen de capaciteit onder € 0 zouden brengen;
-4. − AOW-toets (alleen als het pensioeninkomen bindend is) en + energielabelbonus = maximale hypotheek o.b.v. inkomen;
-5. doorstromer: − renterisico van meegenomen leningdelen met minder dan 10 jaar rentevast = werkelijke
-   leencapaciteit; − meegenomen hypotheek = ruimte voor nieuw geld; − plafond van de geldverstrekker (alleen als dat lager is)
-   = maximaal nieuw te lenen. Starter: − plafond van de geldverstrekker = maximale hypotheek.
+4. − AOW-toets (alleen als het pensioeninkomen bindend is), + energielabelbonus en + alleenstaandenbedrag
+   (€ 17.000 bij één aanvrager met toetsinkomen ≥ € 30.000) = maximale hypotheek o.b.v. inkomen;
+5. doorstromer die de hypotheek meeneemt: toets van de samenstelling (zie hieronder) = ruimte voor nieuw geld;
+   − plafond van de geldverstrekker (alleen als dat lager is) = maximaal nieuw te lenen.
+   Starter: − plafond van de geldverstrekker = maximale hypotheek.
+
+### Toets van de samenstelling bij meenemen
+
+Zoals een geldverstrekker een hypotheek met meerdere leningdelen toetst (Tijdelijke regeling hypothecair krediet,
+art. 3; NHG-systematiek):
+
+- elk meegenomen deel heeft een **toetslast**: annuïtair tegen de contractrente als het nog 10 jaar of langer
+  vaststaat, anders tegen de AFM-toetsrente (ook bij een variabele of verlopen rentevaste periode); looptijd = de
+  resterende looptijd (aflossingsvrij: altijd 30 jaar), of 30 jaar als u 'Looptijd toetslast' daarop zet;
+- het nieuwe geld telt annuïtair over 30 jaar tegen zijn eigen toetsrente;
+- de **woonquote** komt uit de kolom van de **gewogen toetsrente** van alle delen samen (gewicht hoofdsom × looptijd);
+- het maximum nieuw geld is het hoogste bedrag waarvoor de woonlast de toetslasten dekt, waarbij de gewogen toetsrente
+  (en dus de kolom) zelf met dat bedrag meebeweegt (`computeCompositeCapacity`); een concrete samenstelling van
+  aanvullende leningdelen wordt met `testLoanComposition` getoetst.
+
+De woonquote-tabel (`nibud2026.js`) zoekt de kolom per 0,5% toetsrente en de rij per € 1.000 inkomen op, zonder
+interpolatie tussen kolommen. Van de kolommen tot 2,0 / 2,5 / 3,5 / 4,5 / 5,5% staan de officiële waarden nog niet in de
+ankerset; die worden lineair geschat tussen de buurkolommen en de app meldt dat ('kolom geschat').
 
 Elke regel krijgt het lopende bedrag; `reconciles` is alleen waar als dat op elk tussentotaal en aan het eind gelijk is
 aan wat de berekening zelf oplevert (en de pagina toont die controle). De tests rekenen het standaardscenario

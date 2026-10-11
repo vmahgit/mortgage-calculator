@@ -1,5 +1,40 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (4): toetsing zoals een geldverstrekker (per leningdeel, gewogen toetsrente)
+- **Toets van de samenstelling bij meenemen** (`calcEngine.js`: `getPortedPartTests`, `computeCompositeCapacity`,
+  `testLoanComposition`, `getWeightedTestRate`, `getAnnuityPayment`, `getPortedTestRate`): vervangt de oude
+  'renterisico'-afslag (meerkosten tegen 5% × factor bij 5%) en het toetsen van álles tegen de rente van het nieuwe geld.
+  Nu: elk meegenomen deel annuïtair tegen zijn eigen toetsrente (contractrente bij 10+ jaar vast, anders AFM 5%, ook bij
+  variabel/verlopen), over de resterende looptijd (aflossingsvrij altijd 360 mnd; dossierveld `portedTermBasis`
+  'resterend' | '30jaar'); woonquote uit de kolom van de gewogen toetsrente (gewicht hoofdsom × looptijd). Omdat die
+  gewogen rente met het nieuwe bedrag meebeweegt, zoekt `computeCompositeCapacity` per tabelkolom het geldige bereik
+  (exact, geen iteratie). Bronnen: regeling art. 3 (in werking 1-1-2026), NHG 'Beschrijving berekeningen NHG-Toets'.
+- `computeCurrentMortgage` geeft nu `portedParts`, `composite`, `compositePension`, `compositeBinding`,
+  `compositeEffect`, `portedAtAfmRate`; de velden `rateRiskParts` en `rateRiskCapacityHaircut` zijn weg.
+  `effectiveMaxMortgage` = meegenomen + `extraBorrowCapacity`.
+- **Woonquote-tabel** (`nibud2026.js`): kolom per 0,5% (`getToetsrenteBand`) en rij per € 1.000 (`getIncomeRow`),
+  geen interpolatie tussen kolommen meer. De kolommen tot 2,0/2,5/3,5/4,5/5,5% zijn niet bekend en worden lineair
+  geschat (UI meldt 'kolom geschat').
+- **Alleenstaandenbedrag** € 17.000 buiten de financieringslast (toetsinkomen ≥ € 30.000; AOW ≥ € 29.000):
+  `getSingleHouseholdBonus`, `calc.singleBonus`, opbouwregel 'single'.
+- **Opbouw 'Wat kunt u lenen?'** (doorstromer): na 'incomeMax' nu 'ported' (beslag per leningdeel), 'woonquoteMix'
+  (andere kolom door gewogen rente) en zo nodig 'bandEdge' / 'aowComposite' / 'compositeRest' / 'noRoom'.
+  `afslagen.composite` / `afslagen.compositeBenefit` vervangen `afslagen.rateRisk`.
+- **UI**: nieuwe tabel `PortedPartsTest` in 'Huidige Hypotheek Analyseren' (toetsrente, looptijd, toetslast, beslag en
+  verschil met saldo per deel, plus de looptijd-schakelaar); aanvullende leningdelen worden getoetst met
+  `testLoanComposition` (incl. AOW).
+- **Effect standaarddossier (8 okt. 2026)**: inkomensruimte nieuw geld €326.425 → €406.299; het plafond van €1 mln
+  wordt nu bindend (€376.250), ruimte bij €1.330.000 = €52.270 (was €2.445), max. aankoopprijs €1.381.000 (was
+  €1.332.000). Gewogen toetsrente 3,445% valt in de (geschatte) kolom 3,001–3,500%.
+- **Let op**: de 20 jaar rentevast van deel 2 is nog steeds een aanname. Met 10 jaar telt deel 2 tegen 5%, stijgt de
+  gewogen rente naar 4,598% (kolom 4,501–5,000%, hogere woonquote 29,2%) en is de inkomensruimte €385.562.
+- **Tests**: 135 (was 112): o.a. onafhankelijke nacontrole van de samengestelde toets, `nibudToets.test.js`
+  (rentebanden, rij per € 1.000, alleenstaandenbedrag, optimaliteit: het maximum past en € 1.000 meer niet).
+- **Open**: officiële waarden van de ontbrekende tabelkolommen invullen (Bijlage 1, Stcrt. 2025, 36471); NHG (grens
+  2026 €470.000, €498.200 met energiebesparende voorzieningen; geverifieerd via zoekresultaten, niet via nhg.nl);
+  energiebesparende voorzieningen (2026: E-G €20k, C-D €15k, A-A++ €10k, A+++/A++++ €0) en LTV tot 106%; erfpacht;
+  AFM-toetsrente Q4 2026 nog niet geverifieerd (Q1-Q3: 5%).
+
 ## Sessie okt. 2026 (3): rekenkern los, 'Wat kunt u lenen?' en standaardprijs €1.330.000
 - **Rekenkern uit het component**: alle zuivere rekenlogica staat nu in `src/calcEngine.js` (49 exports; het
   component importeert wat het nodig heeft). Verplaatsing is output-identiek geverifieerd op 7 scenario's × 6 secties

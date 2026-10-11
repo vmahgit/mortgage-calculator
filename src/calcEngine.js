@@ -1,7 +1,7 @@
 // Rekenkern van de hypotheekcalculator: zuivere functies op een dossier-object, zonder React of
 // DOM. Het component (MortgageCalculator.jsx) en de unit tests gebruiken dezelfde code.
 
-import { getIncomeBasedMortgage } from './nibud2026';
+import { getIncomeBasedMortgage, getToetsrenteBand, getWoonquote } from './nibud2026';
 import { getToetsinkomen } from './toetsinkomen';
 import { getTransferTaxRate, getKostenKoperBreakdown, KOSTEN_KOPER_DEFAULTS } from './kostenKoper';
 import { STUDY_LOAN_PRESETS, computeStudyDebt, getStudyDebtConfig, getWeightedDebetrente } from './studieschuld';
@@ -99,6 +99,183 @@ export function getTestRate(rate, fixedYears) {
     return TOETSRENTE;
   }
   return actualRate;
+}
+
+// Toetsrente van een bestaand, mee te nemen leningdeel: korter dan 10 jaar rentevast (ook een
+// variabele rente of een al verlopen rentevaste periode) betekent de AFM-toetsrente, tenzij de
+// contractrente hoger is. Met 10 jaar of langer rentevast telt de contractrente.
+export function getPortedTestRate(rate, remainingFixedMonths) {
+  const actual = safeNum(rate);
+  return remainingFixedMonths < 120 ? Math.max(TOETSRENTE, actual) : actual;
+}
+
+// Bruto maandlast van een annuïteit; de toetslast van een leningdeel volgt hieruit, ongeacht de
+// werkelijke aflosvorm (Tijdelijke regeling hypothecair krediet, art. 3).
+export function getAnnuityPayment(balance, ratePct, months) {
+  const P = safeNum(balance);
+  const n = Math.max(1, Math.round(months));
+  const r = safeNum(ratePct) / 100 / 12;
+  if (P <= 0) return 0;
+  if (r === 0) return P / n;
+  return (P * r) / (1 - Math.pow(1 + r, -n));
+}
+
+// Alleenstaanden mogen € 17.000 extra lenen, buiten de financieringslast om, mits het
+// toetsinkomen minstens het (verwachte) minimumloon is; vanaf de AOW-leeftijd geldt de bruto
+// AOW-uitkering als grens (bedragen 2026).
+export const SINGLE_HOUSEHOLD_BONUS = 17000;
+export const SINGLE_HOUSEHOLD_MIN_INCOME = 30000;
+export const SINGLE_HOUSEHOLD_MIN_INCOME_AOW = 29000;
+
+export function getSingleHouseholdBonus(hasPartner2, toetsinkomen, { aow = false } = {}) {
+  if (hasPartner2) return 0;
+  const min = aow ? SINGLE_HOUSEHOLD_MIN_INCOME_AOW : SINGLE_HOUSEHOLD_MIN_INCOME;
+  return toetsinkomen >= min ? SINGLE_HOUSEHOLD_BONUS : 0;
+}
+
+// Toets per meegenomen leningdeel, zoals een geldverstrekker de samenstelling toetst:
+// - toetsrente: de contractrente bij nog 10+ jaar rentevast, anders de AFM-toetsrente;
+// - toetslast: annuïtair over de resterende looptijd (art. 3: 30 jaar, of korter als de lening
+//   korter loopt). Aflossingsvrije delen altijd over 30 jaar (NHG-systematiek). Met
+//   portedTermBasis '30jaar' rekent u alle delen over 30 jaar, wat een geldverstrekker mag
+//   toestaan als dat verantwoord is.
+export function getPortedPartTests(d, refDate = new Date()) {
+  const elapsed = getElapsedMonths(d.startDate, refDate);
+  const remainingTerm = Math.max(1, TERM_MONTHS - elapsed);
+  return toCurrentLoanParts(d.loanParts, d.startDate, refDate).map((part, index) => {
+    const balance = safeNum(part.principal);
+    const rate = safeNum(part.rate);
+    const fixed = getRemainingFixedPeriod(part.originalFixedYears, elapsed);
+    const testRate = getPortedTestRate(rate, fixed.remainingMonths);
+    const termMonths =
+      d.portedTermBasis === '30jaar' || part.type === 'Aflossingsvrij' ? TERM_MONTHS : remainingTerm;
+    return {
+      id: part.id,
+      index,
+      type: part.type,
+      balance,
+      rate,
+      testRate,
+      testRateIsAfm: testRate !== rate,
+      remainingFixedMonths: fixed.remainingMonths,
+      remainingFixedYears: fixed.fractionalYears,
+      termMonths,
+      toetslast: getAnnuityPayment(balance, testRate, termMonths),
+    };
+  });
+}
+
+// Gewogen toetsrente voor de keuze van de woonquote-kolom: Σ(hoofdsom × looptijd × toetsrente) /
+// Σ(hoofdsom × looptijd), over alle leningdelen van de nieuwe hypotheek.
+export function getWeightedTestRate(parts, fallbackRate) {
+  let num = 0;
+  let den = 0;
+  for (const p of parts) {
+    if (!(p.balance > 0)) continue;
+    num += p.balance * p.termMonths * p.testRate;
+    den += p.balance * p.termMonths;
+  }
+  return den > 0 ? num / den : fallbackRate;
+}
+
+// Maximaal nieuw te lenen naast meegenomen leningdelen, volgens de toets van de samenstelling:
+//   woonquote(gewogen toetsrente) × toetsinkomen / 12
+//     ≥ schulden + Σ toetslast meegenomen delen + toetslast nieuw geld (annuïtair, 30 jaar)
+// De studieschuld is een afslag in euro's; energielabel- en alleenstaandenbedrag vallen buiten
+// de financieringslast. Omdat de gewogen toetsrente zelf van het nieuwe bedrag afhangt, wordt per
+// woonquote-kolom het bereik van bedragen bepaald waarin die kolom geldt; het hoogste bedrag dat
+// binnen zijn eigen kolom past is het maximum.
+export function computeCompositeCapacity({
+  income,
+  aow = false,
+  ported = [],
+  newRate,
+  monthlyDebt = 0,
+  studyAfslag = 0,
+  bonus = 0,
+}) {
+  const f = getCapitalizationFactor(newRate);
+  const parts = ported.filter((p) => p.balance > 0);
+  const portedToetslast = parts.reduce((s, p) => s + p.toetslast, 0);
+  const A = parts.reduce((s, p) => s + p.balance * p.termMonths * p.testRate, 0);
+  const B = parts.reduce((s, p) => s + p.balance * p.termMonths, 0);
+  const weightedAt = (x) => getWeightedTestRate(
+    [...parts, { balance: x, termMonths: TERM_MONTHS, testRate: newRate }],
+    newRate
+  );
+  const solve = (wq) =>
+    Math.max(0, ((wq * income) / 12 - monthlyDebt - portedToetslast) * f - studyAfslag + bonus);
+
+  // Bedragen waarbij de gewogen toetsrente een kolomgrens passeert.
+  const breaks = [0];
+  if (B > 0) {
+    const r0 = A / B;
+    const lo = Math.min(r0, newRate);
+    const hi = Math.max(r0, newRate);
+    for (let k = 1; k <= 20; k++) {
+      const t = k * 0.5 + 0.0005;
+      if (t > lo && t < hi) {
+        const x = (A - t * B) / (TERM_MONTHS * (t - newRate));
+        if (x > 0 && Number.isFinite(x)) breaks.push(x);
+      }
+    }
+  }
+  breaks.sort((a, b) => a - b);
+
+  let best = null;
+  for (let j = 0; j < breaks.length; j++) {
+    const a = breaks[j];
+    const b = j + 1 < breaks.length ? breaks[j + 1] : Infinity;
+    const probe = Number.isFinite(b) ? (a + b) / 2 : a * 2 + 1000000;
+    const rate = weightedAt(probe);
+    const wq = getWoonquote(income, rate, { aow });
+    const x = solve(wq);
+    if (x < a - 1e-9) continue;
+    // Op de grens zelf geldt al de volgende kolom; één euro eronder blijft in deze kolom.
+    const amount = x > b ? Math.max(a, b - 1) : x;
+    if (!best || amount > best.amount) {
+      best = { amount, woonquote: wq, band: getToetsrenteBand(rate), cappedAtBand: x > b };
+    }
+  }
+
+  const amount = best ? best.amount : 0;
+  const woonquote = best ? best.woonquote : getWoonquote(income, newRate, { aow });
+  return {
+    amount,
+    woonquote,
+    band: best ? best.band : getToetsrenteBand(newRate),
+    cappedAtBand: best ? best.cappedAtBand : false,
+    weightedRate: weightedAt(amount),
+    maxWoonlast: (woonquote * income) / 12,
+    portedToetslast,
+    capitalizationFactor: f,
+    parts: parts.map((p) => ({ ...p, capacityUsed: p.toetslast * f })),
+  };
+}
+
+// Toets van een concrete samenstelling (meegenomen + nieuwe leningdelen): hoeveel ruimte in euro
+// er overblijft (margin ≥ 0 = past). newParts: [{ balance, testRate, termMonths }].
+export function testLoanComposition({
+  income,
+  aow = false,
+  ported = [],
+  newParts = [],
+  refRate,
+  monthlyDebt = 0,
+  studyAfslag = 0,
+  bonus = 0,
+}) {
+  const all = [...ported, ...newParts].filter((p) => p.balance > 0);
+  const weightedRate = getWeightedTestRate(all, refRate);
+  const woonquote = getWoonquote(income, weightedRate, { aow });
+  const maxWoonlast = (woonquote * income) / 12;
+  const toetslast = all.reduce(
+    (s, p) => s + (p.toetslast ?? getAnnuityPayment(p.balance, p.testRate, p.termMonths)),
+    0
+  );
+  const f = getCapitalizationFactor(refRate);
+  const margin = (maxWoonlast - monthlyDebt - toetslast) * f - studyAfslag + bonus;
+  return { weightedRate, woonquote, maxWoonlast, toetslast, margin };
 }
 
 export function getElapsedMonths(dateStr, refDate = new Date()) {
@@ -381,6 +558,9 @@ export const DOSSIER_DEFAULTS = {
     },
   ],
   loanPartsBasis: 'aanvang',
+  // Looptijd waarover de toetslast van meegenomen annuïtaire/lineaire delen wordt berekend:
+  // 'resterend' (art. 3, standaard) of '30jaar' (als de geldverstrekker dat toestaat).
+  portedTermBasis: 'resterend',
   additionalLoanParts: [
     { id: 1, type: 'Aflossingsvrij', principal: '0', rate: 4.0, originalFixedYears: 10 },
   ],
@@ -719,15 +899,26 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
     ? getIncomeBasedMortgage(pensionCombinedIncome, testRate, monthlyDebt, { aow: true })
     : null;
   const pensionLoan = pensionActive ? applyStudyAfslag(nibudPension.maxLoan) : null;
-  const pensionBinding = pensionActive && pensionLoan < nibudLoan;
-  const boundMaxLoan = pensionActive ? Math.min(nibudLoan, pensionLoan) : nibudLoan;
 
-  // Scenariobedragen voor de vergelijkings-UI (beide inclusief energiebonus, zodat ze
-  // één-op-één vergelijkbaar zijn met de getoonde maximale hypotheek).
-  const currentScenarioMax = Math.max(0, nibudLoan + energyBonus);
-  const pensionScenarioMax = pensionActive ? Math.max(0, pensionLoan + energyBonus) : null;
+  // Alleenstaandenbedrag (€ 17.000 buiten de financieringslast), per scenario met zijn eigen
+  // inkomensgrens. De AOW-vergelijking gebeurt inclusief dit bedrag; boundMaxLoan blijft het
+  // bedrag zonder, zodat de opbouw (AOW-regel, daarna bonussen) sluit.
+  const singleBonus = getSingleHouseholdBonus(hasPartner2, combinedIncome);
+  const pensionSingleBonus = pensionActive
+    ? getSingleHouseholdBonus(hasPartner2, pensionCombinedIncome, { aow: true })
+    : 0;
+  const pensionBinding =
+    pensionActive && pensionLoan + pensionSingleBonus < nibudLoan + singleBonus;
+  const boundMaxLoan = pensionBinding ? pensionLoan + pensionSingleBonus - singleBonus : nibudLoan;
 
-  const incomeBasedMax = Math.max(0, boundMaxLoan + energyBonus);
+  // Scenariobedragen voor de vergelijkings-UI (beide inclusief energie- en alleenstaandenbedrag,
+  // zodat ze één-op-één vergelijkbaar zijn met de getoonde maximale hypotheek).
+  const currentScenarioMax = Math.max(0, nibudLoan + energyBonus + singleBonus);
+  const pensionScenarioMax = pensionActive
+    ? Math.max(0, pensionLoan + energyBonus + pensionSingleBonus)
+    : null;
+
+  const incomeBasedMax = Math.max(0, boundMaxLoan + energyBonus + singleBonus);
 
   // B10: een hypotheek kan nooit hoger zijn dan de aanschafprijs van de woning
   // (maximale LTV van 100%), ongeacht hoeveel de leencapaciteit op inkomen toelaat.
@@ -834,7 +1025,7 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
         )
       )
     : applyStudyAfslag(nibudAtActualRate.maxLoan);
-  const incomeBasedMaxAtActualRate = Math.max(0, boundMaxLoanAtActualRate + energyBonus);
+  const incomeBasedMaxAtActualRate = Math.max(0, boundMaxLoanAtActualRate + energyBonus + singleBonus);
 
   // Drie leencapaciteit-stappen voor de resultaatweergave, zodat zichtbaar is waar de
   // hypotheek precies kleiner wordt: (1) puur op inkomen, bij de werkelijke rente en
@@ -850,7 +1041,7 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
         getIncomeBasedMortgage(pensionCombinedIncome, safeNum(rate), 0, { aow: true }).maxLoan
       )
     : nibudIncomeOnly.maxLoan;
-  const maxLoanIncomeOnly = Math.max(0, boundMaxLoanIncomeOnly + energyBonus);
+  const maxLoanIncomeOnly = Math.max(0, boundMaxLoanIncomeOnly + energyBonus + singleBonus);
 
   // Effectieve leenfactor puur ter illustratie (maximale hypotheek gedeeld door inkomen);
   // de daadwerkelijke toets verloopt via de woonquote hierboven, niet via deze factor.
@@ -917,7 +1108,10 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
     pensionMissing2,
     pensionIncomplete,
     pensionBinding,
+    pensionActive,
     pensionCombinedIncome,
+    singleBonus,
+    pensionSingleBonus,
     currentScenarioMax,
     pensionScenarioMax,
     totalOwnCapital,
@@ -968,38 +1162,6 @@ export function computeCurrentMortgage(d, calc) {
   );
   const hasExpiringFixedPeriod = partsWithExpiringFixedPeriod.length > 0;
 
-  // Toetsrente geldt niet alleen voor een nieuwe hypotheek, maar ook voor meegenomen
-  // leningdelen met een resterende rentevastperiode korter dan 10 jaar: voor de
-  // leencapaciteitstoets wordt zo'n deel getoetst alsof de rente bij afloop stijgt
-  // naar de AFM-toetsrente, ook al is de daadwerkelijke (lagere) contractrente wat er
-  // nu echt betaald wordt.
-  const rateRiskParts = loanParts.map((part, i) => {
-    const remainingFractionalYears = partResults[i].fixedPeriod.fractionalYears;
-    const testRate = getTestRate(part.rate, remainingFractionalYears);
-    const actualRate = safeNum(part.rate);
-    let haircut = 0;
-    if (testRate !== actualRate) {
-      const stressResult = calculateLoanPart({ ...part, rate: testRate }, elapsedMonths, startDate);
-      const extraMonthly = Math.max(0, stressResult.grossMonthly - partResults[i].grossMonthly);
-      haircut = extraMonthly * getCapitalizationFactor(testRate);
-    }
-    return {
-      id: part.id,
-      index: i,
-      balance: safeNum(part.principal),
-      rate: actualRate,
-      testRate,
-      remainingFixedYears: remainingFractionalYears,
-      haircut,
-    };
-  });
-  const rateRiskCapacityHaircut = rateRiskParts.reduce((sum, p) => sum + p.haircut, 0);
-  // Het renterisico op een korte rentevastperiode is alleen relevant als het leningdeel
-  // daadwerkelijk wordt meegenomen; wordt de hypotheek afgelost bij verkoop, dan vervalt
-  // dat risico voor de nieuwe financiering volledig.
-  const effectiveRateRiskHaircut = takeOverMortgage ? rateRiskCapacityHaircut : 0;
-  const hasRateRiskOnPortedDebt = takeOverMortgage && rateRiskCapacityHaircut > 0;
-
   const currentDebtBalance = loanParts.reduce((sum, p) => sum + safeNum(p.principal), 0);
   const ltv = safeNum(marketValue) > 0 ? (currentDebtBalance / safeNum(marketValue)) * 100 : 0;
   // Meegenomen hypotheek: alleen van toepassing als de meeneemregeling aan staat. Wordt
@@ -1007,16 +1169,51 @@ export function computeCurrentMortgage(d, calc) {
   // overwaarde-berekening houdt daar al rekening mee) en moet de nieuwe woning volledig
   // opnieuw gefinancierd worden.
   const portedDebt = takeOverMortgage ? currentDebtBalance : 0;
-  // Werkelijke leencapaciteit: de inkomensgebaseerde leencapaciteit, gecorrigeerd voor het
-  // renterisico op meegenomen leningdelen met een korte rentevastperiode. Dit is het getal
-  // dat er in de praktijk toe doet, in plaats van de ongecorrigeerde leencapaciteit o.b.v.
-  // inkomen alleen. Let op: hier bewust calc.incomeBasedMax gebruikt (ongekort door de
-  // aanschafprijs), niet calc.maxMortgage. Anders zou uw bijleenruimte en maximale
-  // aankoopbudget circulair begrensd worden door de aanschafprijs die u toevallig nu heeft
-  // ingesteld, terwijl deze getallen juist bedoeld zijn om te laten zien wat maximaal
-  // haalbaar is, ongeacht de huidige stand van de schuifknop.
-  const effectiveMaxMortgage = Math.max(0, calc.incomeBasedMax - effectiveRateRiskHaircut);
-  const extraBorrowCapacity = Math.max(0, effectiveMaxMortgage - portedDebt);
+
+  // Toets van de samenstelling (zie computeCompositeCapacity): elk meegenomen deel weegt mee met
+  // zijn eigen toetslast (contractrente bij 10+ jaar rentevast, anders de AFM-toetsrente), en de
+  // woonquote volgt uit de gewogen toetsrente van meegenomen delen plus nieuw geld. Bewust op
+  // calc.incomeBasedMax-basis (ongekort door de aanschafprijs), zodat bijleenruimte en maximaal
+  // aankoopbudget niet circulair van de ingestelde prijs afhangen.
+  const portedParts = getPortedPartTests(d);
+  let composite = null;
+  let compositePension = null;
+  let extraBorrowCapacity = calc.incomeBasedMax;
+  if (takeOverMortgage && portedDebt > 0) {
+    const common = {
+      ported: portedParts,
+      newRate: calc.testRate,
+      monthlyDebt: calc.monthlyDebt,
+      studyAfslag: calc.studyAfslag,
+    };
+    composite = computeCompositeCapacity({
+      ...common,
+      income: calc.combinedIncome,
+      bonus: calc.energyBonus + calc.singleBonus,
+    });
+    compositePension = calc.pensionActive
+      ? computeCompositeCapacity({
+          ...common,
+          income: calc.pensionCombinedIncome,
+          aow: true,
+          bonus: calc.energyBonus + calc.pensionSingleBonus,
+        })
+      : null;
+    extraBorrowCapacity = compositePension
+      ? Math.min(composite.amount, compositePension.amount)
+      : composite.amount;
+  }
+  const compositeBinding =
+    compositePension && compositePension.amount < composite.amount ? compositePension : composite;
+  const effectiveMaxMortgage = portedDebt + extraBorrowCapacity;
+  // Verschil met "alles tegen de rente van het nieuwe geld": positief = de samenstelling kost
+  // leenruimte (bijv. een deel dat binnen 10 jaar afloopt en tegen de AFM-toetsrente telt),
+  // negatief = een lang vastgezette lage rente levert ruimte op.
+  const compositeEffect = takeOverMortgage ? calc.incomeBasedMax - effectiveMaxMortgage : 0;
+  const portedAtAfmRate = takeOverMortgage
+    ? portedParts.filter((p) => p.balance > 0 && p.testRateIsAfm)
+    : [];
+  const hasRateRiskOnPortedDebt = portedAtAfmRate.length > 0;
   // Werkelijke overwaarde: marktwaarde min restschuld, ongekort. Sommige geldverstrekkers
   // tellen de nog niet (onvoorwaardelijk) verkochte woning echter niet voor 100% mee als
   // onderpand voor de financiering, maar hanteren een verkoopafslag (bijvoorbeeld 95%). De
@@ -1042,8 +1239,12 @@ export function computeCurrentMortgage(d, calc) {
     hasAflossingsvrij,
     hasExpiringFixedPeriod,
     partsWithExpiringFixedPeriod,
-    rateRiskCapacityHaircut,
-    rateRiskParts,
+    portedParts,
+    composite,
+    compositePension,
+    compositeBinding,
+    compositeEffect,
+    portedAtAfmRate,
     hasRateRiskOnPortedDebt,
     effectiveMaxMortgage,
     currentDebtBalance,

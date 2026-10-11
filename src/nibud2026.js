@@ -72,21 +72,50 @@ function interpolate(anchors, values, x) {
   return values[values.length - 1];
 }
 
-// Woonquote (als fractie, bijv. 0,274) bij een gegeven toetsinkomen en toetsrente.
-// Bilineaire interpolatie: eerst per rente-kolom over inkomen, dan tussen de twee
-// omliggende rente-kolommen. Inkomen boven de hoogste schijf gebruikt de hoogste
-// woonquote (zoals gebruikelijk bij deze tabel). Met { aow: true } wordt Tabel 2
-// (vanaf AOW-leeftijd) gebruikt in plaats van Tabel 1.
+// De officiële tabel kent geen tussenwaarden: een toetsrente valt in een kolom van 0,5%
+// (≤ 1,500%, 1,501–2,000%, …, 5,501–6,000%), en een toetsinkomen in een rij per € 1.000. Een
+// gewogen toetsrente van 3,6% hoort dus volledig in de kolom 3,501–4,000%, niet "een beetje"
+// tussen 3% en 4%. Van de kolommen 2,0 / 2,5 / 3,5 / 4,5 / 5,5 staan de waarden niet in de
+// ankerset hierboven; die worden lineair geschat tussen de twee bekende buurkolommen (exact: false).
+// Kolommen boven 6,000% vallen terug op de kolom 5,501–6,000% (aboveTable: true).
+const BAND_WIDTH = 0.5;
+
+export function getToetsrenteBand(toetsrente) {
+  // De tabel rekent met drie decimalen (3,501%); afronden voorkomt dat 3,5000000001 in de
+  // volgende kolom valt.
+  const r = Math.round(Math.max(0, toetsrente) * 1000) / 1000;
+  const rawUpper = Math.max(RATE_ANCHORS[0], Math.ceil(r / BAND_WIDTH - 1e-9) * BAND_WIDTH);
+  const maxUpper = RATE_ANCHORS[RATE_ANCHORS.length - 1];
+  const upper = Math.min(rawUpper, maxUpper);
+  return {
+    upper,
+    lower: upper === RATE_ANCHORS[0] ? null : upper - BAND_WIDTH + 0.001,
+    exact: RATE_ANCHORS.includes(upper),
+    aboveTable: rawUpper > maxUpper,
+  };
+}
+
+// Rij van de tabel: het toetsinkomen naar beneden afgerond op € 1.000.
+export function getIncomeRow(toetsinkomen) {
+  return Math.floor(Math.max(0, toetsinkomen) / 1000) * 1000;
+}
+
+// Woonquote (als fractie, bijv. 0,274) bij een gegeven toetsinkomen en toetsrente: de kolom
+// van de toetsrente (getToetsrenteBand) en de rij van het inkomen (getIncomeRow). Tussen de
+// inkomens-ankers wordt lineair geïnterpoleerd; inkomen boven de hoogste schijf gebruikt de
+// hoogste woonquote. Met { aow: true } wordt Tabel 2 (vanaf AOW-leeftijd) gebruikt.
 export function getWoonquote(toetsinkomen, toetsrente, { aow = false } = {}) {
-  const rate = clamp(toetsrente, RATE_ANCHORS[0], RATE_ANCHORS[RATE_ANCHORS.length - 1]);
   const anchors = aow ? AOW_INCOME_ANCHORS : INCOME_ANCHORS;
   const table = aow ? AOW_WOONQUOTE_TABLE : WOONQUOTE_TABLE;
+  const income = getIncomeRow(toetsinkomen);
+  const { upper } = getToetsrenteBand(toetsrente);
 
-  // Woonquote per rente-anker, op het gevraagde inkomen.
-  const perRate = RATE_ANCHORS.map((r) => interpolate(anchors, table[r], toetsinkomen));
-
-  // Interpoleer tussen de rente-ankers.
-  const pct = interpolate(RATE_ANCHORS, perRate, rate);
+  const column = (r) => interpolate(anchors, table[r], income);
+  if (table[upper]) return column(upper) / 100;
+  // Geschatte kolom: lineair tussen de twee bekende buurkolommen.
+  const below = [...RATE_ANCHORS].reverse().find((r) => r < upper);
+  const above = RATE_ANCHORS.find((r) => r > upper);
+  const pct = interpolate([below, above], [column(below), column(above)], upper);
   return pct / 100;
 }
 
