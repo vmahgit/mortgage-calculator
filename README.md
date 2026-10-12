@@ -50,6 +50,14 @@ onafhankelijk na met alleen basisformules en controleren de sluiting in 19 uitee
 Het maximaal aankoopbudget (`computeMaxBudget`) gebruikt dezelfde nieuwe-hypotheekruimte als de haalbaarheidscontrole,
 inclusief het plafond van de geldverstrekker, zodat budget en oordeel elkaar niet kunnen tegenspreken.
 
+## Excel-toetsmodel en kruiscontrole
+
+`docs/toetsmodel/Hypotheek_Toetsmodel_2026.xlsx` is een onafhankelijke Excel-herimplementatie van de toets (formules, geen
+macro's) om de calculator mee te controleren; zie blad 'Leesmij'. De scenario's staan in `docs/toetsmodel/scenarios.json`; de
+uitkomsten van de engine in `expected.json` (golden test `src/toetsmodel.test.js`). `docs/toetsmodel/crosscheck.sh` draait de
+engine en het Excel-model op willekeurige dossiers en vergelijkt ze (Vitest en LibreOffice). `src/invariants.test.js` toetst
+eigenschappen die voor elk dossier moeten gelden (optimaliteit van het maximum, monotonie, sluiting van de opbouw).
+
 ## Studieschuld (DUO) in de leencapaciteit
 
 **Bron:** Tijdelijke regeling hypothecair krediet, art. 3a (Wijzigingsregeling 2025; de

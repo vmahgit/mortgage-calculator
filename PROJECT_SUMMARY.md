@@ -1,5 +1,33 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (5): feitencheck, stresstests en Excel-toetsmodel
+- **Feitencontrole (12 okt. 2026, via zoekopdrachten; officiële sites waren niet bereikbaar)**: bevestigd = AFM-toetsrente 5% (t/m Q3),
+  overdrachtsbelasting 2%/8%/starters ≤ €555.000, NHG-grens €470.000 (€498.200 verduurzaming, provisie 0,4%), energielabelbedragen,
+  alleenstaandenbedrag €17.000, EWF-grens €1.350.000. **Gecorrigeerd**: hypotheekrenteaftrek eerste schijf is 35,75% (stond 35,70%).
+  **Niet te verifiëren / bronnen verschillen**: woonquote-kolommen 2,0/2,5/3,5/4,5/5,5% (geschat; drie datapunten van Hypotheker.nl
+  liggen binnen 0,1 punt van de geschatte 3,5%-kolom), minimuminkomen alleenstaandenbedrag (€28.000 of €30.000), studieschuld-
+  opslagfactortabel (bronnen wijken af), AFM-toetsrente Q4 2026. Volledige lijst: blad 'Bronnen' in het Excel-model.
+- **Engine-verbeteringen**: (1) `getTestRate`: 0 jaar (variabel/verlopen) telt nu als < 10 jaar → AFM-toetsrente (voorheen de
+  werkelijke rente); (2) **tweede woning**: toetslast is nu een annuïteit tegen de toetsrente bij < 10 jaar rentevast (nieuw veld
+  `secondHomeFixedYears`, standaard 10 = geen opslag; UI-slider) en aflossingsvrij telt over 30 jaar, i.p.v. alleen rente;
+  `calc.secondHomeActualMonthly` houdt de werkelijke maandlast voor weergave; (3) HRA-tarief 35,75%.
+- **Stresstests** (`src/invariants.test.js`, 250 willekeurige dossiers): alles eindig, opbouw sluit, het maximum van de samengestelde
+  toets is optimaal (brute-force raster van € 500), monotonie (meer inkomen/eigen geld of minder schuld helpt nooit niet),
+  solver-prijs is haalbaar en € 1.000 meer niet. Alle geslaagd.
+- **Excel-toetsmodel** (`docs/toetsmodel/Hypotheek_Toetsmodel_2026.xlsx`, ~3.000 formules, 8 bladen): onafhankelijke
+  herimplementatie van de toets in cel-formules (incl. de solver met gewogen toetsrente). Invoer per scenario in kolommen
+  (1 = eigen dossier, 2-10 = testscenario's, 11 = vrij), Samenvatting met opbouw, Controle naast de app-engine.
+  Bouw: `docs/toetsmodel/build_toetsmodel.py` (tabellen worden uit de app-broncode gelezen); scenario's in `scenarios.json`,
+  app-uitkomsten in `expected.json` (golden test `src/toetsmodel.test.js`; opnieuw vastleggen met `UPDATE_EXPECTED=1`).
+  Kruiscontrole op willekeurige dossiers: `docs/toetsmodel/crosscheck.sh [aantal] [seed]` (Vitest ↔ LibreOffice). Resultaat:
+  10 vaste + 150 + 120 willekeurige scenario's, 0 afwijkingen; sabotage-test (tabelwaarde gewijzigd) wordt wel opgemerkt.
+- **Let op bij vergelijken met de live app**: de app rekent met de datum van vandaag (restschuld, resterende rentevaste periode);
+  zet in het Excel-model de peildatum op dezelfde dag. Excel en app delen de tabelwaarden, dus fouten in de tabellen zelf
+  (zie hierboven) vangt deze controle niet.
+- **Tests**: 539 (was 135).
+- **Open**: officiële woonquote-kolommen en studieschuldtabel invullen; NHG; energiebesparende voorzieningen + 106% LTV;
+  erfpacht; toetsinkomen/flex opbouw in Excel; verkoopkosten bestaande woning (nu alleen de verkoopafslag van 95%).
+
 ## Sessie okt. 2026 (4): toetsing zoals een geldverstrekker (per leningdeel, gewogen toetsrente)
 - **Toets van de samenstelling bij meenemen** (`calcEngine.js`: `getPortedPartTests`, `computeCompositeCapacity`,
   `testLoanComposition`, `getWeightedTestRate`, `getAnnuityPayment`, `getPortedTestRate`): vervangt de oude

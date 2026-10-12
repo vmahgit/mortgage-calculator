@@ -2448,6 +2448,7 @@ function MortgageCalculatorForm({ onReset }) {
   const [secondHomeInterestRate, setSecondHomeInterestRate] = useState(1.0);
   const [secondHomeRepaymentType, setSecondHomeRepaymentType] = useState('Annuïteit');
   const [secondHomeRemainingYears, setSecondHomeRemainingYears] = useState(20);
+  const [secondHomeFixedYears, setSecondHomeFixedYears] = useState(DOSSIER_DEFAULTS.secondHomeFixedYears);
   const [secondHomeSaleCostsPct, setSecondHomeSaleCostsPct] = useState(2);
 
   // Maximale hypotheek bij uw eigen geldverstrekker: los van de Nibud-inkomenstoets en de
@@ -2643,6 +2644,7 @@ function MortgageCalculatorForm({ onReset }) {
       secondHomeInterestRate,
       secondHomeRepaymentType,
       secondHomeRemainingYears,
+      secondHomeFixedYears,
       secondHomeSaleCostsPct,
       lenderCapThreshold,
       limitOwnContribution,
@@ -2686,7 +2688,7 @@ function MortgageCalculatorForm({ onReset }) {
       incomeHistory1, incomeHistory2, thirteenthMonth1, thirteenthMonth2, avgBonus1,
       avgBonus2, hasExistingHome, hasSecondHome, secondHomeWillSell, useSecondHomeProceeds,
       secondHomeValue, secondHomeMortgageDebt, secondHomeInterestRate,
-      secondHomeRepaymentType, secondHomeRemainingYears, secondHomeSaleCostsPct,
+      secondHomeRepaymentType, secondHomeRemainingYears, secondHomeFixedYears, secondHomeSaleCostsPct,
       lenderCapThreshold, limitOwnContribution, desiredMaxOwnContribution, useFamilyLoan,
       familyLoanAmount, familyLoanRate, familyLoanRepaymentType, familyLoanMonthlyRepayment,
       familyLoanBufferPct, takeOverMortgage, oldMortgageStance, bridgePeriodMonths,
@@ -2754,6 +2756,7 @@ function MortgageCalculatorForm({ onReset }) {
     setSecondHomeInterestRate(snap.secondHomeInterestRate);
     setSecondHomeRepaymentType(snap.secondHomeRepaymentType);
     setSecondHomeRemainingYears(snap.secondHomeRemainingYears);
+    setSecondHomeFixedYears(snap.secondHomeFixedYears ?? DOSSIER_DEFAULTS.secondHomeFixedYears);
     setSecondHomeSaleCostsPct(snap.secondHomeSaleCostsPct);
     setLenderCapThreshold(snap.lenderCapThreshold);
     setLimitOwnContribution(snap.limitOwnContribution);
@@ -5321,18 +5324,35 @@ function MortgageCalculatorForm({ onReset }) {
                               onChange={setSecondHomeRemainingYears}
                               formatValue={(v) => `${v} jaar`}
                             />
+                            <Slider
+                              id="secondHomeFixedYears"
+                              label="Resterende rentevaste periode"
+                              icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+                              value={secondHomeFixedYears}
+                              min={0}
+                              max={30}
+                              step={1}
+                              onChange={setSecondHomeFixedYears}
+                              formatValue={(v) => (v >= 10 ? `${v} jaar (contractrente)` : `${v} jaar (< 10: AFM-toetsrente)`)}
+                            />
                             <div className="flex items-center justify-between rounded-xl border-2 border-amber-200 bg-amber-50 px-5 py-4">
                               <span className="text-sm font-medium text-amber-900">
-                                Maandlast tweede hypotheek
+                                Toetslast tweede hypotheek
                               </span>
                               <span className="text-xl font-bold text-amber-700">
                                 {formatEuro(calc.secondHomeMonthly)}
                               </span>
                             </div>
                             <p className="text-xs text-slate-400">
-                              Deze volledige, werkelijke maandlast (niet de 2%-vuistregel van
-                              "Overige schulden") wordt gekapitaliseerd tegen de toetsrente en
-                              rechtstreeks in mindering gebracht op uw maximale hypotheek.
+                              Werkelijke maandlast {formatEuro(calc.secondHomeActualMonthly)}. Voor de
+                              toets telt een annuïteit over de resterende looptijd (aflossingsvrij: 30
+                              jaar) tegen {formatRate(calc.secondHomeTestRate)}
+                              {calc.secondHomeTestRate !== safeNum(secondHomeInterestRate)
+                                ? ' (AFM-toetsrente, want korter dan 10 jaar rentevast)'
+                                : ' (contractrente)'}
+                              . Deze last (niet de 2%-vuistregel van "Overige schulden") wordt
+                              gekapitaliseerd en rechtstreeks in mindering gebracht op uw maximale
+                              hypotheek.
                             </p>
                             <div className="rounded-xl border border-slate-100 bg-white p-4">
                               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">

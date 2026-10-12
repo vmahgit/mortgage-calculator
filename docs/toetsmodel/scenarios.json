@@ -1,0 +1,702 @@
+[
+ {
+  "name": "Mijn dossier",
+  "doorstromer": true,
+  "twee": true,
+  "inc1": 118000,
+  "inc2": 115000,
+  "age1": 36,
+  "age2": 36,
+  "pen1": 0,
+  "pen2": 0,
+  "label": "A",
+  "rate": 0.04,
+  "fixed": 10,
+  "debt1": 0,
+  "debt2": 0,
+  "famMonthly": 0,
+  "sh": {
+   "active": true,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Annuïteit",
+   "years": 20,
+   "fixed": 10
+  },
+  "studyTerm": 142,
+  "studyMode": "Gewogen toetsrente",
+  "studyMethod": "Marginaal",
+  "takeover": true,
+  "termBasis": "Resterend",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Annuïteit",
+    "bal": 269480.64,
+    "rate": 0.0125,
+    "fix": 10
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 354269.27,
+    "rate": 0.0185,
+    "fix": 20
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 1330000,
+  "mv": 935000,
+  "discount": 0.95,
+  "own": 150000,
+  "tax": 0.02,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1000000
+ },
+ {
+  "name": "Plafond € 1,5 mln, 30 jaar toetsloptijd",
+  "doorstromer": true,
+  "twee": true,
+  "inc1": 118000,
+  "inc2": 115000,
+  "age1": 36,
+  "age2": 36,
+  "pen1": 0,
+  "pen2": 0,
+  "label": "A",
+  "rate": 0.04,
+  "fixed": 10,
+  "debt1": 0,
+  "debt2": 0,
+  "famMonthly": 0,
+  "sh": {
+   "active": true,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Annuïteit",
+   "years": 20,
+   "fixed": 10
+  },
+  "studyTerm": 142,
+  "studyMode": "Gewogen toetsrente",
+  "studyMethod": "Marginaal",
+  "takeover": true,
+  "termBasis": "30 jaar",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Annuïteit",
+    "bal": 269480.64,
+    "rate": 0.0125,
+    "fix": 10
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 354269.27,
+    "rate": 0.0185,
+    "fix": 20
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 1330000,
+  "mv": 935000,
+  "discount": 0.95,
+  "own": 150000,
+  "tax": 0.02,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1500000
+ },
+ {
+  "name": "Deel 2 slechts 10 jaar rentevast",
+  "doorstromer": true,
+  "twee": true,
+  "inc1": 118000,
+  "inc2": 115000,
+  "age1": 36,
+  "age2": 36,
+  "pen1": 0,
+  "pen2": 0,
+  "label": "A",
+  "rate": 0.04,
+  "fixed": 10,
+  "debt1": 0,
+  "debt2": 0,
+  "famMonthly": 0,
+  "sh": {
+   "active": true,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Annuïteit",
+   "years": 20,
+   "fixed": 10
+  },
+  "studyTerm": 142,
+  "studyMode": "Gewogen toetsrente",
+  "studyMethod": "Marginaal",
+  "takeover": true,
+  "termBasis": "Resterend",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Annuïteit",
+    "bal": 269480.64,
+    "rate": 0.0125,
+    "fix": 10
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 354269.27,
+    "rate": 0.0185,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 1330000,
+  "mv": 935000,
+  "discount": 0.95,
+  "own": 150000,
+  "tax": 0.02,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1000000
+ },
+ {
+  "name": "Nieuwe hypotheek 5 jaar rentevast",
+  "doorstromer": true,
+  "twee": true,
+  "inc1": 118000,
+  "inc2": 115000,
+  "age1": 36,
+  "age2": 36,
+  "pen1": 0,
+  "pen2": 0,
+  "label": "A",
+  "rate": 0.04,
+  "fixed": 5,
+  "debt1": 0,
+  "debt2": 0,
+  "famMonthly": 0,
+  "sh": {
+   "active": true,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Annuïteit",
+   "years": 20,
+   "fixed": 10
+  },
+  "studyTerm": 142,
+  "studyMode": "Gewogen toetsrente",
+  "studyMethod": "Marginaal",
+  "takeover": true,
+  "termBasis": "Resterend",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Annuïteit",
+    "bal": 269480.64,
+    "rate": 0.0125,
+    "fix": 10
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 354269.27,
+    "rate": 0.0185,
+    "fix": 20
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 1330000,
+  "mv": 935000,
+  "discount": 0.95,
+  "own": 150000,
+  "tax": 0.02,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1000000
+ },
+ {
+  "name": "Starter, 1 aanvrager € 60k",
+  "doorstromer": false,
+  "twee": false,
+  "inc1": 60000,
+  "inc2": 115000,
+  "age1": 30,
+  "age2": 36,
+  "pen1": 0,
+  "pen2": 0,
+  "label": "C",
+  "rate": 0.04,
+  "fixed": 10,
+  "debt1": 0,
+  "debt2": 0,
+  "famMonthly": 0,
+  "sh": {
+   "active": false,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Annuïteit",
+   "years": 20,
+   "fixed": 10
+  },
+  "studyTerm": 0,
+  "studyMode": "Gewogen toetsrente",
+  "studyMethod": "Marginaal",
+  "takeover": true,
+  "termBasis": "Resterend",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Annuïteit",
+    "bal": 269480.64,
+    "rate": 0.0125,
+    "fix": 10
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 354269.27,
+    "rate": 0.0185,
+    "fix": 20
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 400000,
+  "mv": 935000,
+  "discount": 0.95,
+  "own": 40000,
+  "tax": 0.02,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1000000
+ },
+ {
+  "name": "Starter, 2 aanvragers, studieschuld",
+  "doorstromer": false,
+  "twee": true,
+  "inc1": 80000,
+  "inc2": 70000,
+  "age1": 31,
+  "age2": 29,
+  "pen1": 0,
+  "pen2": 0,
+  "label": "B",
+  "rate": 0.04,
+  "fixed": 10,
+  "debt1": 0,
+  "debt2": 0,
+  "famMonthly": 0,
+  "sh": {
+   "active": false,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Annuïteit",
+   "years": 20,
+   "fixed": 10
+  },
+  "studyTerm": 120,
+  "studyMode": "Gewogen toetsrente",
+  "studyMethod": "Gewogen",
+  "takeover": true,
+  "termBasis": "Resterend",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Annuïteit",
+    "bal": 269480.64,
+    "rate": 0.0125,
+    "fix": 10
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 354269.27,
+    "rate": 0.0185,
+    "fix": 20
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 650000,
+  "mv": 935000,
+  "discount": 0.95,
+  "own": 60000,
+  "tax": 0.0,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1000000
+ },
+ {
+  "name": "Doorstromer, hypotheek niet meenemen",
+  "doorstromer": true,
+  "twee": true,
+  "inc1": 118000,
+  "inc2": 115000,
+  "age1": 36,
+  "age2": 36,
+  "pen1": 0,
+  "pen2": 0,
+  "label": "A",
+  "rate": 0.04,
+  "fixed": 10,
+  "debt1": 0,
+  "debt2": 0,
+  "famMonthly": 0,
+  "sh": {
+   "active": true,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Annuïteit",
+   "years": 20,
+   "fixed": 10
+  },
+  "studyTerm": 142,
+  "studyMode": "Gewogen toetsrente",
+  "studyMethod": "Marginaal",
+  "takeover": false,
+  "termBasis": "Resterend",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Annuïteit",
+    "bal": 269480.64,
+    "rate": 0.0125,
+    "fix": 10
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 354269.27,
+    "rate": 0.0185,
+    "fix": 20
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 1330000,
+  "mv": 935000,
+  "discount": 0.95,
+  "own": 150000,
+  "tax": 0.02,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1000000
+ },
+ {
+  "name": "AOW-toets bindend (leeftijd 60)",
+  "doorstromer": true,
+  "twee": true,
+  "inc1": 118000,
+  "inc2": 115000,
+  "age1": 60,
+  "age2": 36,
+  "pen1": 40000,
+  "pen2": 0,
+  "label": "A",
+  "rate": 0.04,
+  "fixed": 10,
+  "debt1": 0,
+  "debt2": 0,
+  "famMonthly": 0,
+  "sh": {
+   "active": false,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Annuïteit",
+   "years": 20,
+   "fixed": 10
+  },
+  "studyTerm": 142,
+  "studyMode": "Gewogen toetsrente",
+  "studyMethod": "Marginaal",
+  "takeover": true,
+  "termBasis": "Resterend",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Annuïteit",
+    "bal": 269480.64,
+    "rate": 0.0125,
+    "fix": 10
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 354269.27,
+    "rate": 0.0185,
+    "fix": 20
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 1330000,
+  "mv": 935000,
+  "discount": 0.95,
+  "own": 150000,
+  "tax": 0.02,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1000000
+ },
+ {
+  "name": "3 delen, 2e woning 5 jaar vast, schulden",
+  "doorstromer": true,
+  "twee": true,
+  "inc1": 118000,
+  "inc2": 115000,
+  "age1": 36,
+  "age2": 36,
+  "pen1": 0,
+  "pen2": 0,
+  "label": "G",
+  "rate": 0.04,
+  "fixed": 10,
+  "debt1": 15000,
+  "debt2": 8000,
+  "famMonthly": 250,
+  "sh": {
+   "active": true,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Aflossingsvrij",
+   "years": 20,
+   "fixed": 5
+  },
+  "studyTerm": 142,
+  "studyMode": "Contractrente",
+  "studyMethod": "Marginaal",
+  "takeover": true,
+  "termBasis": "Resterend",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Lineair",
+    "bal": 180000,
+    "rate": 0.021,
+    "fix": 12
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 220000,
+    "rate": 0.034,
+    "fix": 5
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 150000,
+    "rate": 0.0485,
+    "fix": 3
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 1100000,
+  "mv": 900000,
+  "discount": 0.95,
+  "own": 90000,
+  "tax": 0.02,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1000000
+ },
+ {
+  "name": "Hoge schuld: ondergrens € 0",
+  "doorstromer": true,
+  "twee": true,
+  "inc1": 118000,
+  "inc2": 115000,
+  "age1": 36,
+  "age2": 36,
+  "pen1": 0,
+  "pen2": 0,
+  "label": "A",
+  "rate": 0.04,
+  "fixed": 10,
+  "debt1": 3000000,
+  "debt2": 0,
+  "famMonthly": 0,
+  "sh": {
+   "active": false,
+   "debt": 42000,
+   "rate": 0.01,
+   "type": "Annuïteit",
+   "years": 20,
+   "fixed": 10
+  },
+  "studyTerm": 142,
+  "studyMode": "Gewogen toetsrente",
+  "studyMethod": "Marginaal",
+  "takeover": true,
+  "termBasis": "Resterend",
+  "peil": "2026-10-08",
+  "start": "2021-01-15",
+  "parts": [
+   {
+    "type": "Annuïteit",
+    "bal": 269480.64,
+    "rate": 0.0125,
+    "fix": 10
+   },
+   {
+    "type": "Aflossingsvrij",
+    "bal": 354269.27,
+    "rate": 0.0185,
+    "fix": 20
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   },
+   {
+    "type": "Annuïteit",
+    "bal": 0,
+    "rate": 0.03,
+    "fix": 10
+   }
+  ],
+  "price": 1330000,
+  "mv": 935000,
+  "discount": 0.95,
+  "own": 150000,
+  "tax": 0.02,
+  "notary": 1200,
+  "val": 600,
+  "adv": 2500,
+  "bg": true,
+  "agent": false,
+  "kk": true,
+  "cap": 1000000
+ }
+]

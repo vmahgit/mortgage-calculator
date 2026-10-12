@@ -34,9 +34,9 @@ export const TERM_MONTHS = 360;
 // tweede belastingschijf in box 1 (37,56% in 2026) — ook wie in de hoogste schijf
 // (49,50%) valt, trekt dus nooit meer af dan dit plafond. Wie met zijn/haar toetsinkomen
 // echter volledig binnen de eerste schijf blijft, trekt af tegen het (lagere)
-// eerste-schijftarief van 35,70%, niet tegen het plafond.
+// eerste-schijftarief van 35,75% (2026), niet tegen het plafond.
 // Bron: Belastingdienst/Prinsjesdag 2026, box 1-schijven en aftrektarief eigen woning.
-export const HRA_RATE_BRACKET1 = 0.357;
+export const HRA_RATE_BRACKET1 = 0.3575;
 export const HRA_RATE_CAP = 0.3756;
 export const HRA_BRACKET1_THRESHOLD = 38883;
 
@@ -95,7 +95,8 @@ export function getCapitalizationFactor(ratePct) {
 export function getTestRate(rate, fixedYears) {
   const actualRate = safeNum(rate);
   const years = safeNum(fixedYears);
-  if (years > 0 && years < 10 && TOETSRENTE > actualRate) {
+  // Ook 0 jaar (variabele rente of een verlopen rentevaste periode) is korter dan 10 jaar.
+  if (years < 10 && TOETSRENTE > actualRate) {
     return TOETSRENTE;
   }
   return actualRate;
@@ -513,6 +514,10 @@ export const DOSSIER_DEFAULTS = {
   secondHomeInterestRate: 1.0,
   secondHomeRepaymentType: 'Annuïteit',
   secondHomeRemainingYears: 20,
+  // Resterende rentevaste periode (jaren) van de hypotheek op de tweede woning. Korter dan 10 jaar
+  // betekent dat de toetslast tegen de AFM-toetsrente wordt berekend. Standaard 10: de werkelijke
+  // periode staat niet op het overzicht, dus geen toetsrente-opslag zonder aanleiding.
+  secondHomeFixedYears: 10,
   secondHomeSaleCostsPct: 2,
   lenderCapThreshold: String(LENDER_CAP_THRESHOLD_DEFAULT),
   limitOwnContribution: false,
@@ -723,6 +728,7 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
     secondHomeInterestRate,
     secondHomeRepaymentType,
     secondHomeRemainingYears,
+    secondHomeFixedYears,
     secondHomeSaleCostsPct,
   } = d;
 
@@ -801,15 +807,30 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
   // bedrag is bekend — net als bij een studieschuld). Bij verkoop komt er geen
   // maandlast bij, maar wel een eenmalige netto-opbrengst (of -tekort) vrij, zie
   // totalOwnCapital hieronder.
-  const secondHomeMonthly =
-    hasSecondHome && !secondHomeWillSell
-      ? calculateSimpleMortgagePayment(
-          secondHomeMortgageDebt,
-          secondHomeInterestRate,
-          secondHomeRepaymentType,
-          secondHomeRemainingYears
-        )
-      : 0;
+  const secondHomeActive = hasSecondHome && !secondHomeWillSell;
+  const secondHomeActualMonthly = secondHomeActive
+    ? calculateSimpleMortgagePayment(
+        secondHomeMortgageDebt,
+        secondHomeInterestRate,
+        secondHomeRepaymentType,
+        secondHomeRemainingYears
+      )
+    : 0;
+  // Toetslast zoals een geldverstrekker die meeneemt (zelfde regels als een meegenomen deel):
+  // annuïtair tegen de contractrente bij nog 10+ jaar rentevast, anders tegen de AFM-toetsrente;
+  // looptijd de resterende looptijd (max. 30 jaar), aflossingsvrij altijd 30 jaar.
+  const secondHomeTestRate = secondHomeActive
+    ? getTestRate(secondHomeInterestRate, secondHomeFixedYears)
+    : 0;
+  const secondHomeMonthly = secondHomeActive
+    ? getAnnuityPayment(
+        secondHomeMortgageDebt,
+        secondHomeTestRate,
+        secondHomeRepaymentType === 'Aflossingsvrij'
+          ? TERM_MONTHS
+          : Math.min(TERM_MONTHS, Math.max(1, Math.round(safeNum(secondHomeRemainingYears) * 12)))
+      )
+    : 0;
   const secondHomeSaleCosts =
     hasSecondHome && secondHomeWillSell
       ? safeNum(secondHomeValue) * (safeNum(secondHomeSaleCostsPct) / 100)
@@ -1079,6 +1100,8 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
       },
     },
     secondHomeMonthly,
+    secondHomeActualMonthly,
+    secondHomeTestRate,
     secondHomeSaleCosts,
     secondHomeNetProceeds,
     secondHomeShortfall,

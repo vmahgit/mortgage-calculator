@@ -138,3 +138,41 @@ describe('toets van de samenstelling bij meenemen', () => {
     expect(row(b, 'ported')).toBeUndefined();
   });
 });
+
+describe('feitencontrole 2026: tarieven en toetsregels', () => {
+  it('hypotheekrenteaftrek: 35,75% in de eerste schijf, 37,56% maximaal', async () => {
+    const { getHraRate, HRA_RATE_BRACKET1, HRA_RATE_CAP } = await import('./calcEngine');
+    expect(HRA_RATE_BRACKET1).toBe(0.3575);
+    expect(HRA_RATE_CAP).toBe(0.3756);
+    expect(getHraRate(38883)).toBe(0.3575);
+    expect(getHraRate(38884)).toBe(0.3756);
+  });
+
+  it('0 jaar rentevast (variabel/verlopen) is korter dan 10 jaar: AFM-toetsrente', async () => {
+    const { getTestRate } = await import('./calcEngine');
+    expect(getTestRate(3.0, 0)).toBe(5.0);
+    expect(getTestRate(3.0, 9.99)).toBe(5.0);
+    expect(getTestRate(3.0, 10)).toBe(3.0);
+    expect(getTestRate(6.2, 5)).toBe(6.2);
+  });
+
+  it('tweede woning: toetslast tegen de AFM-toetsrente bij minder dan 10 jaar rentevast', () => {
+    const lang = run({ secondHomeFixedYears: 10 }).core.calc;
+    const kort = run({ secondHomeFixedYears: 5 }).core.calc;
+    const pmt = (p, r, n) => ((p * r) / 1200) / (1 - Math.pow(1 + r / 1200, -n));
+    expect(lang.secondHomeTestRate).toBe(1.0);
+    expect(lang.secondHomeMonthly).toBeCloseTo(pmt(42000, 1.0, 240), 8);
+    expect(kort.secondHomeTestRate).toBe(5.0);
+    expect(kort.secondHomeMonthly).toBeCloseTo(pmt(42000, 5.0, 240), 8);
+    // De werkelijke maandlast blijft de contractrente.
+    expect(kort.secondHomeActualMonthly).toBeCloseTo(pmt(42000, 1.0, 240), 8);
+    expect(kort.incomeBasedMax).toBeLessThan(lang.incomeBasedMax);
+  });
+
+  it('tweede woning aflossingsvrij: toetslast is een annuïteit over 30 jaar, niet alleen rente', () => {
+    const { calc } = run({ secondHomeRepaymentType: 'Aflossingsvrij', secondHomeFixedYears: 10 }).core;
+    const r = 1.0 / 1200;
+    expect(calc.secondHomeMonthly).toBeCloseTo((42000 * r) / (1 - Math.pow(1 + r, -360)), 8);
+    expect(calc.secondHomeMonthly).toBeGreaterThan(42000 * r);
+  });
+});
