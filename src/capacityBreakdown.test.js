@@ -31,42 +31,49 @@ const payment = (balance, ratePct, n) => {
 
 describe('standaardscenario, onafhankelijk nagerekend', () => {
   const { d, core, b } = run();
+  const INC = 225000; // € 118.000 + € 107.000
+  const RATE = 4.69; // nieuwe hypotheek, 10 jaar rentevast: contractrente
+  const newMoney = core.combinedGap.additionalMortgage;
 
-  it('begint bij woonquote × toetsinkomen, gekapitaliseerd tegen 4,00% over 360 maanden', () => {
+  it('begint bij woonquote × toetsinkomen, gekapitaliseerd tegen 4,69% over 360 maanden', () => {
     expect(d.purchasePrice).toBe(1330000);
-    const woonlast = (getWoonquote(233000, 4.0) * 233000) / 12;
-    expect(woonlast).toBeCloseTo(5320.17, 2);
-    expect(row(b, 'income').amount).toBeCloseTo(woonlast * capFactor(4.0), 4);
+    expect(d.income2).toBe(107000);
+    expect(d.rate).toBe(4.69);
+    const woonlast = (getWoonquote(INC, RATE) * INC) / 12;
+    expect(getWoonquote(INC, RATE)).toBeCloseTo(0.292, 10); // kolom 4,501–5,000%, bovenste inkomensrij
+    expect(woonlast).toBeCloseTo(5475, 6);
+    expect(row(b, 'income').amount).toBeCloseTo(woonlast * capFactor(RATE), 4);
   });
 
   it('afslag tweede woning = annuïteit € 42.000 @ 1% over 20 jaar × kapitalisatiefactor', () => {
     const monthly = payment(42000, 1.0, 240);
     expect(monthly).toBeCloseTo(193.16, 2);
-    expect(-row(b, 'secondHome').amount).toBeCloseTo(monthly * capFactor(4.0), 4);
+    expect(-row(b, 'secondHome').amount).toBeCloseTo(monthly * capFactor(RATE), 4);
   });
 
-  it('afslag studieschuld = DUO-maandbedrag € 142 × opslagfactor 1,20 gekapitaliseerd tegen 4,00%', () => {
+  it('afslag studieschuld: beide leningen, DUO-maandbedragen € 142 + € 190 × opslagfactor 1,25', () => {
     const study = row(b, 'study');
-    expect(study.meta.factor).toBe(1.2);
-    expect(study.meta.totalTermijn).toBe(142);
-    expect(study.meta.totalToetslast).toBeCloseTo(170.4, 8);
-    expect(-study.amount).toBeCloseTo(142 * 1.2 * capFactor(4.0), 4);
-    expect(study.children).toHaveLength(1);
-    expect(study.children[0].termijnSource).toBe('duo');
+    expect(study.meta.factor).toBe(1.25);
+    expect(study.meta.totalTermijn).toBe(332);
+    expect(study.meta.totalToetslast).toBeCloseTo(415, 8);
+    expect(-study.amount).toBeCloseTo(332 * 1.25 * capFactor(RATE), 4);
+    expect(study.children).toHaveLength(2);
+    expect(study.children.map((c) => c.termijn)).toEqual([142, 190]);
+    expect(study.children.every((c) => c.termijnSource === 'duo')).toBe(true);
   });
 
   it('opslagfactor volgt uit de gewogen toetsrente van meegenomen delen plus nieuw geld', () => {
-    const newMoney = core.combinedGap.additionalMortgage;
     const ported = [
       [269480.64, 5.0], // 1,25% met nog 52 maanden rentevast: AFM-toetsrente
       [354269.27, 1.85], // nog 172 maanden rentevast: contractrente
     ];
-    const parts = [...ported, [newMoney, 4.0]];
+    const parts = [...ported, [newMoney, RATE]];
     const total = parts.reduce((s, p) => s + p[0], 0);
     const weighted = parts.reduce((s, p) => s + p[0] * p[1], 0) / total;
     expect(row(b, 'study').meta.weightedToets).toBeCloseTo(weighted, 8);
-    expect(weighted).toBeLessThanOrEqual(3.5);
-    expect(row(b, 'study').meta.factor).toBe(1.2);
+    expect(weighted).toBeGreaterThan(3.5);
+    expect(weighted).toBeLessThanOrEqual(4.0);
+    expect(row(b, 'study').meta.factor).toBe(1.25);
   });
 
   it('energielabel A geeft € 10.000 extra; het totaal sluit op de maximale hypotheek o.b.v. inkomen', () => {
@@ -86,12 +93,14 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
   const K2 = 354269.27; // aflossingsvrij 1,85%, nog 172 mnd rentevast → 1,85%, altijd 360 mnd
   const T1 = payment(K1, 5.0, 292);
   const T2 = payment(K2, 1.85, 360);
-  const weightedAt = (x) => (K1 * 292 * 5 + K2 * 360 * 1.85 + x * 360 * 4) / (K1 * 292 + K2 * 360 + x * 360);
-  // Gewogen toetsrente ≈ 3,45% → kolom 3,001–3,500%; die kolom staat niet in de ankerset en is
-  // het midden van de kolommen 3,0 en 4,0 (bij het hoogste inkomen 25,5% en 27,4%).
-  const wq = (0.255 + 0.274) / 2;
-  const studyMonthly = 142 * 1.2;
-  const X = ((wq * 233000) / 12 - payment(42000, 1.0, 240) - T1 - T2) * capFactor(4.0) - studyMonthly * capFactor(4.0) + 10000;
+  const weightedAt = (x) => (K1 * 292 * 5 + K2 * 360 * 1.85 + x * 360 * RATE) / (K1 * 292 + K2 * 360 + x * 360);
+  // Gewogen toetsrente ≈ 3,65% → kolom 3,501–4,000% (officiële kolom, 27,4% bij het hoogste inkomen).
+  const wq = 0.274;
+  const studyMonthly = 332 * 1.25;
+  const X =
+    ((wq * INC) / 12 - payment(42000, 1.0, 240) - T1 - T2) * capFactor(RATE) -
+    studyMonthly * capFactor(RATE) +
+    10000;
 
   it('meegenomen delen: elk deel neemt zijn eigen toetslast uit de woonlast', () => {
     const ported = row(b, 'ported');
@@ -103,38 +112,41 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
     expect(p2.testRate).toBe(1.85);
     expect(p2.termMonths).toBe(360);
     expect(p2.toetslast).toBeCloseTo(T2, 6);
-    expect(-ported.amount).toBeCloseTo((T1 + T2) * capFactor(4.0), 4);
+    expect(-ported.amount).toBeCloseTo((T1 + T2) * capFactor(RATE), 4);
     // Deel 2 kost minder leenruimte dan zijn saldo (lange lage rente), deel 1 meer.
     expect(p2.capacityUsed).toBeLessThan(K2);
     expect(p1.capacityUsed).toBeGreaterThan(K1);
   });
 
-  it('woonquote uit de gewogen toetsrente (kolom 3,001–3,500%) en het maximum nieuw geld', () => {
+  it('woonquote uit de gewogen toetsrente (officiële kolom 3,501–4,000%) en het maximum nieuw geld', () => {
     const cm = core.currentMortgage;
-    expect(weightedAt(X)).toBeGreaterThan(3.0);
-    expect(weightedAt(X)).toBeLessThanOrEqual(3.5);
+    expect(weightedAt(X)).toBeGreaterThan(3.5);
+    expect(weightedAt(X)).toBeLessThanOrEqual(4.0);
+    expect(cm.composite.band.exact).toBe(true);
     expect(cm.composite.weightedRate).toBeCloseTo(weightedAt(X), 8);
     expect(cm.composite.woonquote).toBeCloseTo(wq, 10);
     expect(cm.extraBorrowCapacity).toBeCloseTo(X, 4);
     const mix = row(b, 'woonquoteMix');
-    expect(mix.amount).toBeCloseTo(((wq - 0.274) * 233000) / 12 * capFactor(4.0), 4);
+    expect(mix.amount).toBeCloseTo(((wq - 0.292) * INC) / 12 * capFactor(RATE), 4);
     expect(row(b, 'newMaxNibud').amount).toBeCloseTo(X, 4);
   });
 
   it('restschuld per vandaag is € 623.749,91; totaal = meegenomen + nieuw', () => {
     expect(b.portedDebt).toBeCloseTo(623749.91, 2);
     expect(core.currentMortgage.effectiveMaxMortgage).toBeCloseTo(623749.91 + X, 4);
-    // T.o.v. "alles tegen 4,00%" kost de samenstelling hier per saldo ruimte: de lagere woonquote-
-    // kolom en deel 1 tegen 5% wegen zwaarder dan het voordeel van deel 2 tegen 1,85%.
-    expect(b.afslagen.composite).toBeCloseTo(row(b, 'incomeMax').amount - (623749.91 + X), 4);
-    expect(b.afslagen.compositeBenefit).toBe(0);
+    // T.o.v. "alles tegen 4,69%" levert de samenstelling hier per saldo ruimte op: deel 2 tegen
+    // 1,85% wint het van deel 1 tegen 5% en de lagere woonquote-kolom.
+    const diff = 623749.91 + X - row(b, 'incomeMax').amount;
+    expect(diff).toBeGreaterThan(0);
+    expect(b.afslagen.compositeBenefit).toBeCloseTo(diff, 4);
+    expect(b.afslagen.composite).toBe(0);
   });
 
-  it('geldverstrekkersmaximum (€ 1.000.000) is nu wél beperkend', () => {
-    expect(X).toBeGreaterThan(1000000 - 623749.91);
-    expect(row(b, 'lenderCap').amount).toBeCloseTo(-(X - (1000000 - 623749.91)), 4);
-    expect(b.newMax).toBeCloseTo(1000000 - 623749.91, 2);
-    expect(b.maxTotalMortgage).toBeCloseTo(1000000, 2);
+  it('geldverstrekkersmaximum (€ 1.000.000) is hier niet beperkend', () => {
+    expect(X).toBeLessThan(1000000 - 623749.91);
+    expect(b.rows.some((r) => r.key === 'lenderCap')).toBe(false);
+    expect(b.newMax).toBeCloseTo(X, 4);
+    expect(b.maxTotalMortgage).toBeCloseTo(623749.91 + X, 4);
   });
 
   it('het benodigde bedrag voor € 1.330.000 en het verschil met de ruimte', () => {
@@ -231,15 +243,18 @@ describe('de opbouw sluit exact in uiteenlopende situaties', () => {
     expect(b.maxTotalMortgage).toBeCloseTo(700000, 2);
   });
 
-  it('hypotheek niet meenemen: geen renterisico- en meeneemregel, de hele capaciteit is nieuw geld', () => {
+  it('hypotheek niet meenemen: geen meeneemregel, de hele capaciteit is nieuw geld', () => {
     const { b } = run({ takeOverMortgage: false });
-    expect(row(b, 'rateRisk')).toBeUndefined();
     expect(row(b, 'ported')).toBeUndefined();
     expect(b.portedDebt).toBe(0);
     // Zonder meegenomen hypotheek is de hele inkomenscapaciteit nieuw geld, begrensd door het
     // plafond van de geldverstrekker (standaard € 1.000.000).
-    expect(b.newMax).toBeCloseTo(Math.min(row(b, 'incomeMax').amount, 1000000), 6);
-    expect(row(b, 'lenderCap').amount).toBeCloseTo(-(row(b, 'incomeMax').amount - 1000000), 6);
+    const incomeMax = row(b, 'incomeMax').amount;
+    expect(b.newMax).toBeCloseTo(Math.min(incomeMax, 1000000), 6);
+    expect(!!row(b, 'lenderCap')).toBe(incomeMax > 1000000);
+    const lower = run({ takeOverMortgage: false, lenderCapThreshold: '800000' }).b;
+    expect(lower.newMax).toBeCloseTo(800000, 6);
+    expect(row(lower, 'lenderCap').amount).toBeCloseTo(-(lower.rows.find((r) => r.key === 'incomeMax').amount - 800000), 6);
   });
 
   it('starter: het beginpunt kan niet hoger zijn dan het plafond van de geldverstrekker', () => {

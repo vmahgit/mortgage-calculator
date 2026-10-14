@@ -1,5 +1,27 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (6): nieuwe standaardwaarden, annuïtair nieuw geld en rekenverantwoording-export
+- **Nieuwe standaardwaarden** (`DOSSIER_DEFAULTS`; de `useState`-beginwaarden in het component verwijzen er nu naar):
+  inkomen partner 2 €107.000 (was €115.000), nieuwe rente 4,69% (was 4,00%), studieleningen Partner 1 (€13.803,67, 2,95%,
+  111 mnd, €142) én Partner 2 (€26.810,03, 0%, 141 mnd, €190, regulier), het extra leningdeel standaard volledig annuïtair.
+  Resultaat bij €1.330.000: haalbaar met €4.372 ruimte, hoogste prijs €1.334.000; studieschuld-afslag €80.110 (toetslast €415 p/m,
+  factor 1,25 bij debetrente 3,717%); gewogen toetsrente 3,649% valt nu in de **officiële** kolom 3,501–4,000% (27,4%).
+  Browsers met een eerder opgeslagen dossier houden hun oude invoer tot "Opnieuw beginnen". Een verse bezoeker is in een
+  browsertest vergeleken met de 85 dossiervelden: alleen `additionalLoanParts` verschilt, doordat het automatisch het benodigde
+  bedrag (€323.980, annuïtair) volgt.
+- **Verdeling nieuw geld** (`additionalSplitMode`: 'annuiteit' | 'aflossingsvrijEerst', `splitAdditionalMortgage` in
+  `calcEngine.js`): de automatische verdeling en de knop 'Automatisch verdelen' gebruiken nu één functie; keuzelijst 'Verdeling'
+  in de kaart Aanvullende hypotheek. Nieuwe delen gebruiken de rente én de rentevaste periode van de hoofdinvoer (was vast 4,0%/10 jaar).
+- **Rekenverantwoording** (`src/calculationReport.js`, `src/reportPdf.js`; menu 'Rekenverantwoording' in de header):
+  PDF (6 pagina's: uitkomst, gekozen leningdelen met maandlast en toets, afslagen, volledige invoer, rekenstappen met formules en
+  getallen, aannames/waarschuwingen, reproductie incl. Excel-invoer), JSON (dossier + stappen + Excel-scenario, terug te laden met
+  'Importeer dossier (JSON)'), en 'Kopieer als tekst'. Het rapport meldt zelf wanneer een geschatte woonquote-kolom is gebruikt, wanneer de
+  AOW-toets niet kon worden uitgevoerd en welke opties Excel niet kent (NHG-provisie, eigen-inleg-limiet, familielening als bedrag,
+  overbruggingskrediet). `toScenarioSpec` zet een dossier om naar het Excel-invoerformaat (ronde-reis getest); een test bewaakt dat de
+  Excel-labels in het rapport bestaan in `build_toetsmodel.py`.
+- **Tests**: 570 (was 539): `src/calculationReport.test.js` (31), `src/toetsmodelBridge.js` is de gedeelde scenario-brug. Excel-model en
+  scenario's bijgewerkt op de nieuwe standaard; kruiscontrole 10 + 120 willekeurige scenario's: 0 afwijkingen.
+
 ## Sessie okt. 2026 (5): feitencheck, stresstests en Excel-toetsmodel
 - **Feitencontrole (12 okt. 2026, via zoekopdrachten; officiële sites waren niet bereikbaar)**: bevestigd = AFM-toetsrente 5% (t/m Q3),
   overdrachtsbelasting 2%/8%/starters ≤ €555.000, NHG-grens €470.000 (€498.200 verduurzaming, provisie 0,4%), energielabelbedragen,

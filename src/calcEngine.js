@@ -8,6 +8,30 @@ import { STUDY_LOAN_PRESETS, computeStudyDebt, getStudyDebtConfig, getWeightedDe
 
 export const ENERGY_LABELS = ['G', 'F', 'E', 'D', 'C', 'B', 'A', 'A+', 'A++', 'A+++', 'A++++'];
 
+// Verdeling van het benodigde nieuwe geld over leningdelen ("Automatisch verdelen" en het automatisch
+// volgen van het benodigde bedrag). 'annuiteit': alles één annuïtair deel; 'aflossingsvrijEerst': eerst
+// aflossingsvrij tot de bancaire grens (aflossingsvrijRoom), de rest annuïtair.
+export const ADDITIONAL_SPLIT_MODES = {
+  annuiteit: 'Volledig annuïtair',
+  aflossingsvrijEerst: 'Eerst aflossingsvrij tot de bancaire grens, rest annuïtair',
+};
+
+export function splitAdditionalMortgage({ needed, mode, aflossingsvrijRoom = 0, rate, fixedYears }) {
+  const total = Math.max(0, Math.round(safeNum(needed)));
+  const interestOnly = mode === 'aflossingsvrijEerst' ? Math.min(Math.max(0, aflossingsvrijRoom), total) : 0;
+  const interestOnlyRounded = Math.round(interestOnly);
+  const rest = total - interestOnlyRounded;
+  const base = { rate: safeNum(rate), originalFixedYears: safeNum(fixedYears) };
+  const parts = [];
+  if (interestOnlyRounded > 0) {
+    parts.push({ id: 1, type: 'Aflossingsvrij', principal: String(interestOnlyRounded), ...base });
+  }
+  if (rest > 0 || parts.length === 0) {
+    parts.push({ id: 2, type: 'Annuïteit', principal: String(rest), ...base });
+  }
+  return parts;
+}
+
 export function getEnergyBonus(label) {
   if (['G', 'F', 'E'].includes(label)) return 0;
   if (['D', 'C'].includes(label)) return 5000;
@@ -446,14 +470,14 @@ export function safeNum(value) {
 // betekenen; die defaults verwijzen naar dit object (zie DOSSIER_DEFAULTS.<veld>).
 export const DOSSIER_DEFAULTS = {
   income1: 118000,
-  income2: 115000,
+  income2: 107000,
   age1: '36',
   age2: '36',
   ownCapital1: 125000,
   ownCapital2: 25000,
   ownCapital1Liquid: true,
   ownCapital2Liquid: true,
-  rate: 4.0,
+  rate: 4.69,
   fixedRatePeriod: 10,
   energyLabel: 'A',
   purchasePrice: 1330000,
@@ -461,10 +485,10 @@ export const DOSSIER_DEFAULTS = {
   debt1: '0',
   debt2: '0',
   // Studieleningen (DUO): zie studieschuld.js. Eigenaar 1 = Partner 1/aanvrager, 2 = Partner 2.
-  // Standaard de aflosplan-gegevens van Partner 1 per okt. 2026 (SF15-oud): saldo €13.803,67,
-  // maandbedrag €142,00, 111 van 180 maanden in de aflosfase, 0 aflosvrije maanden over. De rente
-  // van 2,95% is geldig t/m 31-12-2028, dus de renteherziening staat op 1 jan. 2029 (nieuwe rente
-  // nog onbekend, daarom leeg).
+  // Partner 1 (aflosplan okt. 2026, SF15-oud): saldo €13.803,67, maandbedrag €142,00, 111 van 180
+  // maanden in de aflosfase, 0 aflosvrije maanden over. De rente van 2,95% is geldig t/m
+  // 31-12-2028, dus de renteherziening staat op 1 jan. 2029 (nieuwe rente nog onbekend, daarom
+  // leeg). Partner 2: saldo €26.810,03 tegen 0% rente, nog 141 maanden, DUO-maandbedrag €190.
   studyLoans: [
     {
       id: 1,
@@ -475,6 +499,17 @@ export const DOSSIER_DEFAULTS = {
       monthlyPayment: '142',
       status: 'regulier',
       revisionDate: '2029-01-01',
+      revisionRatePct: '',
+    },
+    {
+      id: 2,
+      owner: 2,
+      balance: '26810.03',
+      ratePct: 0,
+      remainingMonths: 141,
+      monthlyPayment: '190',
+      status: 'regulier',
+      revisionDate: '',
       revisionRatePct: '',
     },
   ],
@@ -567,13 +602,15 @@ export const DOSSIER_DEFAULTS = {
   // 'resterend' (art. 3, standaard) of '30jaar' (als de geldverstrekker dat toestaat).
   portedTermBasis: 'resterend',
   additionalLoanParts: [
-    { id: 1, type: 'Aflossingsvrij', principal: '0', rate: 4.0, originalFixedYears: 10 },
+    { id: 1, type: 'Annuïteit', principal: '0', rate: 4.69, originalFixedYears: 10 },
   ],
   additionalLoanTouched: false,
+  // Verdeling van het nieuwe geld over leningdelen: standaard volledig annuïtair.
+  additionalSplitMode: 'annuiteit',
   aflossingsvrijMaxPct: 50,
   scheduleWindowStartMonth: 0,
   scheduleAppreciationPct: 0,
-  starterLoanParts: [{ id: 1, type: 'Annuïteit', principal: '0', rate: 4.0, originalFixedYears: 10 }],
+  starterLoanParts: [{ id: 1, type: 'Annuïteit', principal: '0', rate: 4.69, originalFixedYears: 10 }],
 };
 
 export const DOSSIER_FIELD_NAMES = Object.keys(DOSSIER_DEFAULTS);

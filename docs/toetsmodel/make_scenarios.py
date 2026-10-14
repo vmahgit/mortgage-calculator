@@ -4,11 +4,11 @@ import json, copy
 BASE = {
     "name": "Mijn dossier",
     "doorstromer": True, "twee": True,
-    "inc1": 118000, "inc2": 115000, "age1": 36, "age2": 36, "pen1": 0, "pen2": 0,
-    "label": "A", "rate": 0.04, "fixed": 10,
+    "inc1": 118000, "inc2": 107000, "age1": 36, "age2": 36, "pen1": 0, "pen2": 0,
+    "label": "A", "rate": 0.0469, "fixed": 10,
     "debt1": 0, "debt2": 0, "famMonthly": 0,
     "sh": {"active": True, "debt": 42000, "rate": 0.01, "type": "Annuïteit", "years": 20, "fixed": 10},
-    "studyTerm": 142, "studyMode": "Gewogen toetsrente", "studyMethod": "Marginaal",
+    "studyTerm": 332, "studyMode": "Gewogen toetsrente", "studyMethod": "Marginaal",
     "takeover": True, "termBasis": "Resterend",
     "peil": "2026-10-08", "start": "2021-01-15",
     "parts": [

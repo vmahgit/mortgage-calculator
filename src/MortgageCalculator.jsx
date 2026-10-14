@@ -33,6 +33,9 @@ import {
   X,
   Wand2,
   SlidersHorizontal,
+  FileText,
+  Upload,
+  ClipboardCopy,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
@@ -40,6 +43,7 @@ import BorderGlow from './BorderGlow';
 import SectionRail, { useScrollSpy } from './SectionRail';
 import { getBouwdepotEstimate } from './bouwdepot';
 import { buildCapacityBreakdown } from './capacityBreakdown';
+import { buildCalculationReport, buildDossierFile, parseDossierFile, reportToText } from './calculationReport';
 import { INCOME_TYPES } from './toetsinkomen';
 import {
   AFSLAG_METHODS,
@@ -86,6 +90,8 @@ import {
   SOLVER_PRICE_CEILING,
   solveAffordabilityLevers,
   testLoanComposition,
+  splitAdditionalMortgage,
+  ADDITIONAL_SPLIT_MODES,
 } from './calcEngine';
 
 function formatDateNL(dateStr) {
@@ -2283,7 +2289,7 @@ function CapacitySummary({ breakdown: b, price, onOpen }) {
 
 function MortgageCalculatorForm({ onReset }) {
   const [income1, setIncome1] = useState(118000);
-  const [income2, setIncome2] = useState(115000);
+  const [income2, setIncome2] = useState(DOSSIER_DEFAULTS.income2);
   const [age1, setAge1] = useState('36');
   const [age2, setAge2] = useState('36');
   const [ownCapital1, setOwnCapital1] = useState(125000);
@@ -2293,7 +2299,7 @@ function MortgageCalculatorForm({ onReset }) {
   // voorheen impliciet werd aangenomen.
   const [ownCapital1Liquid, setOwnCapital1Liquid] = useState(true);
   const [ownCapital2Liquid, setOwnCapital2Liquid] = useState(true);
-  const [rate, setRate] = useState(4.0);
+  const [rate, setRate] = useState(DOSSIER_DEFAULTS.rate);
   const [fixedRatePeriod, setFixedRatePeriod] = useState(10);
   const [energyLabel, setEnergyLabel] = useState('A');
   const [purchasePrice, setPurchasePrice] = useState(DOSSIER_DEFAULTS.purchasePrice);
@@ -2530,9 +2536,8 @@ function MortgageCalculatorForm({ onReset }) {
 
   // Aanvullende leningdelen: de nieuwe financiering bovenop de meegenomen hypotheek. Deze
   // starten vandaag, dus hun "rentevastperiode" is meteen ook hun resterende periode.
-  const [additionalLoanParts, setAdditionalLoanParts] = useState([
-    { id: 1, type: 'Aflossingsvrij', principal: '0', rate: 4.0, originalFixedYears: 10 },
-  ]);
+  const [additionalLoanParts, setAdditionalLoanParts] = useState(DOSSIER_DEFAULTS.additionalLoanParts);
+  const [additionalSplitMode, setAdditionalSplitMode] = useState(DOSSIER_DEFAULTS.additionalSplitMode);
   const [additionalViewMode, setAdditionalViewMode] = useState('bruto');
 
   // Maximaal toegestaan percentage aflossingsvrij (van de woningwaarde). Instelbaar op
@@ -2559,7 +2564,7 @@ function MortgageCalculatorForm({ onReset }) {
       if (prev.length >= 2) return prev;
       return [
         ...prev,
-        { id: Date.now(), type: 'Annuïteit', principal: '0', rate: 4.0, originalFixedYears: 10 },
+        { id: Date.now(), type: 'Annuïteit', principal: '0', rate: safeNum(rate), originalFixedYears: fixedRatePeriod },
       ];
     });
   };
@@ -2576,9 +2581,7 @@ function MortgageCalculatorForm({ onReset }) {
 
   // Starters-leningdelen: voor wie nog geen woning heeft. Splitst de benodigde hypotheek in
   // maximaal 3 delen met eigen aflosvorm, rente en rentevastperiode. Starten vandaag.
-  const [starterLoanParts, setStarterLoanParts] = useState([
-    { id: 1, type: 'Annuïteit', principal: '0', rate: 4.0, originalFixedYears: 10 },
-  ]);
+  const [starterLoanParts, setStarterLoanParts] = useState(DOSSIER_DEFAULTS.starterLoanParts);
   const [starterViewMode, setStarterViewMode] = useState('bruto');
 
   // ---------------------------------------------------------------------------------
@@ -2672,6 +2675,7 @@ function MortgageCalculatorForm({ onReset }) {
       portedTermBasis,
       additionalLoanParts,
       additionalLoanTouched,
+      additionalSplitMode,
       aflossingsvrijMaxPct,
       scheduleWindowStartMonth,
       scheduleAppreciationPct,
@@ -2694,7 +2698,7 @@ function MortgageCalculatorForm({ onReset }) {
       familyLoanBufferPct, takeOverMortgage, oldMortgageStance, bridgePeriodMonths,
       includeOwnCapitalInDoubleTest, liquidityBuffer, useBridgeLoan, bridgeLoanAmount,
       bridgeLoanRate, marketValue, saleDiscountPercentage, currentEnergyLabel,
-      startDate, loanParts, portedTermBasis, additionalLoanParts, additionalLoanTouched, aflossingsvrijMaxPct,
+      startDate, loanParts, portedTermBasis, additionalLoanParts, additionalLoanTouched, additionalSplitMode, aflossingsvrijMaxPct,
       scheduleWindowStartMonth, scheduleAppreciationPct, starterLoanParts,
     ]
   );
@@ -2783,6 +2787,7 @@ function MortgageCalculatorForm({ onReset }) {
     setPortedTermBasis(snap.portedTermBasis ?? DOSSIER_DEFAULTS.portedTermBasis);
     setAdditionalLoanParts(snap.additionalLoanParts);
     setAdditionalLoanTouched(snap.additionalLoanTouched ?? false);
+    setAdditionalSplitMode(snap.additionalSplitMode ?? DOSSIER_DEFAULTS.additionalSplitMode);
     setAflossingsvrijMaxPct(snap.aflossingsvrijMaxPct);
     setScheduleWindowStartMonth(snap.scheduleWindowStartMonth);
     setScheduleAppreciationPct(snap.scheduleAppreciationPct);
@@ -2903,7 +2908,7 @@ function MortgageCalculatorForm({ onReset }) {
       if (prev.length >= 3) return prev;
       return [
         ...prev,
-        { id: Date.now(), type: 'Annuïteit', principal: '0', rate: 4.0, originalFixedYears: 10 },
+        { id: Date.now(), type: 'Annuïteit', principal: '0', rate: safeNum(rate), originalFixedYears: fixedRatePeriod },
       ];
     });
   };
@@ -2999,36 +3004,19 @@ function MortgageCalculatorForm({ onReset }) {
   // vermijden.
   useEffect(() => {
     if (!hasExistingHome || additionalLoanTouched) return;
-    const needed = Math.max(0, Math.round(combinedGapCalc.additionalMortgage));
     const priceNum = safeNum(purchasePrice);
     const portedAflossingsvrij = takeOverMortgage
       ? currentLoanParts
           .filter((p) => p.type === 'Aflossingsvrij')
           .reduce((s, p) => s + safeNum(p.principal), 0)
       : 0;
-    const room = Math.max(0, priceNum * (aflossingsvrijMaxPct / 100) - portedAflossingsvrij);
-    const aflossingsvrijPortion = Math.min(room, needed);
-    const restPortion = needed - aflossingsvrijPortion;
-    const currentRate = safeNum(rate);
-    const parts = [];
-    if (aflossingsvrijPortion > 0) {
-      parts.push({
-        id: 1,
-        type: 'Aflossingsvrij',
-        principal: String(Math.round(aflossingsvrijPortion)),
-        rate: currentRate,
-        originalFixedYears: 10,
-      });
-    }
-    if (restPortion > 0 || parts.length === 0) {
-      parts.push({
-        id: 2,
-        type: 'Annuïteit',
-        principal: String(Math.round(restPortion)),
-        rate: currentRate,
-        originalFixedYears: 10,
-      });
-    }
+    const parts = splitAdditionalMortgage({
+      needed: combinedGapCalc.additionalMortgage,
+      mode: additionalSplitMode,
+      aflossingsvrijRoom: priceNum * (aflossingsvrijMaxPct / 100) - portedAflossingsvrij,
+      rate: safeNum(rate),
+      fixedYears: fixedRatePeriod,
+    });
     setAdditionalLoanParts((prev) => {
       const same =
         prev.length === parts.length &&
@@ -3036,7 +3024,8 @@ function MortgageCalculatorForm({ onReset }) {
           (p, i) =>
             p.type === parts[i].type &&
             safeNum(p.principal) === safeNum(parts[i].principal) &&
-            safeNum(p.rate) === safeNum(parts[i].rate)
+            safeNum(p.rate) === safeNum(parts[i].rate) &&
+            safeNum(p.originalFixedYears) === safeNum(parts[i].originalFixedYears)
         );
       return same ? prev : parts;
     });
@@ -3048,6 +3037,8 @@ function MortgageCalculatorForm({ onReset }) {
     takeOverMortgage,
     currentLoanParts,
     aflossingsvrijMaxPct,
+    additionalSplitMode,
+    fixedRatePeriod,
     rate,
   ]);
 
@@ -3322,29 +3313,13 @@ function MortgageCalculatorForm({ onReset }) {
   ]);
 
   const autoDistributeAdditionalLoan = () => {
-    const needed = Math.max(0, combinedGapCalc.additionalMortgage);
-    const aflossingsvrijPortion = Math.min(additionalLoanCalc.aflossingsvrijRoomRemaining, needed);
-    const restPortion = needed - aflossingsvrijPortion;
-    const currentRate = safeNum(rate);
-    const parts = [];
-    if (aflossingsvrijPortion > 0) {
-      parts.push({
-        id: 1,
-        type: 'Aflossingsvrij',
-        principal: String(Math.round(aflossingsvrijPortion)),
-        rate: currentRate,
-        originalFixedYears: 10,
-      });
-    }
-    if (restPortion > 0 || parts.length === 0) {
-      parts.push({
-        id: 2,
-        type: 'Annuïteit',
-        principal: String(Math.round(restPortion)),
-        rate: currentRate,
-        originalFixedYears: 10,
-      });
-    }
+    const parts = splitAdditionalMortgage({
+      needed: combinedGapCalc.additionalMortgage,
+      mode: additionalSplitMode,
+      aflossingsvrijRoom: additionalLoanCalc.aflossingsvrijRoomRemaining,
+      rate: safeNum(rate),
+      fixedYears: fixedRatePeriod,
+    });
     setAdditionalLoanParts(parts);
     // Hervat automatisch volgen: na "Automatisch verdelen" werken latere wijzigingen in
     // eerdere parameters weer direct door (tot de gebruiker opnieuw handmatig aanpast).
@@ -3414,29 +3389,13 @@ function MortgageCalculatorForm({ onReset }) {
   ]);
 
   const autoDistributeStarterLoan = () => {
-    const needed = starterRequiredMortgage;
-    const maxAflossingsvrij = safeNum(purchasePrice) * (aflossingsvrijMaxPct / 100);
-    const aflossingsvrijPortion = Math.min(maxAflossingsvrij, needed);
-    const restPortion = needed - aflossingsvrijPortion;
-    const parts = [];
-    if (aflossingsvrijPortion > 0) {
-      parts.push({
-        id: 1,
-        type: 'Aflossingsvrij',
-        principal: String(Math.round(aflossingsvrijPortion)),
-        rate: 4.0,
-        originalFixedYears: 10,
-      });
-    }
-    if (restPortion > 0 || parts.length === 0) {
-      parts.push({
-        id: 2,
-        type: 'Annuïteit',
-        principal: String(Math.round(restPortion)),
-        rate: 4.0,
-        originalFixedYears: 10,
-      });
-    }
+    const parts = splitAdditionalMortgage({
+      needed: starterRequiredMortgage,
+      mode: additionalSplitMode,
+      aflossingsvrijRoom: safeNum(purchasePrice) * (aflossingsvrijMaxPct / 100),
+      rate: safeNum(rate),
+      fixedYears: fixedRatePeriod,
+    });
     setStarterLoanParts(parts);
   };
 
@@ -3974,6 +3933,65 @@ function MortgageCalculatorForm({ onReset }) {
   // interne structuur van dit component.
   // Dynamische import: jsPDF/autotable wegen samen ~150kB en zijn alleen nodig zodra iemand
   // daadwerkelijk exporteert, dus niet in het hoofdbundle laden bij elke paginabezoek.
+  // Rekenverantwoording: een nalopbare rekenstaat (invoer, regels, stappen met formules, afslagen)
+  // om te delen met een hypotheekadviseur. PDF om te lezen, JSON om exact opnieuw in te laden, en
+  // platte tekst voor in een e-mail.
+  const [reportMenuOpen, setReportMenuOpen] = useState(false);
+  const [reportNotice, setReportNotice] = useState('');
+  const importInputRef = useRef(null);
+  const flashNotice = (message) => {
+    setReportNotice(message);
+    setTimeout(() => setReportNotice(''), 3500);
+  };
+  const buildReport = () =>
+    buildCalculationReport(dossierSnapshot, core, {
+      breakdown: capacityBreakdown,
+      starterGap: starterGapCalc,
+      appVersion: `${typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'}${
+        typeof __GIT_COMMIT__ !== 'undefined' && __GIT_COMMIT__ !== 'dev' ? ` (${__GIT_COMMIT__})` : ''
+      }`,
+    });
+  const handleExportReportPdf = async () => {
+    setReportMenuOpen(false);
+    const { exportCalculationReportPdf } = await import('./reportPdf');
+    exportCalculationReportPdf(buildReport());
+  };
+  const handleExportDossierJson = () => {
+    setReportMenuOpen(false);
+    const report = buildReport();
+    const file = buildDossierFile(dossierSnapshot, report);
+    const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Dossier_${report.meta.kind}_${report.meta.generatedAt.slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const handleCopyReportText = async () => {
+    setReportMenuOpen(false);
+    try {
+      await navigator.clipboard.writeText(reportToText(buildReport()));
+      flashNotice('Rekenverantwoording gekopieerd als tekst.');
+    } catch {
+      flashNotice('Kopiëren is niet gelukt (klembord niet beschikbaar).');
+    }
+  };
+  const handleImportDossier = async (event) => {
+    const file = event.target.files && event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const dossier = parseDossierFile(await file.text());
+      loadDossier(fillDossierDefaults(dossier));
+      flashNotice('Dossier geladen.');
+    } catch (err) {
+      flashNotice(err.message || 'Het bestand kon niet worden geladen.');
+    }
+  };
+
   const handleExportPdf = async () => {
     const { exportHypotheekAdviesPdf } = await import('./pdfExport');
     const propertyUsageLabels = {
@@ -4193,6 +4211,100 @@ function MortgageCalculatorForm({ onReset }) {
               <FileDown className="h-3.5 w-3.5" />
               Exporteer naar PDF
             </button>
+            <div className="relative">
+              <button
+                type="button"
+                id="reportMenuButton"
+                aria-haspopup="menu"
+                aria-expanded={reportMenuOpen}
+                onClick={() => setReportMenuOpen((open) => !open)}
+                className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 transition-all duration-200 hover:border-indigo-300 hover:bg-indigo-100"
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Rekenverantwoording
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {reportMenuOpen && (
+                <div
+                  role="menu"
+                  id="reportMenu"
+                  className="absolute right-0 z-50 mt-1.5 w-72 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+                >
+                  <p className="px-2.5 pb-1.5 pt-1 text-[11px] leading-snug text-slate-400">
+                    Invoer, regels, rekenstappen met formules en alle afslagen, om te delen met uw hypotheekadviseur.
+                  </p>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-report-action="pdf"
+                    onClick={handleExportReportPdf}
+                    className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                  >
+                    <FileDown className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-indigo-600" />
+                    <span>
+                      <span className="block font-medium">Rekenverantwoording (PDF)</span>
+                      <span className="text-[11px] text-slate-400">Leesbaar document, ca. 5 pagina's</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-report-action="json"
+                    onClick={handleExportDossierJson}
+                    className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                  >
+                    <Save className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-indigo-600" />
+                    <span>
+                      <span className="block font-medium">Dossier + rekenstappen (JSON)</span>
+                      <span className="text-[11px] text-slate-400">Exact te herladen; bevat ook de Excel-invoer</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-report-action="copy"
+                    onClick={handleCopyReportText}
+                    className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                  >
+                    <ClipboardCopy className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-indigo-600" />
+                    <span>
+                      <span className="block font-medium">Kopieer als tekst</span>
+                      <span className="text-[11px] text-slate-400">Voor in een e-mail</span>
+                    </span>
+                  </button>
+                  <div className="my-1 border-t border-slate-100" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    data-report-action="import"
+                    onClick={() => {
+                      setReportMenuOpen(false);
+                      importInputRef.current?.click();
+                    }}
+                    className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-slate-700 hover:bg-slate-50"
+                  >
+                    <Upload className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-indigo-600" />
+                    <span>
+                      <span className="block font-medium">Importeer dossier (JSON)</span>
+                      <span className="text-[11px] text-slate-400">Vervangt de huidige invoer</span>
+                    </span>
+                  </button>
+                </div>
+              )}
+              <input
+                ref={importInputRef}
+                id="importDossierInput"
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={handleImportDossier}
+              />
+            </div>
+            {reportNotice && (
+              <span role="status" className="text-xs font-medium text-indigo-700">
+                {reportNotice}
+              </span>
+            )}
             <button
               type="button"
               onClick={async () => {
@@ -7631,13 +7743,30 @@ function MortgageCalculatorForm({ onReset }) {
                       rekenrente en rentevastperiode, om te toetsen of dit bedrag ook
                       daadwerkelijk geleend kan worden tegen de huidige normen.
                     </p>
-                    <button
-                      type="button"
-                      onClick={autoDistributeAdditionalLoan}
-                      className="flex-shrink-0 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-600 transition-all duration-200 hover:bg-indigo-50"
-                    >
-                      Automatisch verdelen
-                    </button>
+                    <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-2 text-xs text-slate-600">
+                        Verdeling
+                        <select
+                          id="additionalSplitMode"
+                          value={additionalSplitMode}
+                          onChange={(e) => setAdditionalSplitMode(e.target.value)}
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs"
+                        >
+                          {Object.entries(ADDITIONAL_SPLIT_MODES).map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={autoDistributeAdditionalLoan}
+                        className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-600 transition-all duration-200 hover:bg-indigo-50"
+                      >
+                        Automatisch verdelen
+                      </button>
+                    </div>
                   </div>
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
