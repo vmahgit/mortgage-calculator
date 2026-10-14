@@ -67,11 +67,19 @@ uitkomsten van de engine in `expected.json` (golden test `src/toetsmodel.test.js
 engine en het Excel-model op willekeurige dossiers en vergelijkt ze (Vitest en LibreOffice). `src/invariants.test.js` toetst
 eigenschappen die voor elk dossier moeten gelden (optimaliteit van het maximum, monotonie, sluiting van de opbouw).
 
+## Kasstromen bij levering en verkoop
+
+[`src/kasstromen.js`](src/kasstromen.js) (`computeCashflow`) zet de geldstromen op de leverdatum en bij de overdracht van de
+huidige woning naast elkaar: koopsom + kosten koper = meegenomen + nieuwe hypotheek + eigen middelen + waarborgsom van
+familie + tijdelijke lening familie (sluitpost); bij verkoop netto opbrengst − aflossing overbrugging (restschuld op de
+leverdatum) − terugbetaling familie = over of tekort. Daarnaast de totale eigen inbreng per partner en de rente in de
+overbruggingsperiode. De maximale hypotheek is overschrijfbaar. Is de huidige woning al verkocht (`currentHomeSold`), dan
+telt in de toets de verkoopprijs min verkoopkosten voor 100%.
+
 ## Studieschuld (DUO) in de leencapaciteit
 
-**Bron:** Tijdelijke regeling hypothecair krediet, art. 3a (Wijzigingsregeling 2025; de
-opslagfactor-tabel is ongewijzigd in 2026). De tabel is overgenomen uit de opdrachtspecificatie
-en niet afzonderlijk tegen de Staatscourant gecontroleerd. De rekenregels staan in
+**Bron:** Tijdelijke regeling hypothecair krediet, art. 3a lid 2 (geldende tekst op wetten.overheid.nl,
+BWBR0032503, gecontroleerd 14 okt. 2026). De rekenregels staan in
 [`src/studieschuld.js`](src/studieschuld.js), de tests in
 [`src/studieschuld.test.js`](src/studieschuld.test.js).
 
@@ -87,8 +95,8 @@ en niet afzonderlijk tegen de Staatscourant gecontroleerd. De rekenregels staan 
      termijnbedrag restschuld / maanden.
 2. **Toetslast** = termijnbedrag × opslagfactor.
 3. **Opslagfactor** uit de debetrente van de hypotheek, op drie decimalen afgerond, grenzen
-   inclusief: ≤1,500: 1,05 · 1,501–2,000: 1,10 · 2,001–2,500: 1,15 · 2,501–3,500: 1,20 ·
-   3,501–4,000: 1,25 · 4,001–5,000: 1,30 · 5,001–5,500: 1,35 · 5,501–6,500: 1,40 · ≥6,501: 1,45.
+   inclusief: ≤2,000: 1,05 · 2,001–2,500: 1,10 · 2,501–3,000: 1,15 · 3,001–4,000: 1,20 ·
+   4,001–4,500: 1,25 · 4,501–5,500: 1,30 · 5,501–6,000: 1,35 · ≥6,001: 1,40.
    De tabel en de AFM-toetsrente staan per kalenderjaar in `STUDY_DEBT_CONFIG_BY_YEAR`; een jaar
    zonder eigen regel valt terug op het laatste eerdere jaar.
 4. **Afslag op de maximale hypotheek** (in euro) = toetslast / annuïteitfactor(rente, 360 mnd),

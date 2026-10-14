@@ -1,5 +1,31 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (9): opslagfactor studieschuld officieel, woning verkocht, kasstromen
+- **Opslagfactor studieschuld gecorrigeerd** (`studieschuld.js`, één `FACTOR_TABLE` voor 2025/2026): de tabel was een
+  halve procent verschoven. Officieel (art. 3a lid 2, geldende tekst wetten.overheid.nl BWBR0032503): ≤ 2,000% 1,05 ·
+  2,001–2,5 1,10 · 2,501–3,0 1,15 · 3,001–3,5 1,20 · 3,501–4,0 1,20 · 4,001–4,5 1,25 · 4,501–5,0 1,30 · 5,001–5,5 1,30 ·
+  5,501–6,0 1,35 · ≥ 6,001 1,40. Standaarddossier (debetrente 3,787%): 1,25 → 1,20 (+ ca. € 3.200 ruimte).
+- **Huidige woning al verkocht** (`currentHomeSold`, `salePrice`, `saleCosts`, `saleTransferDate`): dan telt verkoopprijs −
+  verkoopkosten voor 100% (`computeCurrentMortgage`: `sold`, `netSaleProceeds`), zonder verkoopafslag. Excel-brug: mv =
+  netto opbrengst, discount 1. Standaard staat de optie uit; prijs € 952.222 en kosten € 10.474,44 komen uit het rekenblad
+  van de gebruiker. Met "verkocht": tekort € 81.8k → € 27,7k.
+- **Kasstromen** (`src/kasstromen.js`, `computeCashflow`; sectie `sectie-kasstromen` onderaan, ook in de rail): levering
+  (koopsom + kosten koper = meegenomen + nieuwe hypotheek + eigen middelen + waarborgsom familie + tijdelijke lening familie
+  als sluitpost) en verkoop (netto opbrengst − overbrugging − terugbetaling familie = over/tekort), totale eigen inbreng
+  (per partner), dubbele lasten (rente overbrugging en familielening over de dagen tussen levering en verkoop).
+  Maximale hypotheek is overschrijfbaar (oranje veld; leeg = toets) met waarschuwing als hij boven de toets ligt.
+  Restschuld op de leverdatum wordt zowel meegenomen als overbrugging gebruikt. Velden in één state-object
+  `cashflowFields` (component), dus opslaan/delen/laden gaan automatisch mee.
+- **Rekenblad gebruiker exact nagerekend** (`kasstromen.test.js`): € 243.650 tijdelijke familielening, tekort bij verkoop
+  € 57.902,44, totale inbreng € 97.902,44 (ex kosten koper € 66.252,44), aanvrager 1 € 82.077,44.
+- **Analyse adviseur** (zijn uitkomst € 907.889): tabelpercentages 27,40%/22,60% en de verruiming (€ 10.000 → € 46 p/m bij
+  3,694%) komen overeen met de regeling. Reconstructie: zijn 'berekende woonlast' € 4.670,0 = deel 1 tegen 5% en nieuw geld
+  tegen 5% over 30 jaar, deel 2 tegen 1,85% over 30 jaar, plus studieschuld € 415 (factor 1,25) bij € 907.889. Vragen
+  voor de adviseur: toetsinkomen € 222.975 i.p.v. € 225.000, nieuw geld tegen 5% (bij 10 jaar vast hoort 4,69%), factor
+  1,25 i.p.v. 1,20, en hoe box 3 precies verwerkt is. Mogelijke verfijning voor de tool: energieverruiming omrekenen tegen
+  de gewogen toetsrente (zoals hij doet; scheelt ca. € 1.100).
+- **Tests**: 617.
+
 ## Sessie okt. 2026 (8): officiële tabellen 1–4, box 3-brutering en nieuwe standaard eigen geld
 - **Context**: deze sessie startte lokaal op `0d12ae8` en had parallel aan sessies 4–7 (cloud) een eigen toets gebouwd.
   Bij het pushen bleek dat; de lokale versie staat op branch `leencapaciteit-officiele-tabellen` (niet gepusht). Daarna is

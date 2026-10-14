@@ -612,6 +612,21 @@ export const DOSSIER_DEFAULTS = {
   bridgeLoanRate: 6.0,
   marketValue: 935000,
   saleDiscountPercentage: 95,
+  // Huidige woning al (onvoorwaardelijk) verkocht: dan telt de verkoopprijs min verkoopkosten voor 100%.
+  // Verkoopprijs en -kosten worden ook gebruikt voor de kasstromen bij de verkoop.
+  currentHomeSold: false,
+  salePrice: '952222',
+  saleCosts: '10474.44',
+  saleTransferDate: '2027-01-18',
+  // Kasstromen (zie kasstromen.js): leverdatum, eventueel overschreven maximale hypotheek, eigen geld
+  // bij levering, waarborgsom van familie, inbreng aanvrager 2 en de rente op de overbrugging.
+  purchaseTransferDate: '2026-11-27',
+  cfMaxMortgage: '',
+  cfOwnFundsAtDelivery: '40000',
+  cfDepositFromFamily: true,
+  cfDepositPct: 10,
+  cfOwnFundsPartner2: '',
+  cfBridgeRatePct: '',
   currentEnergyLabel: 'A',
   startDate: '2021-01-15',
   // Hoofdsom bij aanvang (samen €675.000) plus het restsaldo volgens het hypotheekoverzicht van
@@ -1319,8 +1334,14 @@ export function computeCurrentMortgage(d, calc) {
   // tellen de nog niet (onvoorwaardelijk) verkochte woning echter niet voor 100% mee als
   // onderpand voor de financiering, maar hanteren een verkoopafslag (bijvoorbeeld 95%). De
   // "bruikbare" overwaarde voor financieringsdoeleinden houdt hier rekening mee.
-  const saleValueForFinancing = safeNum(marketValue) * (saleDiscountPercentage / 100);
-  const overwaarde = safeNum(marketValue) - currentDebtBalance;
+  // Is de woning al (onvoorwaardelijk) verkocht, dan staat de opbrengst vast: de verkoopprijs min de
+  // verkoopkosten telt dan voor 100% mee, zonder verkoopafslag.
+  const sold = !!d.currentHomeSold && safeNum(d.salePrice) > 0;
+  const netSaleProceeds = safeNum(d.salePrice) - safeNum(d.saleCosts);
+  const saleValueForFinancing = sold
+    ? netSaleProceeds
+    : safeNum(marketValue) * (saleDiscountPercentage / 100);
+  const overwaarde = (sold ? netSaleProceeds : safeNum(marketValue)) - currentDebtBalance;
   const usableOverwaarde = Math.max(0, saleValueForFinancing - currentDebtBalance);
   // Onderwaarde: als de (met verkoopafslag gecorrigeerde) verkoopwaarde lager is dan de
   // restschuld, blijft er na verkoop een restschuld-tekort staan dat moet worden afgelost
@@ -1355,6 +1376,8 @@ export function computeCurrentMortgage(d, calc) {
     overwaarde,
     usableOverwaarde,
     saleValueForFinancing,
+    sold,
+    netSaleProceeds,
     restschuldTekort,
   };
 }

@@ -164,8 +164,9 @@ export function toScenarioSpec(d, core, refDate = new Date()) {
     start: String(d.startDate).slice(0, 10),
     parts,
     price: safeNum(d.purchasePrice),
-    mv: safeNum(d.marketValue),
-    discount: safeNum(d.saleDiscountPercentage) / 100,
+    // Al verkocht: de verkoopprijs min verkoopkosten telt voor 100% (zelfde uitkomst als in de app).
+    mv: d.currentHomeSold && safeNum(d.salePrice) > 0 ? safeNum(d.salePrice) - safeNum(d.saleCosts) : safeNum(d.marketValue),
+    discount: d.currentHomeSold && safeNum(d.salePrice) > 0 ? 1 : safeNum(d.saleDiscountPercentage) / 100,
     own: Math.round(calc.totalOwnCapital),
     tax: calc.transferTaxInfo.rate,
     notary: safeNum(d.notaryCosts),

@@ -58,12 +58,12 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
     expect(-row(alt, 'secondHome').amount).toBeCloseTo(monthly * capFactor(RATE), 4);
   });
 
-  it('afslag studieschuld: beide leningen, DUO-maandbedragen € 142 + € 190 × opslagfactor 1,25', () => {
+  it('afslag studieschuld: beide leningen, DUO-maandbedragen € 142 + € 190 × opslagfactor 1,20 (art. 3a: 3,501–4,000%)', () => {
     const study = row(b, 'study');
-    expect(study.meta.factor).toBe(1.25);
+    expect(study.meta.factor).toBe(1.2);
     expect(study.meta.totalTermijn).toBe(332);
-    expect(study.meta.totalToetslast).toBeCloseTo(415, 8);
-    expect(-study.amount).toBeCloseTo(332 * 1.25 * capFactor(RATE), 4);
+    expect(study.meta.totalToetslast).toBeCloseTo(398.4, 8);
+    expect(-study.amount).toBeCloseTo(332 * 1.2 * capFactor(RATE), 4);
     expect(study.children).toHaveLength(2);
     expect(study.children.map((c) => c.termijn)).toEqual([142, 190]);
     expect(study.children.every((c) => c.termijnSource === 'duo')).toBe(true);
@@ -80,7 +80,7 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
     expect(row(b, 'study').meta.weightedToets).toBeCloseTo(weighted, 8);
     expect(weighted).toBeGreaterThan(3.5);
     expect(weighted).toBeLessThanOrEqual(4.0);
-    expect(row(b, 'study').meta.factor).toBe(1.25);
+    expect(row(b, 'study').meta.factor).toBe(1.2);
   });
 
   it('energielabel A geeft € 10.000 extra; het totaal sluit op de maximale hypotheek o.b.v. inkomen', () => {
@@ -104,7 +104,7 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
   // Gewogen toetsrente ≈ 3,6% → kolom 3,501–4,000%, rij € 125.000: Tabel 1 27,4%, Tabel 3 22,6%.
   const wq = 0.274;
   const grossUp = 0.274 / 0.226;
-  const studyMonthly = 332 * 1.25;
+  const studyMonthly = 332 * 1.2;
   const X = ((wq * INC) / 12 - T1 - T2 * grossUp) * capFactor(RATE) - studyMonthly * capFactor(RATE) + 10000;
 
   it('meegenomen delen: elk deel neemt zijn eigen toetslast uit de woonlast', () => {

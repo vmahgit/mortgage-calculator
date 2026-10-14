@@ -129,7 +129,7 @@ describe('rekenverantwoording: inhoud klopt met de rekenkern', () => {
     expect(text).toContain(`${(calc.woonquote * 100).toFixed(2).replace('.', ',')}%`);
     expect(text).toContain(`€ ${nl0(calc.studyAfslag)}`);
     expect(text).toContain('Opslagfactor');
-    expect(text).toContain('1,25');
+    expect(text).toContain('1,20');
     expect(text).toContain(`€ ${nl0(cm.extraBorrowCapacity)}`);
     expect(text).toContain(`€ ${nl0(gap.additionalMortgage)}`);
   });

@@ -92,39 +92,37 @@ describe('5.6 randgevallen', () => {
   });
 });
 
+// Verwachte factoren letterlijk uit art. 3a lid 2 van de Tijdelijke regeling hypothecair krediet.
 describe('1.5/1.6 opslagfactor per debetrente', () => {
   it.each([
     [0, 1.05],
     [1.5, 1.05],
-    [1.501, 1.1],
-    [2.0, 1.1],
-    [2.001, 1.15],
-    [2.5, 1.15],
-    [2.501, 1.2],
-    [3.0, 1.2],
+    [2.0, 1.05],
+    [2.001, 1.1],
+    [2.5, 1.1],
+    [2.501, 1.15],
+    [3.0, 1.15],
     [3.001, 1.2],
     [3.5, 1.2],
-    [3.501, 1.25],
-    [4.0, 1.25],
-    [4.001, 1.3],
-    [4.5, 1.3],
+    [3.501, 1.2],
+    [4.0, 1.2],
+    [4.001, 1.25],
+    [4.5, 1.25],
     [4.501, 1.3],
     [5.0, 1.3],
-    [5.001, 1.35],
-    [5.5, 1.35],
-    [5.501, 1.4],
-    [6.0, 1.4],
+    [5.001, 1.3],
+    [5.5, 1.3],
+    [5.501, 1.35],
+    [6.0, 1.35],
     [6.001, 1.4],
-    [6.5, 1.4],
-    [6.501, 1.45],
-    [9.9, 1.45],
+    [9.9, 1.4],
   ])('debetrente %s%% geeft factor %s', (rate, expected) => {
     expect(getOpslagfactor(rate, config)).toBe(expected);
   });
 
   it('rondt de debetrente eerst af op drie decimalen', () => {
-    expect(getOpslagfactor(1.5004, config)).toBe(1.05);
-    expect(getOpslagfactor(1.5006, config)).toBe(1.1);
+    expect(getOpslagfactor(2.0004, config)).toBe(1.05);
+    expect(getOpslagfactor(2.0006, config)).toBe(1.1);
   });
 
   it('de tabel staat per kalenderjaar in de configuratie; een onbekend jaar valt terug', () => {
@@ -180,10 +178,10 @@ describe('2 gewogen debetrente', () => {
     { balance: 300000, ratePct: 4.69, remainingFixedYears: 10 },
   ];
 
-  it('5.5 gewogen toetsrente ≈ 3,69% → factor 1,25', () => {
+  it('5.5 gewogen toetsrente ≈ 3,69% → factor 1,20', () => {
     const w = getWeightedDebetrente(parts, { afmToetsrente: 5.0 });
     expect(w.weightedToets).toBeCloseTo(3.69, 2);
-    expect(getOpslagfactor(w.weightedToets, config)).toBe(1.25);
+    expect(getOpslagfactor(w.weightedToets, config)).toBe(1.2);
   });
 
   it('gewogen contractrente wordt apart geleverd (modus "contractrente")', () => {
@@ -225,9 +223,9 @@ describe('computeStudyDebt: methode en debetrente-modus', () => {
 
   it('marginaal gebruikt de rente van de nieuwe geldlening en de gewogen toetsrente voor de factor', () => {
     const r = computeStudyDebt({ ...common, afslagMethod: 'marginaal', debetrenteMode: 'gewogenToets' });
-    expect(r.factor).toBe(1.25);
+    expect(r.factor).toBe(1.2);
     expect(r.afslagRatePct).toBe(4.69);
-    expect(r.totalToetslast).toBeCloseTo((r.perLoan[0].termijn + r.perLoan[1].termijn) * 1.25, 8);
+    expect(r.totalToetslast).toBeCloseTo((r.perLoan[0].termijn + r.perLoan[1].termijn) * 1.2, 8);
     expect(r.totalAfslag).toBeCloseTo(getAfslag(r.totalToetslast, 4.69), 6);
   });
 
@@ -241,7 +239,7 @@ describe('computeStudyDebt: methode en debetrente-modus', () => {
   it('modus "contractrente" bepaalt de factor uit de gewogen contractrente', () => {
     const r = computeStudyDebt({ ...common, debetrenteMode: 'contract' });
     expect(r.debetrente).toBe(2.9);
-    expect(r.factor).toBe(1.2);
+    expect(r.factor).toBe(1.15);
   });
 
   it('zonder leningen is alles 0', () => {

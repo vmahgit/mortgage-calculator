@@ -36,6 +36,8 @@ import {
   FileText,
   Upload,
   ClipboardCopy,
+  Wallet,
+  Users,
 } from 'lucide-react';
 import OptionalPropertyDataModule from './OptionalPropertyDataModule';
 import ScenarioAnalysis from './ScenarioAnalysis';
@@ -43,6 +45,7 @@ import BorderGlow from './BorderGlow';
 import SectionRail, { useScrollSpy } from './SectionRail';
 import { getBouwdepotEstimate } from './bouwdepot';
 import { buildCapacityBreakdown } from './capacityBreakdown';
+import { computeCashflow } from './kasstromen';
 import { editableDisplay, formatThousandsDisplay, parseDisplayInput } from './numberInput';
 import { buildCalculationReport, buildDossierFile, parseDossierFile, reportToText } from './calculationReport';
 import { INCOME_TYPES } from './toetsinkomen';
@@ -423,6 +426,24 @@ function SelectField({ id, label, icon, value, onChange, options }) {
       </select>
     </div>
   );
+}
+
+const CASHFLOW_FIELDS = [
+  'currentHomeSold',
+  'salePrice',
+  'saleCosts',
+  'saleTransferDate',
+  'purchaseTransferDate',
+  'cfMaxMortgage',
+  'cfOwnFundsAtDelivery',
+  'cfDepositFromFamily',
+  'cfDepositPct',
+  'cfOwnFundsPartner2',
+  'cfBridgeRatePct',
+];
+
+function pickCashflowFields(source) {
+  return Object.fromEntries(CASHFLOW_FIELDS.map((k) => [k, source[k] ?? DOSSIER_DEFAULTS[k]]));
 }
 
 function DateField({ id, label, icon, value, onChange, hint }) {
@@ -2307,6 +2328,276 @@ function CapacitySummary({ breakdown: b, price, onOpen }) {
 }
 
 
+// Kasstromen rond levering van de nieuwe woning en verkoop van de huidige (zie kasstromen.js).
+function CashflowLine({ label, value, strong, negative, sub, highlight }) {
+  return (
+    <div
+      className={`flex items-baseline justify-between gap-3 py-1.5 ${strong ? 'border-t border-slate-200 font-semibold text-slate-900' : 'text-slate-700'} ${
+        highlight || ''
+      }`}
+    >
+      <span className={sub ? 'pl-3 text-xs text-slate-500' : 'text-sm'}>{label}</span>
+      <span className={`whitespace-nowrap tabular-nums ${sub ? 'text-xs' : 'text-sm'} ${negative ? 'text-red-600' : ''}`}>
+        {negative ? '−' : ''}
+        {formatEuro(Math.abs(value))}
+      </span>
+    </div>
+  );
+}
+
+function formatDateShort(value) {
+  const t = new Date(value);
+  return isNaN(t.getTime()) ? '—' : formatDateNL(t);
+}
+
+function CashflowSection({ cf, fields, setField, hasPartner2, familyLoanRate }) {
+  const sale = cf.sale;
+  const toggle = (active) =>
+    `rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+      active ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
+    }`;
+  return (
+    <div
+      id="sectie-kasstromen"
+      className="mt-8 rounded-2xl border border-l-4 border-slate-100 border-l-teal-500 bg-white p-6 shadow-xl"
+    >
+      <div className="mb-5 flex items-center gap-2">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-50 text-teal-600">
+          <Wallet className="h-4 w-4" />
+        </span>
+        <div>
+          <h2 className="text-base font-semibold text-slate-800">Kasstromen bij levering en verkoop</h2>
+          <p className="text-xs text-slate-400">
+            Waar het geld op de leverdatum vandaan komt, en hoe het bij de verkoop van uw huidige woning wordt
+            afgewikkeld.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <DateField
+          id="purchaseTransferDate"
+          label="Levering nieuwe woning"
+          icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+          value={fields.purchaseTransferDate}
+          onChange={(v) => setField('purchaseTransferDate', v)}
+        />
+        {sale && (
+          <DateField
+            id="cfSaleTransferDate"
+            label="Overdracht huidige woning"
+            icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+            value={fields.saleTransferDate}
+            onChange={(v) => setField('saleTransferDate', v)}
+          />
+        )}
+        <div className="rounded-xl border-2 border-orange-300 bg-orange-50/60 p-3">
+          <CurrencyField
+            id="cfMaxMortgage"
+            label="Maximale hypotheek (leencapaciteit)"
+            icon={<Euro className="h-3.5 w-3.5 text-orange-500" />}
+            value={fields.cfMaxMortgage}
+            onChange={(v) => setField('cfMaxMortgage', v)}
+            placeholder={`Leeg = toets: ${formatEuro(cf.toolMax)}`}
+          />
+          <p className="mt-1 text-[11px] text-slate-500">
+            {cf.overridden
+              ? `Overschreven; de toets in deze tool komt op ${formatEuro(cf.toolMax)}.`
+              : 'Uitkomst van de toets. Vul bijv. het bedrag van uw adviseur in.'}
+          </p>
+        </div>
+        <CurrencyField
+          id="cfOwnFundsAtDelivery"
+          label="Eigen middelen bij levering"
+          icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+          value={fields.cfOwnFundsAtDelivery}
+          onChange={(v) => setField('cfOwnFundsAtDelivery', v)}
+          placeholder={`Leeg = ${formatEuro(cf.ownAvailable)}`}
+        />
+        <div className="space-y-1.5">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+            <Users className="h-3.5 w-3.5 text-slate-400" />
+            Waarborgsom lenen van familie
+          </span>
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+              <button type="button" className={toggle(fields.cfDepositFromFamily)} onClick={() => setField('cfDepositFromFamily', true)}>
+                Ja
+              </button>
+              <button type="button" className={toggle(!fields.cfDepositFromFamily)} onClick={() => setField('cfDepositFromFamily', false)}>
+                Nee
+              </button>
+            </div>
+            {fields.cfDepositFromFamily && (
+              <label className="flex items-center gap-1 text-xs text-slate-500">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={fields.cfDepositPct}
+                  onChange={(e) => setField('cfDepositPct', safeNum(e.target.value))}
+                  className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-sm"
+                />
+                % van de koopsom
+              </label>
+            )}
+          </div>
+        </div>
+        {sale && (
+          <div className="space-y-1.5">
+            <label htmlFor="cfBridgeRatePct" className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+              <Percent className="h-3.5 w-3.5 text-slate-400" />
+              Rente overbrugging (% per jaar)
+            </label>
+            <input
+              id="cfBridgeRatePct"
+              type="number"
+              step={0.01}
+              value={fields.cfBridgeRatePct}
+              onChange={(e) => setField('cfBridgeRatePct', e.target.value)}
+              placeholder={`Leeg = huidige rente ${sale.bridgeRateUsed.toFixed(2).replace('.', ',')}%`}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-800 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
+        )}
+        {hasPartner2 && (
+          <CurrencyField
+            id="cfOwnFundsPartner2"
+            label="Inbreng aanvrager 2 (Partner 2)"
+            icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+            value={fields.cfOwnFundsPartner2}
+            onChange={(v) => setField('cfOwnFundsPartner2', v)}
+            placeholder="Leeg = eigen geld Partner 2"
+          />
+        )}
+      </div>
+
+      {cf.warnings.length > 0 && (
+        <ul className="mt-4 space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          {cf.warnings.map((w) => (
+            <li key={w.key} className="flex items-start gap-1.5">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+              <span>
+                {w.text}
+                {w.key === 'aboveTool' ? ` (${formatEuro(w.amount)} meer).` : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className={`mt-6 grid grid-cols-1 gap-6 ${sale ? 'lg:grid-cols-2' : ''}`}>
+        <div className="rounded-xl border border-slate-100 p-4" data-cashflow="levering">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Levering nieuwe woning · {formatDateShort(fields.purchaseTransferDate)}
+          </p>
+          <CashflowLine label="Koopsom" value={cf.price} />
+          {cf.kostenKoperItems.map((item) => (
+            <CashflowLine key={item.key} label={item.label} value={item.amount} sub />
+          ))}
+          <CashflowLine label="Kosten koper" value={cf.kostenKoper} />
+          <CashflowLine label="Totaal te betalen" value={cf.uses} strong />
+          <div className="mt-3" />
+          {cf.ported > 0 && <CashflowLine label="Meegenomen hypotheek" value={cf.ported} />}
+          <CashflowLine label={cf.ported > 0 ? 'Nieuwe hypotheek' : 'Hypotheek'} value={cf.newMortgage} />
+          <CashflowLine label="Eigen middelen" value={cf.ownAtDelivery} />
+          {cf.depositLoan > 0 && (
+            <CashflowLine label={`Waarborgsom (${fields.cfDepositPct}%) · familie`} value={cf.depositLoan} />
+          )}
+          {cf.familyBridgeLoan > 0 && (
+            <CashflowLine label="Tijdelijke lening familie (sluitpost)" value={cf.familyBridgeLoan} highlight="bg-red-50/60 px-1 -mx-1 rounded" />
+          )}
+          <CashflowLine label="Totaal bronnen" value={cf.sources} strong />
+          {cf.surplusAtDelivery > 0 && <CashflowLine label="Over na levering" value={cf.surplusAtDelivery} sub />}
+          <p className={`mt-2 text-[11px] ${cf.balanced ? 'text-emerald-600' : 'text-red-600'}`}>
+            {cf.balanced ? '✓ Controle: bronnen = koopsom + kosten koper' : 'Let op: bronnen en uitgaven sluiten niet.'}
+          </p>
+          {cf.familyTotal > 0 && (
+            <p className="mt-1 text-[11px] text-slate-500">Totale lening familie: {formatEuro(cf.familyTotal)}</p>
+          )}
+        </div>
+
+        {sale && (
+          <div className="rounded-xl border border-slate-100 p-4" data-cashflow="verkoop">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Verkoop huidige woning · {formatDateShort(fields.saleTransferDate)}
+            </p>
+            <CashflowLine label={sale.salePriceKnown ? 'Verkoopprijs' : 'Verkoopprijs (marktwaarde)'} value={sale.grossPrice} />
+            <CashflowLine label="Verkoopkosten" value={sale.saleCosts} negative />
+            <CashflowLine label="Netto opbrengst" value={sale.netProceeds} strong />
+            <CashflowLine label="Aflossing overbrugging (bestaande hypotheek)" value={sale.bridge} negative />
+            <CashflowLine label="Overwaarde netto" value={sale.overwaardeNet} strong />
+            {sale.familyRepayment > 0 && (
+              <CashflowLine label="Terugbetaling familie" value={sale.familyRepayment} negative />
+            )}
+            <CashflowLine
+              label={sale.afterFamily >= 0 ? 'Over na verkoop' : 'Tekort: extra eigen geld bij verkoop'}
+              value={sale.afterFamily}
+              negative={sale.afterFamily < 0}
+              strong
+              highlight={sale.afterFamily < 0 ? 'bg-red-50/60 px-1 -mx-1 rounded' : 'bg-emerald-50/60 px-1 -mx-1 rounded'}
+            />
+            <p className="mt-2 text-[11px] text-slate-500">
+              De bestaande hypotheek blijft van de levering tot de verkoop als overbrugging op uw huidige woning staan
+              ({sale.days} dagen).
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="rounded-xl bg-slate-50 p-4" data-cashflow="inbreng">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Eigen inbreng</p>
+          <CashflowLine label="Bij levering" value={cf.ownAtDelivery - cf.surplusAtDelivery} />
+          {sale && sale.extraOwnAtSale > 0 && <CashflowLine label="Extra bij verkoop" value={sale.extraOwnAtSale} />}
+          {sale && sale.surplusAtSale > 0 && <CashflowLine label="Komt vrij bij verkoop" value={sale.surplusAtSale} negative />}
+          <CashflowLine label="Totale eigen inbreng" value={cf.totalOwn} strong />
+          <CashflowLine label="waarvan kosten koper" value={cf.kostenKoper} sub />
+          <CashflowLine label="eigen inbreng exclusief kosten koper" value={cf.ownExKostenKoper} sub />
+          {hasPartner2 && (
+            <>
+              <CashflowLine label="Partner 1" value={cf.partner1Share} sub />
+              <CashflowLine label="Partner 2" value={cf.partner2Share} sub />
+            </>
+          )}
+          {cf.totalOwn > cf.ownAvailable + 0.5 && (
+            <p className="mt-2 text-[11px] text-amber-700">
+              Dat is {formatEuro(cf.totalOwn - cf.ownAvailable)} meer dan het ingevulde liquide eigen vermogen (
+              {formatEuro(cf.ownAvailable)}).
+            </p>
+          )}
+        </div>
+        {sale && (
+          <div className="rounded-xl bg-slate-50 p-4" data-cashflow="dubbele-lasten">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Dubbele lasten in de overbruggingsperiode (indicatief)
+            </p>
+            <CashflowLine
+              label={`Rente overbrugging ${formatEuro(sale.bridge)} à ${sale.bridgeRateUsed.toFixed(2).replace('.', ',')}% · ${sale.days} dagen`}
+              value={sale.bridgeInterest}
+            />
+            {cf.familyTotal > 0 && (
+              <CashflowLine
+                label={`Rente familielening à ${safeNum(familyLoanRate).toFixed(2).replace('.', ',')}% (zie Extra bijleenruimte)`}
+                value={sale.familyInterest}
+              />
+            )}
+            <CashflowLine label="Totaal" value={sale.carryingCosts} strong />
+            <CashflowLine label="Totale eigen inbreng inclusief deze lasten" value={cf.totalOwnInclCosts} />
+            <p className="mt-2 text-[11px] text-slate-500">
+              {sale.bridgeRateIsContract
+                ? 'Zonder ingevulde overbruggingsrente is de huidige (gewogen) contractrente gebruikt; vraag de rente van de overbrugging na bij uw geldverstrekker.'
+                : 'Met de ingevulde rente op de overbrugging.'}{' '}
+              De maandlasten van de nieuwe hypotheek komen hier nog bij (zie de dubbele-lastentoets).
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MortgageCalculatorForm({ onReset }) {
   const [income1, setIncome1] = useState(118000);
   const [income2, setIncome2] = useState(DOSSIER_DEFAULTS.income2);
@@ -2566,6 +2857,10 @@ function MortgageCalculatorForm({ onReset }) {
   const [aflossingsvrijMaxPct, setAflossingsvrijMaxPct] = useState(50);
   // Looptijd voor de toetslast van meegenomen annuïtaire/lineaire delen (zie getPortedPartTests).
   const [portedTermBasis, setPortedTermBasis] = useState(DOSSIER_DEFAULTS.portedTermBasis);
+  // Verkoop van de huidige woning en de kasstromen rond levering en verkoop (zie kasstromen.js): één
+  // object, zodat opslaan, delen en laden alle velden in één keer meenemen.
+  const [cashflowFields, setCashflowFields] = useState(() => pickCashflowFields(DOSSIER_DEFAULTS));
+  const setCashflowField = (key, value) => setCashflowFields((prev) => ({ ...prev, [key]: value }));
 
   // Maandelijks aflosschema nieuwe situatie: welk venster van maanden en welke jaarlijkse
   // waardestijging-aanname worden getoond in de maandtabel bij "Aflosschema nieuwe situatie".
@@ -2693,6 +2988,7 @@ function MortgageCalculatorForm({ onReset }) {
       loanParts,
       loanPartsBasis: 'aanvang',
       portedTermBasis,
+      ...cashflowFields,
       additionalLoanParts,
       additionalLoanTouched,
       additionalSplitMode,
@@ -2718,7 +3014,7 @@ function MortgageCalculatorForm({ onReset }) {
       familyLoanBufferPct, takeOverMortgage, oldMortgageStance, bridgePeriodMonths,
       includeOwnCapitalInDoubleTest, liquidityBuffer, useBridgeLoan, bridgeLoanAmount,
       bridgeLoanRate, marketValue, saleDiscountPercentage, currentEnergyLabel,
-      startDate, loanParts, portedTermBasis, additionalLoanParts, additionalLoanTouched, additionalSplitMode, aflossingsvrijMaxPct,
+      startDate, loanParts, portedTermBasis, cashflowFields, additionalLoanParts, additionalLoanTouched, additionalSplitMode, aflossingsvrijMaxPct,
       scheduleWindowStartMonth, scheduleAppreciationPct, starterLoanParts,
     ]
   );
@@ -2805,6 +3101,7 @@ function MortgageCalculatorForm({ onReset }) {
     setStartDate(snap.startDate);
     setLoanParts(snap.loanParts);
     setPortedTermBasis(snap.portedTermBasis ?? DOSSIER_DEFAULTS.portedTermBasis);
+    setCashflowFields(pickCashflowFields(snap));
     setAdditionalLoanParts(snap.additionalLoanParts);
     setAdditionalLoanTouched(snap.additionalLoanTouched ?? false);
     setAdditionalSplitMode(snap.additionalSplitMode ?? DOSSIER_DEFAULTS.additionalSplitMode);
@@ -3008,6 +3305,7 @@ function MortgageCalculatorForm({ onReset }) {
 
   const starterGapCalc = useMemo(() => computeStarterGap(dossierSnapshot, calc), [dossierSnapshot, calc]);
   const affordabilityLevers = useMemo(() => solveAffordabilityLevers(dossierSnapshot), [dossierSnapshot]);
+  const cashflow = useMemo(() => computeCashflow(dossierSnapshot, core), [dossierSnapshot, core]);
   const capacityBreakdown = useMemo(
     () => buildCapacityBreakdown(dossierSnapshot, core, starterGapCalc),
     [dossierSnapshot, core, starterGapCalc]
@@ -3853,9 +4151,15 @@ function MortgageCalculatorForm({ onReset }) {
             },
           ]
         : []),
+      {
+        id: 'sectie-kasstromen',
+        label: 'Kasstromen',
+        status: cashflow.balanced && cashflow.totalOwn <= cashflow.ownAvailable + 0.5 ? 'done' : 'attention',
+      },
     ];
     return guided ? all.filter((s) => !s.guidedHidden) : all;
   }, [
+    cashflow,
     guided,
     hasExistingHome,
     propertyUsage,
@@ -6759,6 +7063,77 @@ function MortgageCalculatorForm({ onReset }) {
                     </div>
                   </div>
 
+                  <div className="space-y-3 rounded-xl border border-slate-100 bg-slate-50/60 p-4" data-sold-option>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-medium text-slate-600">
+                          Is de huidige woning al (onvoorwaardelijk) verkocht?
+                        </span>
+                        <p className="text-xs text-slate-400">
+                          Dan staat de opbrengst vast: de verkoopprijs min de verkoopkosten telt voor 100%
+                          mee, zonder verkoopafslag op de marktwaarde.
+                        </p>
+                      </div>
+                      <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                        {[
+                          [true, 'Verkocht'],
+                          [false, 'Nog niet'],
+                        ].map(([value, label]) => (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={() => setCashflowField('currentHomeSold', value)}
+                            aria-pressed={cashflowFields.currentHomeSold === value}
+                            className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                              cashflowFields.currentHomeSold === value
+                                ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                                : 'text-slate-500 hover:text-slate-700'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <CurrencyField
+                        id="salePrice"
+                        label={cashflowFields.currentHomeSold ? 'Verkoopprijs' : 'Verwachte verkoopprijs'}
+                        icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                        value={cashflowFields.salePrice}
+                        onChange={(v) => setCashflowField('salePrice', v)}
+                        placeholder="Leeg = marktwaarde"
+                      />
+                      <CurrencyField
+                        id="saleCosts"
+                        label="Verkoopkosten (makelaar e.d.)"
+                        icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
+                        value={cashflowFields.saleCosts}
+                        onChange={(v) => setCashflowField('saleCosts', v)}
+                        placeholder="0"
+                      />
+                      <DateField
+                        id="saleTransferDate"
+                        label="Overdracht verkochte woning"
+                        icon={<CalendarDays className="h-3.5 w-3.5 text-slate-400" />}
+                        value={cashflowFields.saleTransferDate}
+                        onChange={(v) => setCashflowField('saleTransferDate', v)}
+                      />
+                    </div>
+                    {cashflowFields.currentHomeSold ? (
+                      <p className="text-xs text-emerald-700">
+                        Netto opbrengst {formatEuro(currentMortgage.netSaleProceeds)} telt voor 100%: bruikbare
+                        overwaarde {formatEuro(currentMortgage.usableOverwaarde)}. De verkoopafslag hieronder doet
+                        dan niet mee.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-400">
+                        Nog niet verkocht: de toets rekent met de marktwaarde en de verkoopafslag hieronder. De
+                        verwachte verkoopprijs en -kosten worden gebruikt in de kasstromen onderaan.
+                      </p>
+                    )}
+                  </div>
+
                   <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-4">
                     <div>
                       <span className="text-xs font-medium text-slate-600">
@@ -6794,7 +7169,7 @@ function MortgageCalculatorForm({ onReset }) {
                       </button>
                     </div>
                   </div>
-                  {saleDiscountPercentage < 100 && (
+                  {saleDiscountPercentage < 100 && !cashflowFields.currentHomeSold && (
                     <p className="text-xs text-slate-400">
                       Bruikbare verkoopwaarde voor financiering:{' '}
                       {formatEuro(currentMortgage.saleValueForFinancing)} in plaats van{' '}
@@ -8663,6 +9038,14 @@ function MortgageCalculatorForm({ onReset }) {
           }
         />
 
+        <CashflowSection
+          cf={cashflow}
+          fields={cashflowFields}
+          setField={setCashflowField}
+          hasPartner2={hasPartner2}
+          familyLoanRate={familyLoanRate}
+        />
+
         <div className="mt-8 overflow-hidden rounded-2xl border border-slate-100 bg-white">
           <button
             type="button"
@@ -8692,7 +9075,8 @@ function MortgageCalculatorForm({ onReset }) {
                   <li>
                     <span className="font-medium text-slate-600">Financieringslastpercentages en AOW-tabel:</span>{' '}
                     Wijzigingsregeling hypothecair krediet 2026, Staatscourant 2025, 36471 (Tabel 1
-                    en Tabel 2).
+                    t/m 4, volledig). Opslagfactor studieschuld: art. 3a lid 2 van de Tijdelijke regeling
+                    hypothecair krediet.
                   </li>
                   <li>
                     <span className="font-medium text-slate-600">AFM-toetsrente:</span> per kwartaal

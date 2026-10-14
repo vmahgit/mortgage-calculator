@@ -25,28 +25,29 @@
 
 const MORTGAGE_TERM_MONTHS = 360;
 
-// Opslagfactor per debetrente-klasse: `upTo` is de inclusieve bovengrens (in %, drie
-// decimalen); de laatste klasse heeft geen bovengrens.
-const FACTOR_TABLE_2025 = [
-  { upTo: 1.5, factor: 1.05 },
-  { upTo: 2.0, factor: 1.1 },
-  { upTo: 2.5, factor: 1.15 },
-  { upTo: 3.0, factor: 1.2 },
+// Opslagfactor per debetrente-klasse: upTo is de inclusieve bovengrens (in %, drie decimalen); de
+// laatste klasse heeft geen bovengrens. Officiele tabel uit art. 3a lid 2 van de Tijdelijke regeling
+// hypothecair krediet (geldende tekst, wetten.overheid.nl BWBR0032503, gecontroleerd 14 okt. 2026; art. 3a
+// geldt sinds 2024). Een eerdere versie van deze tabel was een halve procent verschoven (bijv. 3,501-4,000%:
+// 1,25 i.p.v. 1,20).
+const FACTOR_TABLE = [
+  { upTo: 2.0, factor: 1.05 },
+  { upTo: 2.5, factor: 1.1 },
+  { upTo: 3.0, factor: 1.15 },
   { upTo: 3.5, factor: 1.2 },
-  { upTo: 4.0, factor: 1.25 },
-  { upTo: 4.5, factor: 1.3 },
+  { upTo: 4.0, factor: 1.2 },
+  { upTo: 4.5, factor: 1.25 },
   { upTo: 5.0, factor: 1.3 },
-  { upTo: 5.5, factor: 1.35 },
-  { upTo: 6.0, factor: 1.4 },
-  { upTo: 6.5, factor: 1.4 },
-  { upTo: Infinity, factor: 1.45 },
+  { upTo: 5.5, factor: 1.3 },
+  { upTo: 6.0, factor: 1.35 },
+  { upTo: Infinity, factor: 1.4 },
 ];
 
 // Configuratie per kalenderjaar. Nieuwe jaren worden hier toegevoegd; een jaar zonder eigen
 // regel valt terug op het laatst bekende eerdere jaar.
 export const STUDY_DEBT_CONFIG_BY_YEAR = {
-  2025: { factorTable: FACTOR_TABLE_2025, afmToetsrente: 5.0 },
-  2026: { factorTable: FACTOR_TABLE_2025, afmToetsrente: 5.0 },
+  2025: { factorTable: FACTOR_TABLE, afmToetsrente: 5.0 },
+  2026: { factorTable: FACTOR_TABLE, afmToetsrente: 5.0 },
 };
 
 export function getStudyDebtConfig(year) {
