@@ -1,5 +1,17 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (13): daling DUO-maandbedrag bij extra aflossen
+- `optimizeRepayment` (studieschuld.js) geeft per lening `termijnPerEuro`, `termijnReduction` en `newTermijn`, en in
+  totaal `totalTermijn`, `totalTermijnReduction`, `totalTermijnAfter` en `totalToetslastReduction` (= daling × factor).
+  Bij gelijke rente en resterende looptijd daalt het annuitaire termijnbedrag evenredig: nieuw = termijn × (1 − aflossing
+  / restschuld); volledig afgelost = 0.
+- UI (Aflos-optimalisatie): kolommen "Nu p/m" en "Maandbedrag DUO" (nieuw bedrag en −€ p/m), daling per € 1.000 onder
+  de leenruimte, en een regel met de totale daling van het maandbedrag en van de toetslast (`data-study-termijn`).
+  Bedragen met centen via `formatEuroCents`.
+- Voorbeeld standaarddossier: € 10.000 op lening 1 → € 142,00 naar € 39,13 (−€ 102,87 p/m), toetslast −€ 123,45.
+- **Tests**: 638.
+- Let op: `npx prettier --write` herformatteert MortgageCalculator.jsx volledig (afwijkende stijl) — niet gebruiken.
+
 ## Sessie okt. 2026 (12): schakelaar "Regels van Woonnu toepassen" (standaard aan)
 - **Waarom**: de regels uit sessie 11 zijn specifiek voor Woonnu. `getLenderRules(d)` (calcEngine) bundelt ze achter
   dossierveld `woonnuRules` (standaard `true`; uit = algemene uitgangspunten):

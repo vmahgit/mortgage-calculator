@@ -294,6 +294,29 @@ describe('4 aflos-optimalisatie', () => {
     expect(r.totalGain).toBeCloseTo(a.fullRepayGain + (20000 - 13803.67) * b.perEuro, 6);
   });
 
+  it('maandbedrag DUO daalt evenredig met de aflossing: € 1.000 op A = 142 × 1.000 / 13.803,67', () => {
+    const r = optimizeRepayment({ ...input, budget: 1000 });
+    const a = r.rows.find((x) => x.id === 'A');
+    expect(a.termijnReduction).toBeCloseTo(10.2871, 4);
+    expect(a.newTermijn).toBeCloseTo(142 - 10.2871, 4);
+    expect(r.totalTermijn).toBeCloseTo(142 + 190.13, 8);
+    expect(r.totalTermijnAfter).toBeCloseTo(332.13 - 10.2871, 4);
+    expect(r.totalToetslastReduction).toBeCloseTo(10.2871 * 1.25, 3);
+  });
+
+  it('maandbedrag DUO: A volledig weg (142) plus B 190,13 × 6.196,33 / 26.810,03 = 43,94', () => {
+    const r = optimizeRepayment({ ...input, budget: 20000 });
+    expect(r.rows.find((x) => x.id === 'A').newTermijn).toBe(0);
+    expect(r.rows.find((x) => x.id === 'B').termijnReduction).toBeCloseTo(43.9428, 4);
+    expect(r.totalTermijnReduction).toBeCloseTo(185.9428, 4);
+  });
+
+  it('zonder budget blijft het maandbedrag gelijk', () => {
+    const r = optimizeRepayment({ ...input, budget: 0 });
+    expect(r.totalTermijnReduction).toBe(0);
+    expect(r.totalTermijnAfter).toBeCloseTo(332.13, 8);
+  });
+
   it('een budget groter dan alle schuld laat restbudget over', () => {
     const r = optimizeRepayment({ ...input, budget: 100000 });
     expect(r.rows.every((x) => x.fullyRepaid)).toBe(true);

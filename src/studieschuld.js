@@ -239,6 +239,8 @@ export function computeStudyDebt({
 //   leenruimte per € = (termijn / restschuld) × factor / paymentFactor
 // Met een constante opbrengst per euro en een plafond per lening (de restschuld) is greedy op
 // de hoogste opbrengst per euro optimaal.
+// Om dezelfde reden daalt het maandbedrag bij DUO evenredig: nieuw termijnbedrag =
+//   termijn × (1 − aflossing / restschuld)   (zelfde rente en resterende looptijd).
 // Gedeeltelijke aflossing telt pas mee zodra DUO het nieuwe maandbedrag heeft vastgesteld;
 // alleen volledige aflossing is direct zeker.
 export function optimizeRepayment({ perLoan, budget, factor, paymentFactor }) {
@@ -253,9 +255,13 @@ export function optimizeRepayment({ perLoan, budget, factor, paymentFactor }) {
       balance,
       termijn: loan.termijn,
       perEuro,
+      // Daling van het DUO-maandbedrag per afgeloste euro.
+      termijnPerEuro: balance > 0 ? loan.termijn / balance : 0,
       fullRepayGain: perEuro * balance,
       allocated: 0,
       gain: 0,
+      termijnReduction: 0,
+      newTermijn: loan.termijn,
       fullyRepaid: false,
     };
   });
@@ -271,13 +277,22 @@ export function optimizeRepayment({ perLoan, budget, factor, paymentFactor }) {
     row.allocated = pay;
     row.gain = pay * row.perEuro;
     row.fullyRepaid = pay >= row.balance - 1e-9;
+    row.termijnReduction = row.fullyRepaid ? row.termijn : pay * row.termijnPerEuro;
+    row.newTermijn = row.termijn - row.termijnReduction;
     left -= pay;
   }
 
+  const totalTermijn = rows.reduce((s, r) => s + r.termijn, 0);
+  const totalTermijnReduction = rows.reduce((s, r) => s + r.termijnReduction, 0);
   return {
     rows: rows.sort((a, b) => a.index - b.index),
     ranking: order.map((r) => r.id),
     totalGain: rows.reduce((s, r) => s + r.gain, 0),
+    // DUO-maandbedrag (alle leningen) vóór en ná de aflossing, en de daling van de toetslast.
+    totalTermijn,
+    totalTermijnReduction,
+    totalTermijnAfter: totalTermijn - totalTermijnReduction,
+    totalToetslastReduction: totalTermijnReduction * num(factor),
     spent: available - left,
     remainingBudget: left,
     // Leningen die het budget volledig kan aflossen: daar is het effect direct zeker.

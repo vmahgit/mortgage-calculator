@@ -121,6 +121,17 @@ function formatEuro(amount) {
   return currencyFormatter.format(safeNum(amount));
 }
 
+const currencyCentsFormatter = new Intl.NumberFormat('nl-NL', {
+  style: 'currency',
+  currency: 'EUR',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+function formatEuroCents(amount) {
+  return currencyCentsFormatter.format(safeNum(amount));
+}
+
 // Vloeiend omhoog/omlaag tellend eurobedrag: animeert van de vorige waarde naar de nieuwe
 // zodra het resultaat verandert, in plaats van hard te verspringen. Respecteert de
 // systeeminstelling "verminderde beweging" door dan direct de eindwaarde te tonen.
@@ -1531,7 +1542,9 @@ function StudyRepaymentOptimizer({ study, budget, onBudgetChange, labelFor }) {
                 <th className="py-2 pr-3 font-medium">Lening</th>
                 <th className="py-2 pr-3 font-medium">Restschuld</th>
                 <th className="py-2 pr-3 font-medium">Per € 1.000 afgelost</th>
+                <th className="py-2 pr-3 font-medium">Nu p/m</th>
                 <th className="py-2 pr-3 font-medium">Aflossen</th>
+                <th className="py-2 pr-3 font-medium">Maandbedrag DUO</th>
                 <th className="py-2 font-medium">Extra leenruimte</th>
               </tr>
             </thead>
@@ -1542,13 +1555,31 @@ function StudyRepaymentOptimizer({ study, budget, onBudgetChange, labelFor }) {
                     {position + 1}. {labelFor(row.id)}
                   </td>
                   <td className="py-2 pr-3 text-slate-600">{formatEuro(row.balance)}</td>
-                  <td className="py-2 pr-3 text-slate-600">+{formatEuro(row.perEuro * 1000)}</td>
+                  <td className="py-2 pr-3 text-slate-600">
+                    +{formatEuro(row.perEuro * 1000)}
+                    <span className="block text-[10px] text-slate-400">
+                      −{formatEuroCents(row.termijnPerEuro * 1000)} p/m
+                    </span>
+                  </td>
+                  <td className="py-2 pr-3 text-slate-600">{formatEuroCents(row.termijn)}</td>
                   <td className="py-2 pr-3 text-slate-700">
                     {hasBudget ? formatEuro(row.allocated) : '–'}
                     {row.fullyRepaid && (
                       <span className="ml-1.5 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
                         volledig
                       </span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 text-slate-700">
+                    {hasBudget && row.allocated > 0 ? (
+                      <>
+                        {formatEuroCents(row.newTermijn)}
+                        <span className="block text-[10px] font-semibold text-emerald-700">
+                          −{formatEuroCents(row.termijnReduction)} p/m
+                        </span>
+                      </>
+                    ) : (
+                      '–'
                     )}
                   </td>
                   <td className="py-2 font-semibold text-slate-800">
@@ -1570,6 +1601,17 @@ function StudyRepaymentOptimizer({ study, budget, onBudgetChange, labelFor }) {
           <span className="text-slate-500">
             Restbudget <strong className="text-slate-700">{formatEuro(optimization.remainingBudget)}</strong>
           </span>
+        </div>
+      )}
+
+      {hasBudget && optimization.totalTermijnReduction > 0 && (
+        <div className="mt-2 rounded-lg bg-white px-3 py-2 text-xs text-slate-600" data-study-termijn>
+          Maandbedrag DUO omlaag met{' '}
+          <strong className="text-sm text-emerald-700">{formatEuroCents(optimization.totalTermijnReduction)}</strong>{' '}
+          per maand: van {formatEuroCents(optimization.totalTermijn)} naar{' '}
+          <strong className="text-slate-800">{formatEuroCents(optimization.totalTermijnAfter)}</strong> (zelfde rente en
+          looptijd). In de hypotheektoets telt dat als {formatEuroCents(optimization.totalToetslastReduction)} minder
+          last per maand (× factor {formatFactor(study.factor)}).
         </div>
       )}
 
