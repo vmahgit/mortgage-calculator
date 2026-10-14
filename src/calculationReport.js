@@ -23,6 +23,7 @@ import {
 } from './calcEngine';
 import { getIncomeRow, getToetsrenteBand } from './nibud2026';
 import { INCOME_TYPES } from './toetsinkomen';
+import { computeCashflow } from './kasstromen';
 import {
   STUDY_DEBT_CONFIG_BY_YEAR,
   getPartToetsrente,
@@ -188,6 +189,9 @@ export function unsupportedFeatures(d) {
     list.push('Een familielening als bedrag springt in bij het tekort (Excel kent alleen de maandelijkse aflossing als last).');
   }
   if (d.useBridgeLoan) list.push('Een overbruggingskrediet is aangezet (niet in Excel).');
+  if (safeNum(d.appraisalValue) > 0 && safeNum(d.appraisalValue) !== safeNum(d.purchasePrice)) {
+    list.push('Een taxatiewaarde die afwijkt van de koopsom bepaalt de 100%-grens (Excel rekent met de koopsom).');
+  }
   if (d.loanParts.length > 4) list.push('Meer dan 4 meegenomen leningdelen: Excel kent er maximaal 4.');
   const flexIncome = [d.incomeType1, d.hasPartner2 ? d.incomeType2 : 'vast'].some((t) => t && t !== 'vast');
   if (flexIncome) list.push('Flex- of ZZP-inkomen: in Excel voert u het uiteindelijke toetsinkomen in (hieronder opgenomen).');
@@ -700,10 +704,14 @@ notes.push('De woonquote-tabellen (Tabel 1-4) zijn volledig en letterlijk overge
   if (cm.portedParts && cm.portedParts.some((p) => p.box3 && p.balance > 0) && d.takeOverMortgage) {
     notes.push('Niet-aftrekbare (box 3) meegenomen leningdelen tellen mee met de bruteringsfactor Tabel 1 ÷ Tabel 3 op hun toetslast. Standaard geldt een aflossingsvrij deel van na 2013 als box 3; zet het per deel op box 1 als er overgangsrecht is.');
   }
-  notes.push(`Opslagfactor studieschuld: tabel uit de opdracht (STUDY_DEBT_CONFIG ${Object.keys(STUDY_DEBT_CONFIG_BY_YEAR).join('/')}); niet afzonderlijk tegen de Staatscourant gecontroleerd, bronnen verschillen.`);
+  notes.push(`Opslagfactor studieschuld: officiële tabel uit art. 3a lid 2 van de Tijdelijke regeling hypothecair krediet (configuratie ${Object.keys(STUDY_DEBT_CONFIG_BY_YEAR).join('/')}); de debetrente is gewogen naar saldo × resterende looptijd (art. 3 lid 11).`);
   notes.push('Overige schulden tellen mee met 2% van het schuldbedrag per maand (een lagere vaste maandlast uit het contract mag een geldverstrekker accepteren).');
-  notes.push(`Verkoopwaarde voor financiering = ${pct(d.saleDiscountPercentage, 0)} van de marktwaarde; verkoopkosten van de bestaande woning zijn niet apart meegenomen.`);
-  notes.push('Kosten koper gaan (indien meegeteld) eerst van het eigen geld af; wat het eigen geld niet dekt wordt meegefinancierd zolang de totale hypotheek onder 100% van de woningwaarde blijft, daarboven is het een tekort aan eigen geld. NHG, overbruggingskrediet, erfpacht en verduurzaming boven 100% LTV zijn niet in deze toets opgenomen.');
+  notes.push(
+    cm.sold
+      ? `De huidige woning is verkocht: verkoopprijs ${eur(safeNum(d.salePrice))} min verkoopkosten ${eur(safeNum(d.saleCosts))} telt voor 100% mee.`
+      : `Verkoopwaarde voor financiering = ${pct(d.saleDiscountPercentage, 0)} van de marktwaarde (nog niet verkocht).`
+  );
+  notes.push('Kosten koper gaan (indien meegeteld) eerst van het eigen geld af; wat het eigen geld niet dekt wordt meegefinancierd zolang de totale hypotheek onder 100% van de waarde van de woning blijft (taxatiewaarde, anders de koopsom; art. 5), daarboven is het een tekort aan eigen geld. NHG, erfpacht en verduurzaming boven 100% LTV zijn niet in deze toets opgenomen.');
   notes.push('AOW-toets: aanvragers van 57 jaar en ouder worden ook op het pensioeninkomen getoetst (AOW-leeftijd 67; vanaf 2028 67 jaar en 3 maanden).');
   notes.push('Indicatieve berekening, geen bindend advies. De definitieve toets en acceptatie liggen bij de geldverstrekker.');
   const unsup = unsupportedFeatures(d);
@@ -728,7 +736,73 @@ notes.push('De woonquote-tabellen (Tabel 1-4) zijn volledig en letterlijk overge
     repro.push(heading('Let op: afwijkingen tussen calculator en Excel voor dit dossier'));
     repro.push(kv(unsup.map((t, i) => [String(i + 1), t])));
   }
-  sections.push({ id: 'reproductie', title: '6. Reproductie', blocks: repro });
+  // ---- 6. Kasstromen bij levering en verkoop (zelfde berekening als de sectie in de app)
+  const cf = computeCashflow(d, core);
+  const cfBlocks = [
+    heading(`Levering nieuwe woning (${d.purchaseTransferDate || '-'})`),
+    table(
+      ['Post', 'Bedrag'],
+      [
+        ['Koopsom', eur(cf.price)],
+        ...cf.kostenKoperItems.map((i) => ['  ' + i.label, eur(i.amount)]),
+        ['Totaal te betalen', eur(cf.uses)],
+        ...(cf.ported > 0 ? [['Meegenomen hypotheek', eur(cf.ported)]] : []),
+        [cf.ported > 0 ? 'Nieuwe hypotheek' : 'Hypotheek', eur(cf.newMortgage)],
+        ['Eigen middelen', eur(cf.ownAtDelivery)],
+        ...(cf.depositLoan > 0 ? [['Waarborgsom (lening familie)', eur(cf.depositLoan)]] : []),
+        ...(cf.bridgeCredit > 0 ? [['Overbruggingskrediet (bank)', eur(cf.bridgeCredit)]] : []),
+        ...(cf.familyBridgeLoan > 0 ? [['Tijdelijke lening familie (sluitpost)', eur(cf.familyBridgeLoan)]] : []),
+        ['Totaal bronnen', eur(cf.sources)],
+      ],
+      { align: ['left', 'right'], compact: true }
+    ),
+    kv([
+      ['Maximale hypotheek', `${eur(cf.maxMortgage)}${cf.overridden ? ` (ingevuld; toets: ${eur(cf.toolMax)})` : ' (uitkomst van de toets)'}`],
+      ['Waarborgsom', { familie: 'gestort met een lening van familie', eigen: 'gestort uit eigen geld', bankgarantie: 'bankgarantie' }[cf.depositMethod]],
+    ]),
+  ];
+  if (cf.sale) {
+    const sl = cf.sale;
+    cfBlocks.push(
+      heading(`Verkoop huidige woning (${d.saleTransferDate || '-'})`),
+      table(
+        ['Post', 'Bedrag'],
+        [
+          ['Verkoopprijs', eur(sl.grossPrice)],
+          ['- Verkoopkosten', eur(sl.saleCosts)],
+          ['= Netto opbrengst', eur(sl.netProceeds)],
+          ['- Aflossing bestaande hypotheek', eur(sl.bridge)],
+          ['= Overwaarde netto', eur(sl.overwaardeNet)],
+          ...(sl.bridgeCreditRepayment > 0 ? [['- Aflossing overbruggingskrediet', eur(sl.bridgeCreditRepayment)]] : []),
+          ...(sl.familyRepayment > 0 ? [['- Terugbetaling familie', eur(sl.familyRepayment)]] : []),
+          [sl.afterFamily < 0 ? '= Tekort: extra eigen geld' : '= Over na verkoop', eur(Math.abs(sl.afterFamily))],
+        ],
+        { align: ['left', 'right'], compact: true }
+      ),
+      kv([
+        ['Dagen tussen levering en verkoop', String(sl.days)],
+        ['Rente bestaande hypotheek in die periode', `${eur(sl.bridgeInterest)} (${pct(sl.bridgeRateUsed)})`],
+        ...(sl.familyInterest > 0 ? [['Rente familielening', eur(sl.familyInterest)]] : []),
+        ...(sl.bridgeCreditInterest > 0 ? [['Rente overbruggingskrediet', eur(sl.bridgeCreditInterest)]] : []),
+      ])
+    );
+  }
+  cfBlocks.push(
+    heading('Eigen inbreng'),
+    kv([
+      ['Totale eigen inbreng', eur(cf.totalOwn)],
+      ['waarvan kosten koper', eur(cf.kostenKoper)],
+      ['Beschikbaar eigen vermogen', eur(cf.ownAvailable)],
+      ...(d.hasPartner2 ? [['Aanvrager 1 / aanvrager 2', `${eur(cf.partner1Share)} / ${eur(cf.partner2Share)}`]] : []),
+      ...(cf.sale ? [['Inclusief rente in de overbruggingsperiode', eur(cf.totalOwnInclCosts)]] : []),
+    ])
+  );
+  if (cf.warnings.length) {
+    cfBlocks.push(heading('Let op'), kv(cf.warnings.map((w, i) => [String(i + 1), w.text])));
+  }
+  sections.push({ id: 'kasstromen', title: '6. Kasstromen bij levering en verkoop', blocks: cfBlocks });
+
+  sections.push({ id: 'reproductie', title: '7. Reproductie', blocks: repro });
 
   return {
     version: REPORT_VERSION,

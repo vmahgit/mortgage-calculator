@@ -69,14 +69,14 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
     expect(study.children.every((c) => c.termijnSource === 'duo')).toBe(true);
   });
 
-  it('opslagfactor volgt uit de gewogen toetsrente van meegenomen delen plus nieuw geld', () => {
-    const ported = [
-      [269480.64, 5.0], // 1,25% met nog 52 maanden rentevast: AFM-toetsrente
-      [354269.27, 1.85], // nog 172 maanden rentevast: contractrente
+  it('opslagfactor volgt uit de gewogen toetsrente (saldo × resterende looptijd, art. 3 lid 11)', () => {
+    const parts = [
+      [269480.64, 292, 5.0], // 1,25% met nog 52 maanden rentevast: AFM-toetsrente; nog 292 mnd looptijd
+      [354269.27, 360, 1.85], // aflossingsvrij: 30 jaar; nog 172 maanden rentevast: contractrente
+      [newMoney, 360, RATE],
     ];
-    const parts = [...ported, [newMoney, RATE]];
-    const total = parts.reduce((s, p) => s + p[0], 0);
-    const weighted = parts.reduce((s, p) => s + p[0] * p[1], 0) / total;
+    const total = parts.reduce((s, p) => s + p[0] * p[1], 0);
+    const weighted = parts.reduce((s, p) => s + p[0] * p[1] * p[2], 0) / total;
     expect(row(b, 'study').meta.weightedToets).toBeCloseTo(weighted, 8);
     expect(weighted).toBeGreaterThan(3.5);
     expect(weighted).toBeLessThanOrEqual(4.0);

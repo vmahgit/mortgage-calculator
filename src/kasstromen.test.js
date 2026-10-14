@@ -83,6 +83,61 @@ describe('kasstromen: het rekenblad van de gebruiker', () => {
   });
 });
 
+describe('kasstromen: waarborgsom en overbruggingskrediet', () => {
+  it('waarborgsom via bankgarantie: geen familielening voor de waarborgsom, wel 0,1% kosten koper', () => {
+    const { cf } = run({ ...spreadsheet, includeBankGuarantee: true });
+    expect(cf.depositMethod).toBe('bankgarantie');
+    expect(cf.depositLoan).toBe(0);
+    expect(cf.kostenKoperItems.some((i) => i.key === 'bankGuarantee')).toBe(true);
+    expect(cf.kostenKoper).toBeCloseTo(31650 + 1330, 2);
+    // De tijdelijke lening familie vangt nu ook de € 133.000 op.
+    expect(cf.familyBridgeLoan).toBeCloseTo(1361650 + 1330 - 945000 - 40000, 2);
+    expect(cf.balanced).toBe(true);
+  });
+
+  it('waarborgsom gestort uit eigen geld: geen aparte lening', () => {
+    const { cf } = run({ ...spreadsheet, cfDepositFromFamily: false });
+    expect(cf.depositMethod).toBe('eigen');
+    expect(cf.depositLoan).toBe(0);
+    expect(cf.familyBridgeLoan).toBeCloseTo(1361650 - 945000 - 40000, 2);
+  });
+
+  it('overbruggingskrediet van de bank vervangt (een deel van) de familielening en wordt bij verkoop afgelost', () => {
+    const { cf } = run({ ...spreadsheet, useBridgeLoan: true, bridgeLoanAmount: '200000', bridgeLoanRate: 6 });
+    expect(cf.bridgeCredit).toBe(200000);
+    expect(cf.familyBridgeLoan).toBeCloseTo(243650 - 200000, 2);
+    expect(cf.sale.bridgeCreditRepayment).toBe(200000);
+    expect(cf.sale.afterFamily).toBeCloseTo(-57902.44, 2); // zelfde tekort, andere schuldeiser
+    expect(cf.sale.bridgeCreditInterest).toBeCloseTo((200000 * 0.06 * 52) / 365, 6);
+    expect(cf.balanced).toBe(true);
+  });
+
+  it('de hypotheek in de kasstromen is begrensd op de taxatiewaarde', () => {
+    const { cf } = run({ ...spreadsheet, appraisalValue: '900000' });
+    expect(cf.mortgage).toBe(900000);
+    expect(cf.warnings.map((w) => w.key)).toContain('ltv');
+  });
+});
+
+describe('kasstromen: starter', () => {
+  it('leent alleen wat bij levering nodig is (geen overschot), zonder verkoopmoment', () => {
+    const { cf } = run({
+      hasExistingHome: false,
+      hasPartner2: false,
+      income1: 80000,
+      studyLoans: [],
+      purchasePrice: 400000,
+      ownCapital1: 40000,
+      cfDepositFromFamily: false,
+    });
+    expect(cf.sale).toBeNull();
+    expect(cf.surplusAtDelivery).toBe(0);
+    expect(cf.mortgage).toBeCloseTo(cf.uses - 40000, 6);
+    expect(cf.totalOwn).toBe(40000);
+    expect(cf.balanced).toBe(true);
+  });
+});
+
 describe('kasstromen: zonder overschreven maximum', () => {
   it('gebruikt de maximale totale hypotheek uit de toets', () => {
     const { cf, core } = run({});

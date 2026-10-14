@@ -34,7 +34,7 @@ art. 3; NHG-systematiek):
   vaststaat, anders tegen de AFM-toetsrente (ook bij een variabele of verlopen rentevaste periode); looptijd = de
   resterende looptijd (aflossingsvrij: altijd 30 jaar), of 30 jaar als u 'Looptijd toetslast' daarop zet;
 - het nieuwe geld telt annuïtair over 30 jaar tegen zijn eigen toetsrente;
-- de **woonquote** komt uit de kolom van de **gewogen toetsrente** van alle delen samen (gewicht hoofdsom × looptijd);
+- de **woonquote** komt uit de kolom van de **gewogen toetsrente** van alle delen samen (gewicht hoofdsom × looptijd); dezelfde weging bepaalt de debetrente voor de opslagfactor van de studieschuld;
 - het maximum nieuw geld is het hoogste bedrag waarvoor de woonlast de toetslasten dekt, waarbij de gewogen toetsrente
   (en dus de kolom) zelf met dat bedrag meebeweegt (`computeCompositeCapacity`); een concrete samenstelling van
   aanvullende leningdelen wordt met `testLoanComposition` getoetst.
@@ -75,6 +75,18 @@ familie + tijdelijke lening familie (sluitpost); bij verkoop netto opbrengst −
 leverdatum) − terugbetaling familie = over of tekort. Daarnaast de totale eigen inbreng per partner en de rente in de
 overbruggingsperiode. De maximale hypotheek is overschrijfbaar. Is de huidige woning al verkocht (`currentHomeSold`), dan
 telt in de toets de verkoopprijs min verkoopkosten voor 100%.
+
+Koppelingen met de rest van de tool: de keuze voor de waarborgsom (lening familie / eigen geld / bankgarantie) zet de
+bankgarantie in de kosten koper aan of uit; een overbruggingskrediet van de bank (zelfde velden als de
+dubbele-lastentoets) is een bron bij levering en wordt bij verkoop afgelost; de hypotheek is begrensd op de
+taxatiewaarde. Een starter leent alleen wat bij levering nodig is. De kasstromen staan ook in de rekenverantwoording
+(hoofdstuk 6) en samengevat in het resultaatpaneel.
+
+## Taxatiewaarde en de 100%-grens
+
+De hypotheek is maximaal 100% van de waarde van de woning (art. 5): de getaxeerde marktwaarde (`appraisalValue`, leeg =
+koopsom; `getLtvBasis`). Wat boven die waarde nodig is (bijv. bij overbieden), is een tekort aan eigen geld
+(`ltvCashShortfall`); ligt de taxatie boven de koopsom, dan kunnen kosten koper tot die waarde worden meegefinancierd.
 
 ## Studieschuld (DUO) in de leencapaciteit
 

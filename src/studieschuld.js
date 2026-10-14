@@ -134,16 +134,21 @@ export function getPartToetsrente(ratePct, remainingFixedYears, afmToetsrente) {
   return years < 10 ? Math.max(rate, afmToetsrente) : rate;
 }
 
-// Gewogen debetrente over de leningdelen (gewicht = hoofdsom). Een overbruggingskrediet hoort
-// hier niet bij; de aanroeper geeft alleen de leningdelen van de hypotheek mee.
-// parts: [{ balance, ratePct, remainingFixedYears }]
+// Gewogen debetrente over de leningdelen. Gewicht = hoofdsom × resterende looptijd (art. 3 lid 11:
+// "rekening houdend met de hoofdsom en de resterende looptijd"; zelfde weging als de woonquote-toets).
+// Zonder termMonths weegt alleen de hoofdsom. Een overbruggingskrediet hoort hier niet bij; de
+// aanroeper geeft alleen de leningdelen van de hypotheek mee.
+// parts: [{ balance, ratePct, remainingFixedYears, termMonths? }]
 export function getWeightedDebetrente(parts, { afmToetsrente }) {
   let total = 0;
   let toetsSum = 0;
   let contractSum = 0;
+  let totalBalance = 0;
   for (const part of parts) {
-    const w = Math.max(0, num(part.balance));
-    if (w === 0) continue;
+    const balance = Math.max(0, num(part.balance));
+    if (balance === 0) continue;
+    const w = balance * (part.termMonths > 0 ? part.termMonths : 1);
+    totalBalance += balance;
     total += w;
     toetsSum += w * getPartToetsrente(part.ratePct, part.remainingFixedYears, afmToetsrente);
     contractSum += w * num(part.ratePct);
@@ -152,7 +157,7 @@ export function getWeightedDebetrente(parts, { afmToetsrente }) {
   return {
     weightedToets: toetsSum / total,
     weightedContract: contractSum / total,
-    totalBalance: total,
+    totalBalance,
   };
 }
 

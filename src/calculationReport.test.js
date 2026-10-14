@@ -105,7 +105,7 @@ describe('rekenverantwoording: inhoud klopt met de rekenkern', () => {
   const nl0 = (v) => new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 0 }).format(Math.round(v));
 
   it('heeft de zes onderdelen in vaste volgorde', () => {
-    expect(report.sections.map((s) => s.id)).toEqual(['uitkomst', 'afslagen', 'invoer', 'stappen', 'aannames', 'reproductie']);
+    expect(report.sections.map((s) => s.id)).toEqual(['uitkomst', 'afslagen', 'invoer', 'stappen', 'aannames', 'kasstromen', 'reproductie']);
   });
 
   it('toont uitkomst, ruimte en bindende grens', () => {
@@ -143,6 +143,16 @@ describe('rekenverantwoording: inhoud klopt met de rekenkern', () => {
     expect(text).toContain('volledig en letterlijk overgenomen uit Stcrt. 2025, 36471');
     expect(text).toContain('bruteringsfactor Tabel 1 ÷ Tabel 3');
     expect(report.warnings).toEqual([]);
+  });
+
+  it('bevat de kasstromen bij levering en verkoop, gelijk aan de sectie in de app', () => {
+    const ks = report.sections.find((s) => s.id === 'kasstromen');
+    expect(ks.title).toContain('Kasstromen');
+    const flat = JSON.stringify(ks.blocks);
+    expect(flat).toContain('Tijdelijke lening familie');
+    expect(flat).toContain('Terugbetaling familie');
+    expect(flat).toContain('Totale eigen inbreng');
+    expect(text.toLowerCase()).toContain('kasstromen bij levering en verkoop');
   });
 
   it('de afslagentotalen komen overeen met de opbouw', () => {

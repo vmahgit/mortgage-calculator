@@ -145,6 +145,15 @@ export function getAnnuityPayment(balance, ratePct, months) {
   return (P * r) / (1 - Math.pow(1 + r, -n));
 }
 
+// Grondslag voor de 100%-grens (art. 5): de waarde van de woning. Bij een aankoop is dat de
+// getaxeerde marktwaarde; zonder taxatie de koopsom. Ligt de taxatie boven de koopsom, dan kunnen
+// kosten koper tot die waarde worden meegefinancierd; ligt hij eronder (overbieden), dan moet het
+// verschil uit eigen geld komen.
+export function getLtvBasis(d) {
+  const appraisal = safeNum(d.appraisalValue);
+  return appraisal > 0 ? appraisal : safeNum(d.purchasePrice);
+}
+
 // Valt de rente van een leningdeel in box 3 (niet aftrekbaar)? Instelbaar per deel via `fiscal`
 // ('box1' | 'box3'); standaard ('auto') is alleen een aflossingsvrij deel dat na 2013 is aangegaan
 // niet aftrekbaar (zonder overgangsrecht). Bepaalt de renteaftrek én de toets (Tabel 3/4).
@@ -520,6 +529,8 @@ export const DOSSIER_DEFAULTS = {
   fixedRatePeriod: 10,
   energyLabel: 'A',
   purchasePrice: 1330000,
+  // Getaxeerde marktwaarde van de nieuwe woning (art. 5: grondslag voor de 100%-grens). Leeg = koopsom.
+  appraisalValue: '',
   hasPartner2: true,
   debt1: '0',
   debt2: '0',
@@ -559,10 +570,12 @@ export const DOSSIER_DEFAULTS = {
   starterExemption2: false,
   bouwdepotAmount: '',
   constructionMonths: 12,
-  notaryCosts: String(KOSTEN_KOPER_DEFAULTS.notaryCosts),
+  // Notaris en adviseur volgens de offertes van de gebruiker (rekenblad 27-11-2026).
+  notaryCosts: '2100',
   valuationCosts: String(KOSTEN_KOPER_DEFAULTS.valuationCosts),
-  advisoryCosts: String(KOSTEN_KOPER_DEFAULTS.advisoryCosts),
-  includeBankGuarantee: true,
+  advisoryCosts: '2950',
+  // Waarborgsom wordt gestort (met geld van familie, zie de kasstromen): geen bankgarantie.
+  includeBankGuarantee: false,
   includeBuyersAgent: false,
   includeNhgFee: false,
   includeEwfInNetCalc: false,
@@ -746,12 +759,13 @@ export function computeScenarioSummary(d) {
 export function buildDebetrenteParts(d, newMoney) {
   const parts = [];
   if (d.hasExistingHome && d.takeOverMortgage) {
-    const elapsed = getElapsedMonths(d.startDate);
-    toCurrentLoanParts(d.loanParts, d.startDate).forEach((part) => {
+    // Dezelfde looptijden als in de toets van de samenstelling (getPortedPartTests).
+    getPortedPartTests(d).forEach((part) => {
       parts.push({
-        balance: safeNum(part.principal),
-        ratePct: safeNum(part.rate),
-        remainingFixedYears: getRemainingFixedPeriod(part.originalFixedYears, elapsed).fractionalYears,
+        balance: part.balance,
+        ratePct: part.rate,
+        remainingFixedYears: part.remainingFixedYears,
+        termMonths: part.termMonths,
       });
     });
   }
@@ -760,6 +774,7 @@ export function buildDebetrenteParts(d, newMoney) {
     balance: newMoney > 0 ? newMoney : hasPorted ? 0 : 1,
     ratePct: safeNum(d.rate),
     remainingFixedYears: safeNum(d.fixedRatePeriod),
+    termMonths: TERM_MONTHS,
   });
   return parts;
 }
@@ -1037,8 +1052,9 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
   // B10: een hypotheek kan nooit hoger zijn dan de aanschafprijs van de woning
   // (maximale LTV van 100%), ongeacht hoeveel de leencapaciteit op inkomen toelaat.
   const priceNum = safeNum(purchasePrice);
-  const cappedByPropertyValue = priceNum > 0 && incomeBasedMax > priceNum;
-  const maxMortgage = priceNum > 0 ? Math.min(incomeBasedMax, priceNum) : incomeBasedMax;
+  const ltvBasis = getLtvBasis(d);
+  const cappedByPropertyValue = ltvBasis > 0 && incomeBasedMax > ltvBasis;
+  const maxMortgage = ltvBasis > 0 ? Math.min(incomeBasedMax, ltvBasis) : incomeBasedMax;
 
   // B11: kosten koper nu consistent gebaseerd op de daadwerkelijke aanschafprijs (net
   // als verderop bij de financieringsgat-berekening), in plaats van op de maximale
@@ -1390,9 +1406,10 @@ export function computeCurrentMortgage(d, calc) {
 // verkoop) de kosten koper niet, dan wordt het ontbrekende deel meegefinancierd zolang de totale
 // hypotheek onder 100% van de waarde van de nieuwe woning blijft; wat daarboven nog ontbreekt is een
 // tekort aan eigen geld (kosten koper mogen niet boven 100% LTV worden gefinancierd).
-// price: de te financieren waarde (ook de grondslag voor de 100%-grens).
+// price: de koopsom; ltvBasis: de grondslag voor de 100%-grens (taxatiewaarde, standaard de koopsom).
 export function computeNewMoneyNeeded({
   price,
+  ltvBasis = price,
   portedDebt,
   overwaarde,
   restschuldTekort,
@@ -1405,9 +1422,13 @@ export function computeNewMoneyNeeded({
   const ownAfterCosts = totalOwnCapital - kostenKoperCash;
   const ownCapitalForGap = Math.max(0, ownAfterCosts);
   const ownCapitalApplied = Math.min(ownCapitalForGap, Math.max(0, gap), ownContributionCap);
-  const baseAdditional = Math.max(0, gap - ownCapitalApplied);
+  const baseNeeded = Math.max(0, gap - ownCapitalApplied);
+  // Boven de waarde van de woning wordt niet gefinancierd (bijv. bij overbieden boven de taxatie):
+  // dat deel is een tekort aan eigen geld.
+  const baseAdditional = Math.min(baseNeeded, Math.max(0, ltvBasis - portedDebt));
+  const ltvCashShortfall = baseNeeded - baseAdditional;
   const kostenKoperUncovered = Math.max(0, -ownAfterCosts - surplus);
-  const ltvRoom = Math.max(0, price - portedDebt - baseAdditional);
+  const ltvRoom = Math.max(0, ltvBasis - portedDebt - baseAdditional);
   const kostenKoperFinanced = Math.min(kostenKoperUncovered, ltvRoom);
   return {
     gap,
@@ -1417,6 +1438,7 @@ export function computeNewMoneyNeeded({
     kostenKoperUncovered,
     kostenKoperFinanced,
     kostenKoperCashShortfall: kostenKoperUncovered - kostenKoperFinanced,
+    ltvCashShortfall,
     additionalMortgage: baseAdditional + kostenKoperFinanced,
     remainingOwnCapital: Math.max(0, ownAfterCosts - ownCapitalApplied),
   };
@@ -1504,6 +1526,7 @@ export function computeCombinedGap(d, calc, currentMortgage) {
     : Infinity;
   const need = computeNewMoneyNeeded({
     price,
+    ltvBasis: getLtvBasis(d),
     portedDebt,
     overwaarde,
     restschuldTekort,
@@ -1518,8 +1541,11 @@ export function computeCombinedGap(d, calc, currentMortgage) {
     kostenKoperUncovered,
     kostenKoperFinanced,
     kostenKoperCashShortfall,
+    ltvCashShortfall,
     additionalMortgage,
   } = need;
+  // Alles wat niet gefinancierd mag worden (kosten koper boven 100%, of de koopsom boven de taxatie).
+  const cashShortfall = kostenKoperCashShortfall + ltvCashShortfall;
 
   // Twee onafhankelijke, bindende grenzen op de aanvullende hypotheek: de Nibud-
   // inkomenstoets (extraBorrowCapacity) én het absolute plafond van de geldverstrekker
@@ -1561,8 +1587,8 @@ export function computeCombinedGap(d, calc, currentMortgage) {
   const familyLoanMonthlyInterest = (familyLoanApplied * (safeNum(familyLoanRate) / 100)) / 12;
   const netCapacityMargin = capacityMargin + familyLoanApplied;
   // Kosten koper die niet meegefinancierd kunnen worden (100% LTV) zijn een tekort aan eigen geld.
-  const remainingShortfall = Math.max(0, -netCapacityMargin) + kostenKoperCashShortfall;
-  const withinCapacityAfterFamilyLoan = netCapacityMargin >= 0 && kostenKoperCashShortfall <= 0.005;
+  const remainingShortfall = Math.max(0, -netCapacityMargin) + cashShortfall;
+  const withinCapacityAfterFamilyLoan = netCapacityMargin >= 0 && cashShortfall <= 0.005;
 
   return {
     portedDebt,
@@ -1574,6 +1600,8 @@ export function computeCombinedGap(d, calc, currentMortgage) {
     kostenKoperUncovered,
     kostenKoperFinanced,
     kostenKoperCashShortfall,
+    ltvCashShortfall,
+    cashShortfall,
     additionalMortgage,
     lenderCapRoom,
     additionalMortgageCapacity,
@@ -1599,10 +1627,17 @@ export function computeCombinedGap(d, calc, currentMortgage) {
 // daarna overblijft verlaagt de benodigde hypotheek.
 export function computeStarterGap(d, calc) {
   const price = safeNum(d.purchasePrice);
+  const ltvBasis = getLtvBasis(d);
   const kostenKoperCash = d.includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
   const ownCapitalAfterCosts = calc.totalOwnCapital - kostenKoperCash;
-  const cashShortfall = Math.max(0, -ownCapitalAfterCosts);
-  const requiredMortgage = Math.max(0, price - Math.max(0, ownCapitalAfterCosts));
+  // Kosten koper die het eigen geld niet dekt, mogen alleen worden meegefinancierd tot de waarde van
+  // de woning (taxatie); boven die waarde wordt niets gefinancierd.
+  const kostenKoperUncovered = Math.max(0, -ownCapitalAfterCosts);
+  const baseNeeded = Math.max(0, price - Math.max(0, ownCapitalAfterCosts));
+  const baseFinanced = Math.min(baseNeeded, ltvBasis);
+  const kostenKoperFinanced = Math.min(kostenKoperUncovered, Math.max(0, ltvBasis - baseFinanced));
+  const cashShortfall = kostenKoperUncovered - kostenKoperFinanced + (baseNeeded - baseFinanced);
+  const requiredMortgage = baseFinanced + kostenKoperFinanced;
   const lenderCap = getLenderCap(d.lenderCapThreshold);
   const capacity = Math.min(calc.incomeBasedMax, lenderCap);
   const bindingCapIsLender = lenderCap < calc.incomeBasedMax;

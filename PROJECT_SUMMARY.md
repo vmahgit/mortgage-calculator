@@ -1,5 +1,30 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (10): factcheck, logischere flow en geïntegreerde kasstromen
+- **Taxatiewaarde** (`appraisalValue`, `getLtvBasis`): de 100%-grens (art. 5) gaat over de waarde van de woning, niet
+  per se de koopsom. Boven de taxatie wordt niets geleend (`ltvCashShortfall`, telt mee in `remainingShortfall` /
+  `cashShortfall`); ligt de taxatie hoger, dan mogen kosten koper tot die waarde worden meegefinancierd (ook voor
+  starters, `computeStarterGap`). Veld in Beoogde woning, leeg = koopsom. Tests: `taxatie.test.js`.
+- **Debetrente voor de studieschuldfactor** nu gewogen naar saldo × resterende looptijd (art. 3 lid 11), zelfde
+  looptijden als de toets per leningdeel (`buildDebetrenteParts` via `getPortedPartTests`). Excel-bouwer idem.
+- **Inkomen exact invoerbaar** (geldveld i.p.v. schuif per € 1.000), label "incl. vakantiegeld". Het toetsinkomen van de
+  adviseur (€ 222.975) past bij € 8.100 × 12 × 1,08 = € 104.976 voor aanvrager 2.
+- **Standaard kosten koper**: notaris € 2.100, adviseur € 2.950 (rekenblad gebruiker), geen bankgarantie (waarborgsom
+  gestort). Ook de `useState`-beginwaarden van kosten koper verwijzen nu naar `DOSSIER_DEFAULTS`.
+- **Flow**: doorstromers zien nu Huidige hypotheek → Wat kunt u lenen? → Extra bijleenruimte → Aanvullende hypotheek →
+  Maximaal aankoopbudget → Aflosschema → Kasstromen → Dubbele-lastentoets; starters Wat kunt u lenen? → Starters-
+  hypotheek → Kasstromen. Resultaatpaneel: details teruggebracht tot nieuw geld/benodigde hypotheek, eigen vermogen,
+  kosten koper, toetsinkomen en waarschuwingen; weg zijn "O.b.v. inkomen alleen", de drie starters-tussenbedragen,
+  woonquote/leenfactor en "Uw rekensom stap voor stap" (staat correct in Wat kunt u lenen? en de
+  rekenverantwoording). Extra bijleenruimte toont alleen nog de maximale totale hypotheek uit de toets.
+- **Kasstromen geïntegreerd**: waarborgsom = lening familie / eigen geld / bankgarantie (stuurt `includeBankGuarantee`
+  in kosten koper); overbruggingskrediet van de bank (dezelfde velden als de dubbele-lastentoets) als bron bij levering
+  en aflossing bij verkoop; rente familielening in te stellen; hypotheek begrensd op de taxatiewaarde; starters lenen
+  alleen wat bij levering nodig is. Samenvatting "Geldstromen bij levering en verkoop" in het resultaatpaneel;
+  hoofdstuk 6 in de rekenverantwoording (reproductie is nu 7). Uitleg waarom het tekort in de toets (95% van de
+  marktwaarde) verschilt van de kasstromen (verwachte verkoopprijs) zolang de woning niet verkocht is.
+- **Tests**: 628.
+
 ## Sessie okt. 2026 (9): opslagfactor studieschuld officieel, woning verkocht, kasstromen
 - **Opslagfactor studieschuld gecorrigeerd** (`studieschuld.js`, één `FACTOR_TABLE` voor 2025/2026): de tabel was een
   halve procent verschoven. Officieel (art. 3a lid 2, geldende tekst wetten.overheid.nl BWBR0032503): ≤ 2,000% 1,05 ·
