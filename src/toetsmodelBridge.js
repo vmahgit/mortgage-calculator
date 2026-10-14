@@ -97,5 +97,7 @@ export function metricsFor(s) {
     feasible: door ? (gap.capacityMargin >= 0 ? 1 : 0) : starter.feasible ? 1 : 0,
     maxTotal: door ? gap.portedDebt + gap.additionalMortgageCapacity : starter.capacity,
     maxBudgetAfterCosts: door ? budget.remainingAfterCosts : null,
+    kostenKoperFinanced: door ? gap.kostenKoperFinanced : 0,
+    kostenKoperCashShortfall: door ? gap.kostenKoperCashShortfall : 0,
   };
 }

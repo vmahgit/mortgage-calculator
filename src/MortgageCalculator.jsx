@@ -43,6 +43,7 @@ import BorderGlow from './BorderGlow';
 import SectionRail, { useScrollSpy } from './SectionRail';
 import { getBouwdepotEstimate } from './bouwdepot';
 import { buildCapacityBreakdown } from './capacityBreakdown';
+import { editableDisplay, formatThousandsDisplay, parseDisplayInput } from './numberInput';
 import { buildCalculationReport, buildDossierFile, parseDossierFile, reportToText } from './calculationReport';
 import { INCOME_TYPES } from './toetsinkomen';
 import {
@@ -89,7 +90,8 @@ import {
   computeMaxBudget,
   SOLVER_PRICE_CEILING,
   solveAffordabilityLevers,
-  testLoanComposition,
+  testAdditionalParts,
+  computeNewMoneyNeeded,
   splitAdditionalMortgage,
   ADDITIONAL_SPLIT_MODES,
 } from './calcEngine';
@@ -302,31 +304,9 @@ function NumberField({ id, label, icon, value, onChange, placeholder, suffix, hi
   );
 }
 
-function formatThousandsDisplay(value) {
-  const raw = String(value ?? '').trim();
-  if (raw === '' || raw === '-') return raw;
-  const num = parseFloat(raw.replace(',', '.'));
-  if (isNaN(num)) return raw;
-  const [intPartRaw, decimalPart] = raw.replace(',', '.').split('.');
-  const intNum = parseInt(intPartRaw, 10);
-  const intFormatted = isNaN(intNum)
-    ? intPartRaw
-    : intNum.toLocaleString('nl-NL', { maximumFractionDigits: 0 });
-  return decimalPart !== undefined ? `${intFormatted},${decimalPart}` : intFormatted;
-}
-
-function parseDisplayInput(str) {
-  if (str === '') return '';
-  const cleaned = str
-    .replace(/[^0-9.,]/g, '')
-    .replace(/\./g, '')
-    .replace(',', '.');
-  return cleaned;
-}
-
 function CurrencyField({ id, label, icon, value, onChange, placeholder, hint }) {
   const [isFocused, setIsFocused] = useState(false);
-  const displayValue = isFocused ? value : formatThousandsDisplay(value);
+  const displayValue = isFocused ? editableDisplay(value) : formatThousandsDisplay(value);
 
   return (
     <div className="space-y-1.5">
@@ -2154,7 +2134,11 @@ function CapacityBreakdownSection({ breakdown: b, price, energyLabel, hasPartner
           <dd className="text-xl font-bold text-slate-900">{formatEuro(need.required)}</dd>
           <p className="mt-0.5 text-[11px] text-slate-400">
             {doorstromer
-              ? `na ${formatEuro(need.ownCapitalApplied)} eigen geld`
+              ? `na ${formatEuro(need.ownCapitalApplied)} eigen geld${
+                  need.kostenKoperFinanced > 0.5
+                    ? ` en incl. ${formatEuro(need.kostenKoperFinanced)} meegefinancierde kosten koper`
+                    : ''
+                }`
               : 'aanschafprijs min eigen geld na kosten koper'}
           </p>
         </div>
@@ -3075,7 +3059,6 @@ function MortgageCalculatorForm({ onReset }) {
     // het gat wordt ingezet. Zonder deze twee zou het 0%-scenario hieronder afwijken van de
     // headline "aanvullend te lenen" bij de aanschafprijs.
     const kostenKoperCash = includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
-    const ownCapitalForGapBase = Math.max(0, calc.totalOwnCapital - kostenKoperCash);
     const ownContributionCap = limitOwnContribution
       ? Math.max(0, safeNum(desiredMaxOwnContribution))
       : Infinity;
@@ -3118,15 +3101,20 @@ function MortgageCalculatorForm({ onReset }) {
       // voor het gewone financieringsgat.
       const financeablePrice = Math.min(price, basePrice);
       const overbidExtra = Math.max(0, price - basePrice);
-      const gap = financeablePrice - portedDebt - overwaarde + restschuldTekort;
-      const ownCapitalForGap = Math.min(
-        ownCapitalForGapBase,
-        Math.max(0, gap),
-        ownContributionCap
-      );
-      const additionalMortgage = Math.max(0, gap - ownCapitalForGap);
-      const remainingOwnCapital = calc.totalOwnCapital - kostenKoperCash - ownCapitalForGap;
-      const insufficientCashForOverbid = overbidExtra > remainingOwnCapital;
+      // Zelfde bronnen en kosten-koper-regels als de koptelling (computeNewMoneyNeeded); de kosten koper
+      // zelf blijven die van de aanschafprijs, ook bij een hogere of lagere bieding.
+      const need = computeNewMoneyNeeded({
+        price: financeablePrice,
+        portedDebt,
+        overwaarde,
+        restschuldTekort,
+        totalOwnCapital: calc.totalOwnCapital,
+        kostenKoperCash,
+        ownContributionCap,
+      });
+      const additionalMortgage = need.additionalMortgage;
+      const insufficientCashForOverbid =
+        overbidExtra > need.remainingOwnCapital || need.kostenKoperCashShortfall > 0.005;
 
       const { grossMonthly: newGrossMonthly, taxBenefit: newTaxBenefit } =
         computeNewPartMonthly(additionalMortgage);
@@ -3192,44 +3180,15 @@ function MortgageCalculatorForm({ onReset }) {
     const totalNet = totalGross - taxBenefit;
     const netInterestComponent = Math.max(0, totalInterest - taxBenefit);
 
-    // Toets van deze concrete samenstelling, zoals de geldverstrekker die doet: meegenomen delen
-    // plus deze nieuwe delen, elk annuïtair tegen zijn eigen toetsrente (AFM-toetsrente bij
-    // minder dan 10 jaar rentevast), en de woonquote uit de gewogen toetsrente. Bewust los van de
-    // algemene rentevastperiode-slider bij Beoogde woning: elk nieuw deel heeft hier zijn eigen
-    // rentevastperiode. De toets werkt door in de leencapaciteit, niet in de werkelijke
-    // bruto/netto maandlasten hierboven.
-    const newPartTests = additionalLoanParts.map((part) => ({
-      balance: safeNum(part.principal),
-      rate: safeNum(part.rate),
-      testRate: getTestRate(part.rate, part.originalFixedYears),
-      termMonths: TERM_MONTHS,
-    }));
-    const ratePartsAtAfm = newPartTests.filter((p) => p.balance > 0 && p.testRate !== p.rate);
+    // Toets van deze concrete samenstelling, zoals de geldverstrekker die doet (zie
+    // testAdditionalParts in calcEngine.js): elk deel annuïtair tegen zijn eigen toetsrente, de
+    // woonquote uit de gewogen toetsrente, met de meegenomen delen erbij. Bewust los van de algemene
+    // rentevastperiode-slider bij Beoogde woning: elk nieuw deel heeft hier zijn eigen
+    // rentevastperiode. De toets werkt door in de leencapaciteit, niet in de bruto/netto maandlasten.
+    const partsTest = testAdditionalParts(dossierSnapshot, calc, currentMortgage, additionalLoanParts);
+    const ratePartsAtAfm = partsTest.ratePartsAtAfm;
     const hasRateRisk = ratePartsAtAfm.length > 0;
-    const compositionArgs = {
-      ported: takeOverMortgage ? currentMortgage.portedParts : [],
-      newParts: newPartTests,
-      refRate: calc.testRate,
-      monthlyDebt: calc.monthlyDebt,
-      studyAfslag: calc.studyAfslag,
-    };
-    const composition = testLoanComposition({
-      ...compositionArgs,
-      income: calc.combinedIncome,
-      bonus: calc.energyBonus + calc.singleBonus,
-    });
-    const compositionPension = calc.pensionActive
-      ? testLoanComposition({
-          ...compositionArgs,
-          income: calc.pensionCombinedIncome,
-          aow: true,
-          bonus: calc.energyBonus + calc.pensionSingleBonus,
-        })
-      : null;
-    const bindingComposition =
-      compositionPension && compositionPension.margin < composition.margin
-        ? compositionPension
-        : composition;
+    const bindingComposition = partsTest.binding;
     const totalDebtAfterMove = currentMortgage.portedDebt + totalPrincipal;
     const capacityMargin = bindingComposition.margin;
     const effectiveCapacity = Math.max(0, totalDebtAfterMove + capacityMargin);
@@ -3301,6 +3260,7 @@ function MortgageCalculatorForm({ onReset }) {
     };
   }, [
     additionalLoanParts,
+    dossierSnapshot,
     todayIso,
     calc,
     currentMortgage,
@@ -7283,7 +7243,8 @@ function MortgageCalculatorForm({ onReset }) {
                             gat moet u financieren via een aanvullende hypotheek of zelf extra
                             inleggen. Overdrachtsbelasting en overige kosten koper (indicatief{' '}
                             {formatEuro(newHomeCalc.transferTax + newHomeCalc.otherCosts)}) komen
-                            hier nog los bovenop en zijn niet in dit gat verwerkt.
+                            hier nog los bovenop; ze gaan eerst van uw eigen geld af en een eventueel
+                            tekort daaraan wordt meegefinancierd binnen 100% LTV.
                           </p>
 
                           <div className="mt-4">
@@ -7301,6 +7262,17 @@ function MortgageCalculatorForm({ onReset }) {
                                 </span>
                               )}
                           </div>
+
+                          {(combinedGapCalc.kostenKoperFinanced > 0.5 ||
+                            combinedGapCalc.kostenKoperCashShortfall > 0.5) && (
+                            <InlineNote className="mt-3">
+                              Uw eigen geld dekt de kosten koper ({formatEuro(calc.kostenKoper.total)}) niet.
+                              {combinedGapCalc.kostenKoperFinanced > 0.5 &&
+                                ` ${formatEuro(combinedGapCalc.kostenKoperFinanced)} wordt meegefinancierd in de aanvullende hypotheek (binnen 100% van de woningwaarde).`}
+                              {combinedGapCalc.kostenKoperCashShortfall > 0.5 &&
+                                ` ${formatEuro(combinedGapCalc.kostenKoperCashShortfall)} kan niet worden meegefinancierd (boven 100% LTV) en moet u uit eigen geld betalen: dat telt als tekort.`}
+                            </InlineNote>
+                          )}
 
                           <div className="mt-3 flex items-center justify-between rounded-xl border-2 border-indigo-200 bg-indigo-50 px-5 py-4">
                             <span className="text-sm font-medium text-indigo-900">

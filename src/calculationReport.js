@@ -660,8 +660,13 @@ export function buildCalculationReport(
         'Financieringsgat en benodigd nieuw geld',
         [
           `Financieringsgat = aankoopprijs - meegenomen hypotheek - bruikbare overwaarde${gap.restschuldTekort > 0 ? ' + restschuld-tekort' : ''} = ${eur(d.purchasePrice)} - ${eur(gap.portedDebt)} - ${eur(gap.overwaarde)}${gap.restschuldTekort > 0 ? ` + ${eur(gap.restschuldTekort)}` : ''} = ${eur(gap.gap)}`,
-          `Eigen geld na kosten koper = ${eur(calc.totalOwnCapital)} - ${eur(d.includeKostenKoperInCalc ? calc.kostenKoper.total : 0)} = ${eur(Math.max(0, calc.totalOwnCapital - (d.includeKostenKoperInCalc ? calc.kostenKoper.total : 0)))}; ingezet op het gat: ${eur(gap.ownCapitalApplied)}`,
-          `Nieuw geld nodig = gat - eigen geld = ${eur(gap.additionalMortgage)}`,
+          `Eigen geld - kosten koper = ${eur(calc.totalOwnCapital)} - ${eur(d.includeKostenKoperInCalc ? calc.kostenKoper.total : 0)} = ${eur(calc.totalOwnCapital - (d.includeKostenKoperInCalc ? calc.kostenKoper.total : 0))}; ingezet op het gat: ${eur(gap.ownCapitalApplied)}`,
+          ...(gap.kostenKoperUncovered > 0.5
+            ? [
+                `Het eigen geld dekt de kosten koper niet: ${eur(gap.kostenKoperUncovered)} ontbreekt. Daarvan wordt ${eur(gap.kostenKoperFinanced)} meegefinancierd (totale hypotheek blijft binnen 100% van de woningwaarde)${gap.kostenKoperCashShortfall > 0.5 ? ` en ${eur(gap.kostenKoperCashShortfall)} kan niet worden gefinancierd: tekort aan eigen geld` : ''}.`,
+              ]
+            : []),
+          `Nieuw geld nodig = gat - eigen geld${gap.kostenKoperFinanced > 0.5 ? ' + meegefinancierde kosten koper' : ''} = ${eur(gap.additionalMortgage)}`,
           `Ruimte = maximaal nieuw te lenen - nieuw geld nodig = ${eur(gap.additionalMortgageCapacity)} - ${eur(gap.additionalMortgage)} = ${eur(gap.capacityMargin)}${gap.familyLoanApplied > 0 ? `; met familielening ${eur(gap.familyLoanApplied)}: ${eur(gap.netCapacityMargin)}` : ''}`,
         ],
         feasible ? `Haalbaar met ${eur(margin)} ruimte` : `Niet haalbaar: tekort ${eur(-margin)}`
@@ -698,7 +703,7 @@ export function buildCalculationReport(
   notes.push(`Opslagfactor studieschuld: tabel uit de opdracht (STUDY_DEBT_CONFIG ${Object.keys(STUDY_DEBT_CONFIG_BY_YEAR).join('/')}); niet afzonderlijk tegen de Staatscourant gecontroleerd, bronnen verschillen.`);
   notes.push('Overige schulden tellen mee met 2% van het schuldbedrag per maand (een lagere vaste maandlast uit het contract mag een geldverstrekker accepteren).');
   notes.push(`Verkoopwaarde voor financiering = ${pct(d.saleDiscountPercentage, 0)} van de marktwaarde; verkoopkosten van de bestaande woning zijn niet apart meegenomen.`);
-  notes.push('Kosten koper kunnen niet boven 100% LTV worden meegefinancierd en gaan van het eigen geld af (indien meegeteld). NHG, overbruggingskrediet, erfpacht en verduurzaming boven 100% LTV zijn niet in deze toets opgenomen.');
+  notes.push('Kosten koper gaan (indien meegeteld) eerst van het eigen geld af; wat het eigen geld niet dekt wordt meegefinancierd zolang de totale hypotheek onder 100% van de woningwaarde blijft, daarboven is het een tekort aan eigen geld. NHG, overbruggingskrediet, erfpacht en verduurzaming boven 100% LTV zijn niet in deze toets opgenomen.');
   notes.push('AOW-toets: aanvragers van 57 jaar en ouder worden ook op het pensioeninkomen getoetst (AOW-leeftijd 67; vanaf 2028 67 jaar en 3 maanden).');
   notes.push('Indicatieve berekening, geen bindend advies. De definitieve toets en acceptatie liggen bij de geldverstrekker.');
   const unsup = unsupportedFeatures(d);
@@ -713,7 +718,7 @@ export function buildCalculationReport(
     text('Zo kunt u deze berekening nalopen of herhalen:', 'normal'),
     kv([
       ['1', 'Calculator: laad het dossier-bestand (JSON) via "Importeer dossier" in de header; het rekent exact deze invoer opnieuw door.'],
-      ['2', 'Excel-toetsmodel (docs/toetsmodel/Hypotheek_Toetsmodel_2026.xlsx): voer de onderstaande invoer in op blad Invoer, kolom M ("Eigen test"), met peildatum zoals hieronder. Het blad Berekening toont dezelfde stappen als formules; de uitkomst staat op Samenvatting (kies scenario 11).'],
+      ['2', 'Excel-toetsmodel (docs/toetsmodel/Hypotheek_Toetsmodel_2026.xlsx): voer de onderstaande invoer in op blad Invoer, in de laatste kolom ("Eigen test"), met peildatum zoals hieronder. Het blad Berekening toont dezelfde stappen als formules; de uitkomst staat op Samenvatting (kies het laatste scenario, "Eigen test").'],
       ['3', 'Restsaldi en rentevaste perioden hangen af van de peildatum; gebruik dezelfde datum.'],
     ]),
     heading('Invoer voor het Excel-toetsmodel'),

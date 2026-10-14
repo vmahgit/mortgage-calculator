@@ -311,7 +311,7 @@ INPUTS = [
 
 ws = ws_inv
 put(ws, "A1", "Invoer", f_title)
-put(ws, "A2", "Vul alleen de gele cellen met blauwe tekst in. Kolom C is uw eigen dossier; D t/m L zijn testscenario's met bekende app-uitkomst; M is een vrij testscenario.", f_sub)
+put(ws, "A2", f"Vul alleen de gele cellen met blauwe tekst in. Kolom C is uw eigen dossier; D t/m {COLS[N_APP-1]} zijn testscenario's met bekende app-uitkomst; {LASTC} is een vrij testscenario.", f_sub)
 put(ws, "A4", "Scenario", f_head, fill=fill_head)
 put(ws, "B4", "Eenheid", f_head, fill=fill_head)
 for i, c in enumerate(COLS):
@@ -425,9 +425,15 @@ B("kk_bg", "Bankgarantie", "€", EUR, lambda c, r, i, s: f'=IF({i("bg")}="Ja",{
 B("kk_ag", "Aankoopmakelaar", "€", EUR, lambda c, r, i, s: f'=IF({i("agent")}="Ja",{i("price")}*Makelaar_pct,0)')
 B("kk_total", "Kosten koper totaal", "€", EUR, lambda c, r, i, s: f'={r("kk_tax")}+{i("notary")}+{i("val")}+{i("adv")}+{r("kk_bg")}+{r("kk_ag")}', True)
 B("kk_cash", "Kosten koper die van eigen geld afgaan", "€", EUR, lambda c, r, i, s: f'=IF({i("kk")}="Ja",{r("kk_total")},0)')
-B("own_gap", "Eigen geld beschikbaar voor het gat", "€", EUR, lambda c, r, i, s: f'=MAX(0,{i("own")}-{r("kk_cash")})')
+B("surplus", "Overschot uit verkoop (als de woning goedkoper is dan meegenomen + overwaarde)", "€", EUR, lambda c, r, i, s: f'=MAX(0,-{r("gap")})')
+B("own_gap", "Eigen geld beschikbaar voor het gat (na kosten koper)", "€", EUR, lambda c, r, i, s: f'=MAX(0,{i("own")}-{r("kk_cash")})')
 B("own_app", "Eigen geld ingezet op het gat", "€", EUR, lambda c, r, i, s: f'=MIN({r("own_gap")},MAX(0,{r("gap")}))')
-B("addl", "Nieuw geld nodig (doorstromer)", "€", EUR, lambda c, r, i, s: f'=MAX(0,{r("gap")}-{r("own_app")})', True)
+B("addl_base", "Nieuw geld voor het gat (gat min eigen geld)", "€", EUR, lambda c, r, i, s: f'=MAX(0,{r("gap")}-{r("own_app")})')
+B("kk_uncov", "Kosten koper die eigen geld en overschot niet dekken", "€", EUR, lambda c, r, i, s: f'={r("door")}*MAX(0,{r("kk_cash")}-{i("own")}-{r("surplus")})')
+B("ltv_room", "Ruimte tot 100% van de woningwaarde (prijs min totale hypotheek)", "€", EUR, lambda c, r, i, s: f'=MAX(0,{i("price")}-{r("ported")}-{r("addl_base")})')
+B("kk_fin", "Kosten koper die worden meegefinancierd (binnen 100% LTV)", "€", EUR, lambda c, r, i, s: f'=MIN({r("kk_uncov")},{r("ltv_room")})')
+B("kk_short", "Kosten koper die niet te financieren zijn (tekort aan eigen geld)", "€", EUR, lambda c, r, i, s: f'={r("kk_uncov")}-{r("kk_fin")}')
+B("addl", "Nieuw geld nodig (doorstromer)", "€", EUR, lambda c, r, i, s: f'={r("addl_base")}+{r("kk_fin")}', True)
 
 BER.append(("§", "5. Studieschuld (art. 3a)"))
 B("newmoney", "Nieuw geld in de weging van de debetrente", "€", EUR, lambda c, r, i, s: f'={r("door")}*{r("addl")}')
@@ -493,8 +499,8 @@ B("out_maxtotal", "UITKOMST: maximale totale hypotheek", "€", EUR, lambda c, r
 B("out_capnew", "UITKOMST: maximaal nieuw te lenen", "€", EUR, lambda c, r, i, s: f'=IF({r("door")}=1,{r("cap_door")},{r("cap_s")})', True)
 B("out_needed", "UITKOMST: nieuw geld nodig voor deze woning", "€", EUR, lambda c, r, i, s: f'=IF({r("door")}=1,{r("addl")},{r("req_s")})', True)
 B("out_margin", "UITKOMST: ruimte (+) of tekort (−)", "€", EUR, lambda c, r, i, s: f'={r("out_capnew")}-{r("out_needed")}', True)
-B("out_short", "UITKOMST: tekort", "€", EUR, lambda c, r, i, s: f'=IF({r("door")}=1,MAX(0,-{r("margin_door")}),{r("short_s")})', True)
-B("out_feasible", "UITKOMST: haalbaar (1 = ja)", "", INT, lambda c, r, i, s: f'=IF({r("door")}=1,IF({r("margin_door")}>=0,1,0),IF({r("short_s")}<=0,1,0))', True)
+B("out_short", "UITKOMST: tekort", "€", EUR, lambda c, r, i, s: f'=IF({r("door")}=1,MAX(0,-{r("margin_door")})+{r("kk_short")},{r("short_s")})', True)
+B("out_feasible", "UITKOMST: haalbaar (1 = ja)", "", INT, lambda c, r, i, s: f'=IF({r("door")}=1,IF(AND({r("margin_door")}>=0,{r("kk_short")}<=0.005),1,0),IF({r("short_s")}<=0,1,0))', True)
 B("budget_rest", "Overgebleven budget na woning en kosten koper (doorstromer)", "€", EUR, lambda c, r, i, s: f'=IF({r("door")}=1,{i("own")}+{r("overw")}+{r("ported")}+{r("cap_door")}-{r("tekort")}-{i("price")}-{r("kk_cash")},"n.v.t.")')
 
 # ---- Solver (per kolom: twee blokken, tien rentekolommen)
@@ -611,7 +617,7 @@ build(ws_sol, SOL, sol_rows, "Solver: samengestelde toets met gewogen toetsrente
 # ================================================================ Controle
 ws = ws_con
 put(ws, "A1", "Controle: Excel-model tegen de app-engine", f_title)
-put(ws, "A2", "Excel = formules in dit werkboek (onafhankelijk opgebouwd). App = momentopname van de engine (src/calcEngine.js) voor dezelfde invoer. Scenario 11 is vrij: vul daar zelf de app-uitkomst in.", f_sub)
+put(ws, "A2", f"Excel = formules in dit werkboek (onafhankelijk opgebouwd). App = momentopname van de engine (src/calcEngine.js) voor dezelfde invoer. Scenario {N} is vrij: vul daar zelf de app-uitkomst in.", f_sub)
 METRICS = [
     ("incomeTotal", "Totaal toetsinkomen", EUR, "inc_total"),
     ("testRate", "Toetsrente nieuwe hypotheek", PCT3, "testRate"),
@@ -631,6 +637,8 @@ METRICS = [
     ("feasible", "Haalbaar (1 = ja)", INT, "out_feasible"),
     ("maxTotal", "Maximale totale hypotheek", EUR, "out_maxtotal"),
     ("maxBudgetAfterCosts", "Overgebleven budget na woning en kosten koper", EUR, "budget_rest"),
+    ("kostenKoperFinanced", "Meegefinancierde kosten koper", EUR, "kk_fin"),
+    ("kostenKoperCashShortfall", "Kosten koper niet te financieren", EUR, "kk_short"),
 ]
 put(ws, "A4", "Scenario", f_head, fill=fill_head)
 put(ws, "B4", "", f_head, fill=fill_head)
@@ -677,7 +685,7 @@ ws.freeze_panes = "C7"
 # ================================================================ Samenvatting
 ws = ws_sam
 put(ws, "A1", "Samenvatting: wat kunt u lenen?", f_title)
-put(ws, "A2", "Kies een scenario (1 t/m 11). Alle cijfers komen uit de berekening; scenario 1 is uw eigen dossier.", f_sub)
+put(ws, "A2", f"Kies een scenario (1 t/m {N}). Alle cijfers komen uit de berekening; scenario 1 is uw eigen dossier.", f_sub)
 put(ws, "A4", "Gekozen scenario", f_bold)
 put(ws, "C4", 1, f_input, INT, fill_input, Alignment(horizontal="center"), b_all)
 dv = DataValidation(type="whole", operator="between", formula1="1", formula2=str(N), allow_blank=False)
@@ -785,11 +793,11 @@ put(ws, "A1", "Hypotheek-toetsmodel 2026", f_title)
 put(ws, "A2", "Onafhankelijk Excel-model van de leencapaciteitstoets (Nibud-woonquote, toetsrente, studieschuld, meenemen van bestaande leningdelen) om de hypotheekcalculator mee te controleren.", f_sub)
 lines = [
     ("Doel", None),
-    ("Dit werkboek rekent dezelfde toets als de app, maar volledig met cel-formules. U voert een dossier in (Invoer, kolom C of M), leest de uitkomst in Samenvatting en vergelijkt desgewenst met de app (Controle).", None),
+    (f"Dit werkboek rekent dezelfde toets als de app, maar volledig met cel-formules. U voert een dossier in (Invoer, kolom C of {LASTC}), leest de uitkomst in Samenvatting en vergelijkt desgewenst met de app (Controle).", None),
     ("", None),
     ("Werkbladen", None),
     ("Samenvatting: opbouw van de leencapaciteit en de uitkomst voor het gekozen scenario (cel C4).", None),
-    ("Invoer: alle invoer per scenario. Gele cellen met blauwe tekst zijn invoer. Kolom C = uw dossier, D t/m L = testscenario's, M = vrij testscenario.", None),
+    (f"Invoer: alle invoer per scenario. Gele cellen met blauwe tekst zijn invoer. Kolom C = uw dossier, D t/m {COLS[N_APP-1]} = testscenario's, {LASTC} = vrij testscenario.", None),
     ("Berekening: stap voor stap, alles formules. Groene vakken zijn sleutelresultaten.", None),
     ("Solver: bepaalt het hoogste bedrag nieuw geld bij meenemen, waarbij de woonquote meebeweegt met de gewogen toetsrente.", None),
     ("Tabellen: parameters en de woonquote-tabellen. Oranje kolommen zijn GESCHAT (zie hieronder) en kunnen worden overschreven.", None),
@@ -805,7 +813,7 @@ lines = [
     ("3. Studieschuld: DUO-maandbedrag × opslagfactor (afhankelijk van de debetrente van de hypotheek) wordt gekapitaliseerd en als bedrag in euro's van de hypotheek afgetrokken.", None),
     ("4. Energielabel en alleenstaandenbedrag (€ 17.000) komen er buiten de woonlasttoets bij. De AOW-toets (tabel 2, pensioeninkomen) geldt als het lager uitkomt.", None),
     ("5. Meenemen van de bestaande hypotheek: elk leningdeel krijgt een eigen toetslast (annuïtair; contractrente bij 10 jaar of langer rentevast, anders AFM-toetsrente; aflossingsvrij over 30 jaar). De woonquote volgt uit de gewogen toetsrente van alle delen samen, inclusief het nieuwe geld (blad Solver).", None),
-    ("6. Financieringsgat = aankoopprijs − meegenomen hypotheek − bruikbare overwaarde; eigen geld (na kosten koper) dicht eerst het gat, de rest is nieuw geld. Haalbaar als dat past onder de ruimte en onder het plafond van de geldverstrekker.", None),
+    ("6. Financieringsgat = aankoopprijs − meegenomen hypotheek − bruikbare overwaarde; eigen geld (na kosten koper) dicht eerst het gat, de rest is nieuw geld. Dekt het eigen geld de kosten koper niet, dan worden die meegefinancierd binnen 100% van de woningwaarde (anders tekort). Haalbaar als dat past onder de ruimte en onder het plafond van de geldverstrekker.", None),
     ("", None),
     ("Beperkingen (bewust niet in dit model)", None),
     ("Toetsinkomen opbouwen uit flex/ZZP/bonus: voer het uiteindelijke toetsinkomen in. NHG-provisie, familielening als bedrag, overbruggingskrediet, eigen-inleg-limiet, opbrengst tweede woning, verduurzaming boven 100% LTV, erfpacht en de studieschuld per lening (hier één totaal maandbedrag) zijn niet gemodelleerd.", None),

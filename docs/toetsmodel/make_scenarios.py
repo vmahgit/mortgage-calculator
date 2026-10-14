@@ -55,6 +55,10 @@ scenarios = [
             parts=parts(("Lineair", 180000, 0.021, 12), ("Annuïteit", 220000, 0.034, 5),
                         ("Aflossingsvrij", 150000, 0.0485, 3)), price=1100000, mv=900000, own=90000),
     variant("Hoge schuld: ondergrens € 0", debt1=3000000, sh={"active": False}),
+    variant("Eigen geld € 0: kosten koper meegefinancierd", sh={"active": False}, mv=940000, discount=1.0, own=0,
+            notary=2100, val=0, adv=2995, bg=False),
+    variant("Kosten koper niet te financieren (100% LTV)", sh={"active": False}, price=1000000, mv=1000000,
+            discount=1.0, own=0, parts=parts(("Annuïteit", 980000, 0.02, 20)), notary=2100, val=600, adv=2995, bg=True, agent=True),
 ]
 json.dump(scenarios, open("scenarios.json", "w"), ensure_ascii=False, indent=1)
 print(len(scenarios), "scenario's")

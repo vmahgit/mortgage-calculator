@@ -1318,6 +1318,92 @@ export function computeCurrentMortgage(d, calc) {
   };
 }
 
+// Hoeveel nieuw geld is er nodig voor een aankoopprijs? Bronnen: meegenomen hypotheek, bruikbare
+// overwaarde, eigen geld (eerst voor de kosten koper) en wat nodig is aan nieuwe hypotheek.
+//
+// Alle gebruikte geld moet ergens vandaan komen: aankoopprijs + kosten koper = meegenomen hypotheek +
+// overwaarde + eigen geld + nieuwe hypotheek. Dekt het eigen geld (en een eventueel overschot uit de
+// verkoop) de kosten koper niet, dan wordt het ontbrekende deel meegefinancierd zolang de totale
+// hypotheek onder 100% van de waarde van de nieuwe woning blijft; wat daarboven nog ontbreekt is een
+// tekort aan eigen geld (kosten koper mogen niet boven 100% LTV worden gefinancierd).
+// price: de te financieren waarde (ook de grondslag voor de 100%-grens).
+export function computeNewMoneyNeeded({
+  price,
+  portedDebt,
+  overwaarde,
+  restschuldTekort,
+  totalOwnCapital,
+  kostenKoperCash,
+  ownContributionCap = Infinity,
+}) {
+  const gap = price - portedDebt - overwaarde + restschuldTekort;
+  const surplus = gap < 0 ? -gap : 0;
+  const ownAfterCosts = totalOwnCapital - kostenKoperCash;
+  const ownCapitalForGap = Math.max(0, ownAfterCosts);
+  const ownCapitalApplied = Math.min(ownCapitalForGap, Math.max(0, gap), ownContributionCap);
+  const baseAdditional = Math.max(0, gap - ownCapitalApplied);
+  const kostenKoperUncovered = Math.max(0, -ownAfterCosts - surplus);
+  const ltvRoom = Math.max(0, price - portedDebt - baseAdditional);
+  const kostenKoperFinanced = Math.min(kostenKoperUncovered, ltvRoom);
+  return {
+    gap,
+    surplus,
+    ownCapitalForGap,
+    ownCapitalApplied,
+    kostenKoperUncovered,
+    kostenKoperFinanced,
+    kostenKoperCashShortfall: kostenKoperUncovered - kostenKoperFinanced,
+    additionalMortgage: baseAdditional + kostenKoperFinanced,
+    remainingOwnCapital: Math.max(0, ownAfterCosts - ownCapitalApplied),
+  };
+}
+
+// Toets van een concrete verdeling van het nieuwe geld over leningdelen, zoals een geldverstrekker die
+// doet: elk deel annuïtair tegen zijn eigen toetsrente (AFM-toetsrente bij minder dan 10 jaar
+// rentevast, ook als de hoofdinvoer langer vaststaat), samen met de meegenomen delen en met de
+// woonquote bij de gewogen toetsrente. margin: ruimte (+) of tekort (-) in euro's van dit bedrag aan
+// leningdelen; bij het pensioenscenario (AOW) telt het laagste van beide.
+export function testAdditionalParts(d, calc, currentMortgage, parts) {
+  const newPartTests = parts.map((part) => ({
+    balance: safeNum(part.principal),
+    rate: safeNum(part.rate),
+    testRate: getTestRate(part.rate, part.originalFixedYears),
+    termMonths: TERM_MONTHS,
+  }));
+  const ratePartsAtAfm = newPartTests.filter((p) => p.balance > 0 && p.testRate !== p.rate);
+  const common = {
+    ported: d.hasExistingHome && d.takeOverMortgage ? currentMortgage.portedParts : [],
+    newParts: newPartTests,
+    refRate: calc.testRate,
+    monthlyDebt: calc.monthlyDebt,
+    studyAfslag: calc.studyAfslag,
+  };
+  const composition = testLoanComposition({
+    ...common,
+    income: calc.combinedIncome,
+    bonus: calc.energyBonus + calc.singleBonus,
+  });
+  const compositionPension = calc.pensionActive
+    ? testLoanComposition({
+        ...common,
+        income: calc.pensionCombinedIncome,
+        aow: true,
+        bonus: calc.energyBonus + calc.pensionSingleBonus,
+      })
+    : null;
+  const binding =
+    compositionPension && compositionPension.margin < composition.margin ? compositionPension : composition;
+  return {
+    parts: newPartTests,
+    ratePartsAtAfm,
+    composition,
+    compositionPension,
+    binding,
+    margin: binding.margin,
+    total: newPartTests.reduce((sum, p) => sum + p.balance, 0),
+  };
+}
+
 export function computeCombinedGap(d, calc, currentMortgage) {
   const {
     purchasePrice,
@@ -1339,32 +1425,34 @@ export function computeCombinedGap(d, calc, currentMortgage) {
   // aanschafprijs; wat overblijft is het financieringsgat. Bij onderwaarde is er geen
   // overwaarde maar juist een restschuld-tekort dat na verkoop moet worden afgelost; dat
   // vergroot het gat (symmetrisch aan hoe overwaarde het gat verkleint).
-  const gap = price - portedDebt - overwaarde + restschuldTekort;
   // Eigen inleg: standaard wordt zoveel mogelijk eigen vermogen ingezet om het gat te
   // dichten (zoals voorheen). Met limitOwnContribution geeft u aan zélf niet meer dan een
   // bepaald bedrag te willen inleggen (ex kosten koper, die lopen via de kaart Kosten
-  // koper) — het restant van het gat moet dan via de hypotheek of andere bronnen komen.
-  // Kosten koper worden (grotendeels) uit eigen middelen betaald en kunnen niet boven 100%
-  // LTV worden meegefinancierd. Meegeteld (includeKostenKoperInCalc) verlagen ze dus het
-  // eigen vermogen dat nog voor het financieringsgat beschikbaar is — dat verschuift het gat
-  // naar de aanvullende hypotheek en laat, bij ontoereikende capaciteit, de haalbaarheid
-  // kantelen. Zo blijft dit consistent met "Overgebleven ruimte na woning + kosten koper" in
-  // het Maximaal-aankoopbudget-blok (en met de aan/uit-schakelaar bij Kosten koper).
+  // koper); het restant van het gat moet dan via de hypotheek of andere bronnen komen.
+  // Kosten koper gaan (indien meegeteld, includeKostenKoperInCalc) eerst van het eigen geld af;
+  // wat het eigen geld niet dekt wordt meegefinancierd binnen 100% LTV (zie computeNewMoneyNeeded).
   const kostenKoperCash = includeKostenKoperInCalc ? calc.kostenKoper.total : 0;
-  const ownCapitalForGap = Math.max(0, calc.totalOwnCapital - kostenKoperCash);
   const ownContributionCap = limitOwnContribution
     ? Math.max(0, safeNum(desiredMaxOwnContribution))
     : Infinity;
-  const ownCapitalApplied = Math.min(
-    ownCapitalForGap,
-    Math.max(0, gap),
-    ownContributionCap
-  );
-  // Wat er nog gefinancierd moet worden nadat de (eventueel beperkte) eigen inleg is
-  // toegepast — dit is het bedrag waarvoor hieronder aanvullende leningdelen worden
-  // opgesplitst, ongeacht of dit daadwerkelijk geleend kán worden (zie capaciteitstoets).
-  const additionalMortgage = Math.max(0, gap - ownCapitalApplied);
-  const surplus = gap < 0 ? -gap : 0;
+  const need = computeNewMoneyNeeded({
+    price,
+    portedDebt,
+    overwaarde,
+    restschuldTekort,
+    totalOwnCapital: calc.totalOwnCapital,
+    kostenKoperCash,
+    ownContributionCap,
+  });
+  const {
+    gap,
+    surplus,
+    ownCapitalApplied,
+    kostenKoperUncovered,
+    kostenKoperFinanced,
+    kostenKoperCashShortfall,
+    additionalMortgage,
+  } = need;
 
   // Twee onafhankelijke, bindende grenzen op de aanvullende hypotheek: de Nibud-
   // inkomenstoets (extraBorrowCapacity) én het absolute plafond van de geldverstrekker
@@ -1376,7 +1464,20 @@ export function computeCombinedGap(d, calc, currentMortgage) {
     lenderCapRoom
   );
   const bindingCapIsLender = lenderCapRoom < currentMortgage.extraBorrowCapacity;
-  const capacityMargin = additionalMortgageCapacity - additionalMortgage;
+  const capacityMarginAtMainRate = additionalMortgageCapacity - additionalMortgage;
+  // Heeft u de leningdelen zelf ingesteld (anders volgen ze automatisch het benodigde bedrag, tegen de
+  // hoofdrente en -rentevastperiode) en dekken ze het benodigde bedrag, dan telt de toets van precies
+  // die delen: een deel dat korter dan 10 jaar vaststaat wordt tegen de AFM-toetsrente getoetst, ook
+  // als de hoofdinvoer langer vaststaat.
+  const configuredParts = (d.additionalLoanParts || []).filter((p) => safeNum(p.principal) > 0);
+  const configuredTotal = configuredParts.reduce((sum, p) => sum + safeNum(p.principal), 0);
+  const partsTest =
+    d.additionalLoanTouched && configuredParts.length > 0 && configuredTotal >= additionalMortgage - 1
+      ? testAdditionalParts(d, calc, currentMortgage, configuredParts)
+      : null;
+  const capacityMargin = partsTest
+    ? Math.min(partsTest.margin, lenderCapRoom - configuredTotal)
+    : capacityMarginAtMainRate;
   const withinCapacity = capacityMargin >= 0;
   // Sommige geldverstrekkers hanteren een interne grens voor de totale hypotheek
   // (meegenomen plus nieuw), waarboven aanvullende acceptatie-eisen gelden.
@@ -1392,8 +1493,9 @@ export function computeCombinedGap(d, calc, currentMortgage) {
     : 0;
   const familyLoanMonthlyInterest = (familyLoanApplied * (safeNum(familyLoanRate) / 100)) / 12;
   const netCapacityMargin = capacityMargin + familyLoanApplied;
-  const remainingShortfall = Math.max(0, -netCapacityMargin);
-  const withinCapacityAfterFamilyLoan = netCapacityMargin >= 0;
+  // Kosten koper die niet meegefinancierd kunnen worden (100% LTV) zijn een tekort aan eigen geld.
+  const remainingShortfall = Math.max(0, -netCapacityMargin) + kostenKoperCashShortfall;
+  const withinCapacityAfterFamilyLoan = netCapacityMargin >= 0 && kostenKoperCashShortfall <= 0.005;
 
   return {
     portedDebt,
@@ -1402,11 +1504,16 @@ export function computeCombinedGap(d, calc, currentMortgage) {
     gap,
     ownContributionCap,
     ownCapitalApplied,
+    kostenKoperUncovered,
+    kostenKoperFinanced,
+    kostenKoperCashShortfall,
     additionalMortgage,
     lenderCapRoom,
     additionalMortgageCapacity,
     bindingCapIsLender,
     capacityMargin,
+    capacityMarginAtMainRate,
+    partsTest,
     withinCapacity,
     surplus,
     totalMortgageAfterMove,

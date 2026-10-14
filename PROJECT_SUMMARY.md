@@ -1,5 +1,28 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (7): kritische controle van de eigen export (PDF 14 okt.) en drie gevonden fouten
+- **Invoerveld bedragen** (`src/numberInput.js`, nieuw): bij focus toonde `CurrencyField` "13803.67" (interne notatie) en las een
+  volgende toetsaanslag de punt als duizendtal, waardoor €13.803,67 → €1.380.367 werd (zichtbaar in de PDF van de gebruiker:
+  studielening 1 'Restschuld € 1.380.367'). Nu toont het veld tijdens het typen "13803,67" (decimaalkomma) en een enkele punt met
+  1-2 cijfers erachter telt als decimaal. Het DUO-maandbedrag stond erin, dus de afslag (€34.264) was niet verkeerd, maar zonder
+  maandbedrag was de annuïteitsschatting op €1,38 mln absurd geweest.
+- **Kosten koper bij weinig eigen geld** (`computeNewMoneyNeeded` in `calcEngine.js`): was `max(0, eigen geld − kosten koper)`, dus bij
+  eigen geld < kosten koper werden de kosten koper nergens van betaald (PDF: 'Eigen geld na kosten koper = € 0 − € 31.695 = € 0').
+  Nu: aankoopprijs + kosten koper = meegenomen + overwaarde + eigen geld + nieuw geld; ontbrekende kosten koper worden meegefinancierd
+  binnen 100% LTV, wat daarboven ontbreekt is een tekort aan eigen geld (`kostenKoperFinanced` / `kostenKoperCashShortfall`, telt mee in
+  `remainingShortfall` en de haalbaarheid; een overschot uit de verkoop betaalt de kosten koper eerst). Gebruikt door de koptelling, de
+  bieding-tabel en de solver; opbouw, rapport en UI tonen het. Gebruikersdossier uit de PDF: tekort €24.362 → €56.057, hoogste prijs
+  €1.305.000 → €1.275.000, extra eigen geld nodig €56.057.
+- **Rentevaste periode van zelf gekozen nieuwe leningdelen** (`testAdditionalParts`): het oordeel (chip, solver, rail, rapport) keek alleen
+  naar de hoofdinvoer; een handmatig aangepast deel met 5 jaar rentevast werd wel in de kaart, maar niet in het oordeel getoetst tegen de
+  AFM-toetsrente. Nu telt, zodra de delen zelf zijn ingesteld (`additionalLoanTouched`) en het benodigde bedrag dekken, de toets van
+  precies die delen (`combinedGap.partsTest`, `capacityMargin` = laagste van die toets en het plafond). Automatisch gevolgde delen blijven
+  op de hoofdrente.
+- **Studieschuld-factor**: de tabel (opslagfactor per debetrente, `studieschuld.js`) is niet te verifiëren; een zoekresultaat noemt voor
+  3-4% 1,20 (app: 1,25 boven 3,5%). Effect voor het dossier: afslag €80.110 (1,25) tegen €76.906 (1,20). Wettekst controleren (art. 3a).
+- **Excel/tests**: model en scenario's bijgewerkt (12 scenario's, 2 extra: eigen geld € 0 en 'niet te financieren'); 200 willekeurige
+  scenario's 0 afwijkingen; tests 594 (was 570): `numberInput.test.js`, `kostenKoperFinanciering.test.js`.
+
 ## Sessie okt. 2026 (6): nieuwe standaardwaarden, annuïtair nieuw geld en rekenverantwoording-export
 - **Nieuwe standaardwaarden** (`DOSSIER_DEFAULTS`; de `useState`-beginwaarden in het component verwijzen er nu naar):
   inkomen partner 2 €107.000 (was €115.000), nieuwe rente 4,69% (was 4,00%), studieleningen Partner 1 (€13.803,67, 2,95%,

@@ -17,7 +17,9 @@
   "shortfall": 0,
   "feasible": 1,
   "maxTotal": 952102.0803746374,
-  "maxBudgetAfterCosts": 4372.17037463747
+  "maxBudgetAfterCosts": 4372.17037463747,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
  },
  {
   "incomeTotal": 225000,
@@ -37,7 +39,9 @@
   "shortfall": 0,
   "feasible": 1,
   "maxTotal": 981153.6323284463,
-  "maxBudgetAfterCosts": 33423.72232844634
+  "maxBudgetAfterCosts": 33423.72232844634,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
  },
  {
   "incomeTotal": 225000,
@@ -57,7 +61,9 @@
   "shortfall": 53125.57706168655,
   "feasible": 0,
   "maxTotal": 894604.3329383135,
-  "maxBudgetAfterCosts": -53125.577061686665
+  "maxBudgetAfterCosts": -53125.577061686665,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
  },
  {
   "incomeTotal": 225000,
@@ -77,7 +83,9 @@
   "shortfall": 6767.747991131269,
   "feasible": 0,
   "maxTotal": 940962.1620088688,
-  "maxBudgetAfterCosts": -6767.747991131153
+  "maxBudgetAfterCosts": -6767.747991131153,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
  },
  {
   "incomeTotal": 60000,
@@ -97,7 +105,9 @@
   "shortfall": 113265.18826749842,
   "feasible": 0,
   "maxTotal": 259434.81173250158,
-  "maxBudgetAfterCosts": null
+  "maxBudgetAfterCosts": null,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
  },
  {
   "incomeTotal": 150000,
@@ -117,7 +127,9 @@
   "shortfall": 0,
   "feasible": 1,
   "maxTotal": 684469.2944661467,
-  "maxBudgetAfterCosts": null
+  "maxBudgetAfterCosts": null,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
  },
  {
   "incomeTotal": 225000,
@@ -137,7 +149,9 @@
   "shortfall": 1456.0369494663319,
   "feasible": 0,
   "maxTotal": 946273.8730505338,
-  "maxBudgetAfterCosts": -1456.0369494662154
+  "maxBudgetAfterCosts": -1456.0369494662154,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
  },
  {
   "incomeTotal": 225000,
@@ -157,7 +171,9 @@
   "shortfall": 150799.08300565736,
   "feasible": 0,
   "maxTotal": 796930.8269943427,
-  "maxBudgetAfterCosts": -150799.08300565742
+  "maxBudgetAfterCosts": -150799.08300565742,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
  },
  {
   "incomeTotal": 225000,
@@ -177,7 +193,9 @@
   "shortfall": 0,
   "feasible": 1,
   "maxTotal": 733119.5013153321,
-  "maxBudgetAfterCosts": 719.5013153322507
+  "maxBudgetAfterCosts": 719.5013153322507,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
  },
  {
   "incomeTotal": 225000,
@@ -197,6 +215,52 @@
   "shortfall": 323980,
   "feasible": 0,
   "maxTotal": 623749.91,
-  "maxBudgetAfterCosts": -323980
+  "maxBudgetAfterCosts": -323980,
+  "kostenKoperFinanced": 0,
+  "kostenKoperCashShortfall": 0
+ },
+ {
+  "incomeTotal": 225000,
+  "testRate": 0.0469,
+  "monthlyDebt": 0,
+  "secondHomeToetslast": 0,
+  "studyFactor": 1.25,
+  "studyDebetrente": 0.038075185611645475,
+  "studyAfslag": 80110.11940568141,
+  "incomeBasedMax": 986764.3474524048,
+  "currentDebt": 623749.91,
+  "extraBorrowCapacity": 365638.2400002809,
+  "kostenKoper": 31695,
+  "needed": 421695,
+  "capacityNew": 365638.2400002809,
+  "margin": -56056.7599997191,
+  "shortfall": 56056.7599997191,
+  "feasible": 0,
+  "maxTotal": 989388.1500002809,
+  "maxBudgetAfterCosts": -56056.75999971898,
+  "kostenKoperFinanced": 31695,
+  "kostenKoperCashShortfall": 0
+ },
+ {
+  "incomeTotal": 225000,
+  "testRate": 0.0469,
+  "monthlyDebt": 0,
+  "secondHomeToetslast": 0,
+  "studyFactor": 1.15,
+  "studyDebetrente": 0.020537999999999997,
+  "studyAfslag": 73701.30985322689,
+  "incomeBasedMax": 993173.1570048593,
+  "currentDebt": 980000,
+  "extraBorrowCapacity": 666.0491569855803,
+  "kostenKoper": 38695,
+  "needed": 20000,
+  "capacityNew": 666.0491569855803,
+  "margin": -19333.95084301442,
+  "shortfall": 38028.95084301442,
+  "feasible": 0,
+  "maxTotal": 980666.0491569856,
+  "maxBudgetAfterCosts": -38028.950843014405,
+  "kostenKoperFinanced": 20000,
+  "kostenKoperCashShortfall": 18695
  }
 ]

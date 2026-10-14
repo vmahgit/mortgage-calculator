@@ -166,6 +166,8 @@ export function buildCapacityBreakdown(d, core, starterGap = computeStarterGap(d
       feasible: gap.withinCapacityAfterFamilyLoan,
       gap: gap.gap,
       ownCapitalApplied: gap.ownCapitalApplied,
+      kostenKoperFinanced: gap.kostenKoperFinanced,
+      kostenKoperCashShortfall: gap.kostenKoperCashShortfall,
       bindingCapIsLender: gap.bindingCapIsLender,
     };
   } else {
