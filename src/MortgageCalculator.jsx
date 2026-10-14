@@ -73,6 +73,7 @@ import {
   getLenderCap,
   getCapitalizationFactor,
   getTestRate,
+  isBox3Part,
   getElapsedMonths,
   getRemainingFixedPeriod,
   projectRemainingBalance,
@@ -660,7 +661,8 @@ function InfoTooltip({ text, variant = 'default' }) {
   );
 }
 
-function LoanPartCard({ part, index, onChange, onRemove, canRemove, elapsedMonths, currentBalance }) {
+function LoanPartCard({ part, index, onChange, onRemove, canRemove, elapsedMonths, currentBalance, startDate }) {
+  const autoBox3 = isBox3Part({ ...part, fiscal: 'auto' }, startDate);
   const fixedPeriod = getRemainingFixedPeriod(part.originalFixedYears, elapsedMonths);
   const testRate = getTestRate(part.rate, fixedPeriod.fractionalYears);
   const toetsrenteAppliesToPart = testRate !== safeNum(part.rate);
@@ -692,6 +694,25 @@ function LoanPartCard({ part, index, onChange, onRemove, canRemove, elapsedMonth
         onChange={(v) => onChange('type', v)}
         options={AFLOSVORMEN}
       />
+      <div className="space-y-1.5">
+        <label htmlFor={`fiscal-${part.id}`} className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+          <Percent className="h-3.5 w-3.5 text-slate-400" />
+          Rente aftrekbaar?
+        </label>
+        <select
+          id={`fiscal-${part.id}`}
+          value={part.fiscal || 'auto'}
+          onChange={(e) => onChange('fiscal', e.target.value)}
+          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base text-slate-800 outline-none transition-all duration-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        >
+          <option value="auto">Automatisch: {autoBox3 ? 'nee (box 3)' : 'ja (box 1)'}</option>
+          <option value="box1">Ja, box 1 (ook aflossingsvrij met overgangsrecht van vóór 2013)</option>
+          <option value="box3">Nee, box 3</option>
+        </select>
+        <p className="text-[11px] text-slate-400">
+          Telt voor de renteaftrek én de toets: een niet-aftrekbaar deel telt zwaarder mee (Tabel 3).
+        </p>
+      </div>
       <div className="space-y-2">
         <CurrencyField
           id={`principal-${part.id}`}
@@ -1737,12 +1758,13 @@ function formatPct2(fraction) {
   return (safeNum(fraction) * 100).toFixed(2).replace('.', ',') + '%';
 }
 
-// Kolom van de woonquote-tabel als tekst, bijv. "3,001–3,500%"; geschatte kolommen gemarkeerd.
+// Kolom van de woonquote-tabel als tekst, bijv. "3,001–3,500%" (officiële kolommen per 0,5%-punt).
 function bandLabel(band) {
   if (!band) return '';
   const fmt = (v) => v.toFixed(3).replace('.', ',');
-  const range = band.lower == null ? `t/m ${fmt(band.upper)}%` : `${fmt(band.lower)}–${fmt(band.upper)}%`;
-  return `${range}${band.exact ? '' : ' (kolom geschat)'}`;
+  if (band.lower == null) return `t/m ${fmt(band.upper)}%`;
+  if (!Number.isFinite(band.upper)) return `vanaf ${fmt(band.lower)}%`;
+  return `${fmt(band.lower)}–${fmt(band.upper)}%`;
 }
 
 function formatMonthsAsYears(months) {
@@ -1810,7 +1832,14 @@ function PortedPartsTest({ currentMortgage: cm, calc, portedTermBasis, onChangeT
                       {p.testRateIsAfm ? 'AFM-toetsrente (< 10 jaar vast)' : 'contractrente (10+ jaar vast)'}
                     </span>
                   </td>
-                  <td className="py-1.5 pr-2 text-right tabular-nums">{formatEuro(p.toetslast)}</td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">
+                    {formatEuro(p.toetslast)}
+                    {p.box3 && (
+                      <span className="block text-[11px] text-amber-600">
+                        box 3: × {p.grossUp.toFixed(3).replace('.', ',')} (Tabel 1 ÷ 3)
+                      </span>
+                    )}
+                  </td>
                   <td className="py-1.5 pr-2 text-right tabular-nums">{formatEuro(p.capacityUsed)}</td>
                   <td
                     className={`py-1.5 text-right tabular-nums ${diff > 0 ? 'text-red-600' : 'text-emerald-600'}`}
@@ -1831,10 +1860,11 @@ function PortedPartsTest({ currentMortgage: cm, calc, portedTermBasis, onChangeT
           ? ' Het maximum ligt op de rand van deze kolom: meer lenen verschuift de gewogen rente naar een kolom met een lagere woonquote.'
           : ''}
       </p>
-      {!comp.band.exact && (
+      {comp.parts.some((p) => p.box3) && (
         <p className="mt-1 text-[11px] text-amber-600">
-          De waarden van deze tabelkolom zijn geschat tussen de twee naastliggende kolommen; controleer ze
-          in Bijlage 1 van de Tijdelijke regeling hypothecair krediet 2026.
+          Een deel waarvan de rente niet aftrekbaar is (box 3, standaard: aflossingsvrij aangegaan na 2013)
+          telt mee met de bruteringsfactor Tabel 1 ÷ Tabel 3. Heeft dat deel overgangsrecht, zet het dan bij
+          het leningdeel op box 1.
         </p>
       )}
     </div>
@@ -2010,6 +2040,12 @@ function CapacityRowChildren({ row, hasPartner2 }) {
                 Deel {child.index + 1}: {formatEuro(child.balance)} ({formatRate(child.rate)}, nog{' '}
                 {formatMonthsAsYears(child.remainingFixedMonths)} vast) getoetst tegen {formatRate(child.testRate)} over{' '}
                 {child.termMonths} mnd = {formatEuro(child.toetslast)} per maand
+                {child.box3 && (
+                  <>
+                    {' '}× {child.grossUp.toFixed(3).replace('.', ',')} (box 3, Tabel 1 ÷ Tabel 3) ={' '}
+                    {formatEuro(child.toetslast * child.grossUp)}
+                  </>
+                )}
               </span>
               <span className="font-medium text-red-600">−{formatEuro(child.capacityUsed)}</span>
             </li>
@@ -2276,8 +2312,8 @@ function MortgageCalculatorForm({ onReset }) {
   const [income2, setIncome2] = useState(DOSSIER_DEFAULTS.income2);
   const [age1, setAge1] = useState('36');
   const [age2, setAge2] = useState('36');
-  const [ownCapital1, setOwnCapital1] = useState(125000);
-  const [ownCapital2, setOwnCapital2] = useState(25000);
+  const [ownCapital1, setOwnCapital1] = useState(DOSSIER_DEFAULTS.ownCapital1);
+  const [ownCapital2, setOwnCapital2] = useState(DOSSIER_DEFAULTS.ownCapital2);
   // Is dit eigen vermogen nu al liquide, of komt het pas vrij bij een latere gebeurtenis
   // (bijv. de verkoop van een aangehouden tweede woning)? Standaard "nu beschikbaar", zoals
   // voorheen impliciet werd aangenomen.
@@ -2430,7 +2466,7 @@ function MortgageCalculatorForm({ onReset }) {
   // ook bij verkoop wilt u een positieve netto-opbrengst misschien niet (volledig)
   // inzetten voor déze aankoop.
   const [showSecondHome, setShowSecondHome] = useState(false);
-  const [hasSecondHome, setHasSecondHome] = useState(true);
+  const [hasSecondHome, setHasSecondHome] = useState(DOSSIER_DEFAULTS.hasSecondHome);
   const [secondHomeWillSell, setSecondHomeWillSell] = useState(false);
   const [useSecondHomeProceeds, setUseSecondHomeProceeds] = useState(true);
   const [secondHomeValue, setSecondHomeValue] = useState('300000');
@@ -6824,6 +6860,7 @@ function MortgageCalculatorForm({ onReset }) {
                           canRemove={loanParts.length > 1}
                           elapsedMonths={elapsedMonthsSinceStart}
                           currentBalance={safeNum(currentLoanParts[index]?.principal)}
+                          startDate={startDate}
                         />
                       ))}
                     </div>

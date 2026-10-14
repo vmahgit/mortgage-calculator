@@ -39,9 +39,18 @@ art. 3; NHG-systematiek):
   (en dus de kolom) zelf met dat bedrag meebeweegt (`computeCompositeCapacity`); een concrete samenstelling van
   aanvullende leningdelen wordt met `testLoanComposition` getoetst.
 
-De woonquote-tabel (`nibud2026.js`) zoekt de kolom per 0,5% toetsrente en de rij per € 1.000 inkomen op, zonder
-interpolatie tussen kolommen. Van de kolommen tot 2,0 / 2,5 / 3,5 / 4,5 / 5,5% staan de officiële waarden nog niet in de
-ankerset; die worden lineair geschat tussen de buurkolommen en de app meldt dat ('kolom geschat').
+De woonquote-tabellen staan volledig in `nibudTables2026.js`, letterlijk overgenomen uit Stcrt. 2025, 36471 (Bijlage 1:
+Tabel 1–4, rijen per € 1.000, twaalf rentekolommen t/m ≥ 6,501%). `nibud2026.js` zoekt exact op: rij = toetsinkomen naar
+beneden op € 1.000 (onder € 30.000 de eerste, boven € 125.000 de laatste rij; AOW-tabellen € 29.000–€ 110.000), kolom =
+toetsrente per 0,5%-punt op drie decimalen. Er wordt niet geïnterpoleerd en er zijn geen geschatte kolommen meer.
+
+- **Box 3**: een leningdeel waarvan de rente niet aftrekbaar is (standaard: aflossingsvrij aangegaan na 2013; per deel in te
+  stellen via `fiscal` 'auto' | 'box1' | 'box3') telt mee met de **bruteringsfactor** Tabel 1 ÷ Tabel 3 (bij AOW Tabel 2 ÷
+  Tabel 4) op zijn toetslast (`getGrossedToetslast`), per kolom in `computeCompositeCapacity` en `testLoanComposition`.
+  Een nieuw aflossingsvrij deel valt daarmee ook onder box 3.
+- **Alleenstaandenbedrag** € 17.000 bij een toetsinkomen *hoger dan* € 30.000 (AOW: € 29.000), art. 3 lid 8.
+- Aflossingsvrije meegenomen delen tellen over 30 jaar; de NHG-norm noemt de resterende looptijd (max. 30 jaar) en staat
+  een fictieve looptijd van 30 jaar voor aflossingsvrij toe (C.7.2).
 
 Elke regel krijgt het lopende bedrag; `reconciles` is alleen waar als dat op elk tussentotaal en aan het eind gelijk is
 aan wat de berekening zelf oplevert (en de pagina toont die controle). De tests rekenen het standaardscenario

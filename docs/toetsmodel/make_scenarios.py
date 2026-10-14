@@ -7,7 +7,7 @@ BASE = {
     "inc1": 118000, "inc2": 107000, "age1": 36, "age2": 36, "pen1": 0, "pen2": 0,
     "label": "A", "rate": 0.0469, "fixed": 10,
     "debt1": 0, "debt2": 0, "famMonthly": 0,
-    "sh": {"active": True, "debt": 42000, "rate": 0.01, "type": "Annuïteit", "years": 20, "fixed": 10},
+    "sh": {"active": False, "debt": 42000, "rate": 0.01, "type": "Annuïteit", "years": 20, "fixed": 10},
     "studyTerm": 332, "studyMode": "Gewogen toetsrente", "studyMethod": "Marginaal",
     "takeover": True, "termBasis": "Resterend",
     "peil": "2026-10-08", "start": "2021-01-15",
@@ -17,7 +17,7 @@ BASE = {
         {"type": "Annuïteit", "bal": 0, "rate": 0.03, "fix": 10},
         {"type": "Annuïteit", "bal": 0, "rate": 0.03, "fix": 10},
     ],
-    "price": 1330000, "mv": 935000, "discount": 0.95, "own": 150000,
+    "price": 1330000, "mv": 935000, "discount": 0.95, "own": 76000,
     "tax": 0.02, "notary": 1200, "val": 600, "adv": 2500,
     "bg": True, "agent": False, "kk": True, "cap": 1000000,
 }
@@ -50,7 +50,7 @@ scenarios = [
             label="B", tax=0.0, studyMethod="Gewogen"),
     variant("Doorstromer, hypotheek niet meenemen", takeover=False),
     variant("AOW-toets bindend (leeftijd 60)", age1=60, pen1=40000, sh={"active": False}),
-    variant("3 delen, 2e woning 5 jaar vast, schulden", sh={"fixed": 5, "type": "Aflossingsvrij"},
+    variant("3 delen, 2e woning 5 jaar vast, schulden", sh={"active": True, "fixed": 5, "type": "Aflossingsvrij"},
             debt1=15000, debt2=8000, famMonthly=250, label="G", studyMode="Contractrente",
             parts=parts(("Lineair", 180000, 0.021, 12), ("Annuïteit", 220000, 0.034, 5),
                         ("Aflossingsvrij", 150000, 0.0485, 3)), price=1100000, mv=900000, own=90000),
@@ -60,5 +60,5 @@ scenarios = [
     variant("Kosten koper niet te financieren (100% LTV)", sh={"active": False}, price=1000000, mv=1000000,
             discount=1.0, own=0, parts=parts(("Annuïteit", 980000, 0.02, 20)), notary=2100, val=600, adv=2995, bg=True, agent=True),
 ]
-json.dump(scenarios, open("scenarios.json", "w"), ensure_ascii=False, indent=1)
+json.dump(scenarios, open("scenarios.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 print(len(scenarios), "scenario's")

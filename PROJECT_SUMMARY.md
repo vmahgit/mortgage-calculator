@@ -1,5 +1,34 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (8): officiële tabellen 1–4, box 3-brutering en nieuwe standaard eigen geld
+- **Context**: deze sessie startte lokaal op `0d12ae8` en had parallel aan sessies 4–7 (cloud) een eigen toets gebouwd.
+  Bij het pushen bleek dat; de lokale versie staat op branch `leencapaciteit-officiele-tabellen` (niet gepusht). Daarna is
+  op de GitHub-versie (`62a72aa`) alleen het ontbrekende overgezet.
+- **Officiële tabellen** (`src/nibudTables2026.js`, gegenereerd uit de HTML van Stcrt. 2025, 36471, Bijlage 1): Tabel 1–4
+  volledig, rij per € 1.000, 12 kolommen (t/m ≥ 6,501%). `nibud2026.js` zoekt exact op (API gelijk gebleven:
+  `getToetsrenteBand` geeft nu ook `index`, `exact` is altijd true, `upper` = Infinity voor de laatste kolom). Opgelost:
+  geschatte kolommen 2,0/2,5/3,5/4,5/5,5%, interpolatie tussen inkomens-ankers (bijv. € 75.000 bij 4%: 24,45% → 24,6%),
+  foute ankers in kolom 4,501–5,000% (€ 90k/€ 100k: 28,5% → 27,6%/28,0%) en de terugval op de 6%-kolom boven 6%.
+- **Box 3** (`isBox3Part`, `getGrossedToetslast`, `getBox3GrossUp`): niet-aftrekbare delen tellen met de bruteringsfactor
+  Tabel 1 ÷ Tabel 3 (AOW: 2 ÷ 4); bron: acceptatiegids Lloyds Bank. Per leningdeel `fiscal` ('auto' | 'box1' | 'box3');
+  auto = aflossingsvrij na 2013 → box 3. Ook de renteaftrek (`eligibleForHRA`) volgt dit veld. UI: "Rente aftrekbaar?" per
+  meegenomen deel; toetstabel en opbouw tonen de factor; rekenverantwoording noemt het.
+- **Alleenstaandenbedrag**: nu bij toetsinkomen *hoger dan* € 30.000/€ 29.000 (was ≥), zoals art. 3 lid 8.
+- **Standaarddossier**: eigen geld € 60.000 + € 16.000, geen tweede woning (`useState` verwijst naar `DOSSIER_DEFAULTS`).
+  Uitkomst (8 okt. 2026): € 623.750 meegenomen + € 313.035 nieuw = € 936.785; nodig € 397.980 → **tekort € 84.945**,
+  hoogste prijs € 1.246.000. Grootste posten: minder eigen geld (−€ 74.000) en deel 2 als box 3 (~−€ 52.000 t.o.v. box 1).
+  **Vraag aan de gebruiker**: heeft deel 2 overgangsrecht (box 1)? Dan via "Rente aftrekbaar?" op box 1 zetten.
+- **Excel-toetsmodel**: `build_toetsmodel.py` leest nu `nibudTables2026.js` (12 kolommen, exacte rij via INDEX, Tabel 3/4,
+  brutering per kolom in de solver, `>` voor het alleenstaandenbedrag); `make_scenarios.py` volgt de nieuwe standaard (en
+  schrijft UTF-8). `expected.json` opnieuw vastgelegd met `UPDATE_EXPECTED=1`. **Niet gedaan**: het .xlsx opnieuw bouwen en
+  de LibreOffice-kruiscontrole; lokaal ontbreken openpyxl en LibreOffice. Het meegeleverde .xlsx is dus nog de oude versie;
+  draai `docs/toetsmodel/crosscheck.sh` in de cloudomgeving.
+- **Tests**: 611 (was 594): `nibud2026.test.js` (tabelwaarden, kolomgrenzen, bruteringsfactor); opbouw-, rapport- en
+  toets-tests bijgewerkt op de nieuwe standaard en box 3 (verwachtingen los nagerekend).
+- **Lessen**: (1) vóór werk altijd `git fetch` en vergelijken met origin; (2) backticks in een dubbel-gequote shellcommando
+  werden uitgevoerd — gebruik de Edit-tool of een los scriptbestand; (3) na `git reset` staan bestanden in CRLF: maak
+  vervangscripts CRLF-bewust.
+
 ## Sessie okt. 2026 (7): kritische controle van de eigen export (PDF 14 okt.) en drie gevonden fouten
 - **Invoerveld bedragen** (`src/numberInput.js`, nieuw): bij focus toonde `CurrencyField` "13803.67" (interne notatie) en las een
   volgende toetsaanslag de punt als duizendtal, waardoor €13.803,67 → €1.380.367 werd (zichtbaar in de PDF van de gebruiker:
@@ -270,8 +299,8 @@ met de echte Nibud-woonquote-systematiek 2026, niet met een benaderde leenfactor
 
 ## Belangrijkste architectuurkeuzes
 - **Rekenkern** (`src/nibud2026.js`): officiële financieringslastpercentages (Tabel 1,
-  Wijzigingsregeling hypothecair krediet 2026, Stcrt. 2025, 36471) als ankerpunten, met
-  bilineaire interpolatie tussen inkomens- en toetsrenteschijven. `projectRemainingBalance()`
+  Wijzigingsregeling hypothecair krediet 2026, Stcrt. 2025, 36471) volledig in nibudTables2026.js,
+  exact opgezocht (zie sessie (8)). `projectRemainingBalance()`
   (in `MortgageCalculator.jsx`, niet in dit bestand) is een **closed-form** functie die de
   restschuld van een leningdeel op een willekeurige toekomstige maand berekent voor alle
   drie aflosvormen — de basis voor zowel de 30-jaars-grafiek als het nieuwe maandschema

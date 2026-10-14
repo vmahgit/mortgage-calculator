@@ -57,8 +57,11 @@ const dateNL = (iso) => {
   const [y, m, day] = String(iso).slice(0, 10).split('-');
   return `${day}-${m}-${y}`;
 };
-const bandTextOf = (band) =>
-  band.lower == null ? `t/m ${num3(band.upper)}%` : `${num3(band.lower)}% t/m ${num3(band.upper)}%`;
+const bandTextOf = (band) => {
+  if (band.lower == null) return `t/m ${num3(band.upper)}%`;
+  if (!Number.isFinite(band.upper)) return `vanaf ${num3(band.lower)}%`;
+  return `${num3(band.lower)}% t/m ${num3(band.upper)}%`;
+};
 const monthsText = (m) => {
   const y = Math.floor(m / 12);
   const r = Math.round(m % 12);
@@ -523,8 +526,8 @@ export function buildCalculationReport(
       n++,
       'Woonquote en maximale woonlast (Nibud, tabel 1 financieringslastpercentage 2026)',
       [
-        `Toetsrente ${pct(calc.testRate, 3)}: kolom ${bandText}${band.exact ? '' : ' (kolom geschat tussen de buurkolommen, zie aannames)'}${band.aboveTable ? ' (boven de tabel: kolom 6,0%)' : ''}.`,
-        `Toetsinkomen ${eur(calc.combinedIncome)}: tabelrij ${eur(incRow)} (naar beneden op € 1.000, lineair tussen de ankerpunten van de tabel).`,
+        `Toetsrente ${pct(calc.testRate, 3)}: kolom ${bandText} (officiële kolommen per 0,5%-punt, op drie decimalen).`,
+        `Toetsinkomen ${eur(calc.combinedIncome)}: tabelrij ${eur(incRow)} (naar beneden op € 1.000; onder € 30.000 de eerste en boven € 125.000 de laatste rij).`,
         `Maximale woonlast per maand = woonquote × toetsinkomen ÷ 12 = ${frac(calc.woonquote)} × ${eur(calc.combinedIncome)} ÷ 12 = ${eur2(calc.maxWoonlastMonthly)}`,
       ],
       `Woonquote ${frac(calc.woonquote)}; woonlast ${eur2(calc.maxWoonlastMonthly)} per maand`
@@ -631,10 +634,10 @@ export function buildCalculationReport(
         'Een geldverstrekker toetst elk meegenomen leningdeel op zijn eigen toetslast: annuïtair tegen de contractrente bij nog 10 jaar of langer rentevast, anders tegen de AFM-toetsrente; looptijd de resterende looptijd (aflossingsvrij: 30 jaar).',
         ...comp.parts.map(
           (p) =>
-            `Deel ${p.index + 1}: ${eur2(p.balance)} tegen ${pct(p.testRate)} over ${p.termMonths} mnd = toetslast ${eur2(p.toetslast)} per maand (neemt ${eur(p.capacityUsed)} leenruimte in, ${signed(p.capacityUsed - p.balance)} t.o.v. het saldo)`
+            `Deel ${p.index + 1}: ${eur2(p.balance)} tegen ${pct(p.testRate)} over ${p.termMonths} mnd = toetslast ${eur2(p.toetslast)} per maand${p.box3 ? ` x ${p.grossUp.toFixed(3).replace(".", ",")} (box 3, Tabel 1 / Tabel 3) = ${eur2(p.toetslast * p.grossUp)}` : ""} (neemt ${eur(p.capacityUsed)} leenruimte in, ${signed(p.capacityUsed - p.balance)} t.o.v. het saldo)`
         ),
-        `Som toetslasten meegenomen delen = ${eur2(comp.portedToetslast)} per maand`,
-        `Gewogen toetsrente van de hele nieuwe hypotheek bij het maximum (weging saldo × looptijd, inclusief het nieuwe geld) = ${pct(comp.weightedRate, 3)} -> woonquote-kolom ${bandTextOf(comp.band)}${comp.band.exact ? '' : ' (kolom geschat)'} -> woonquote ${frac(comp.woonquote)}${comp === cm.compositePension ? ' (AOW-tabel)' : ''}`,
+        `Som toetslasten meegenomen delen (box 3 gebruteerd) = ${eur2(comp.portedToetslast)} per maand`,
+        `Gewogen toetsrente van de hele nieuwe hypotheek bij het maximum (weging saldo × looptijd, inclusief het nieuwe geld) = ${pct(comp.weightedRate, 3)} -> woonquote-kolom ${bandTextOf(comp.band)} -> woonquote ${frac(comp.woonquote)}${comp === cm.compositePension ? ' (AOW-tabel)' : ''}`,
         'Nieuw geld (maximum) = ((woonquote × inkomen ÷ 12) - schulden - toetslasten meegenomen delen) × factor - studieschuld + bonussen',
         `   Woonlast bij deze woonquote = ${frac(comp.woonquote)} × ${eur(compIncome)} ÷ 12 = ${eur2(compWoonlast)} per maand`,
         `   Beschikbaar voor nieuw geld = ${eur2(compWoonlast)} - ${eur2(calc.monthlyDebt)} (schulden) - ${eur2(comp.portedToetslast)} (meegenomen delen) = ${eur2(compAvailable)} per maand`,
@@ -691,15 +694,11 @@ export function buildCalculationReport(
 
   // ---- 5. Aannames en beperkingen
   const notes = [];
-  const usedEstimated = band.exact === false || (cm.compositeBinding && cm.compositeBinding.band.exact === false);
   notes.push(`Regelgeving 2026 (Tijdelijke regeling hypothecair krediet, Wijzigingsregeling 2026; Nibud-woonquote). AFM-toetsrente ${pct(TOETSRENTE)} (t/m Q3 2026 geverifieerd; Q4 2026 niet).`);
-  notes.push(
-    usedEstimated
-      ? 'LET OP: voor deze berekening is een woonquote-kolom gebruikt die niet in de gebruikte bron staat en is geschat tussen de buurkolommen (2,0 / 2,5 / 3,5 / 4,5 / 5,5%). Controleer de woonquote in Bijlage 1 van de regeling; de uitkomst hangt direct van die waarde af.'
-      : 'De gebruikte woonquote-kolommen zijn officiële waarden uit de tabel; de kolommen 2,0 / 2,5 / 3,5 / 4,5 / 5,5% (geschat) zijn voor deze berekening niet gebruikt.'
-  );
-  if (usedEstimated) warnings.push('Geschatte woonquote-kolom gebruikt.');
-  notes.push('De woonquote-tabellen komen uit Stcrt. 2025, 36471 zoals vastgelegd in de calculator; niet opnieuw tegen de officiële tekst vergeleken.');
+notes.push('De woonquote-tabellen (Tabel 1-4) zijn volledig en letterlijk overgenomen uit Stcrt. 2025, 36471, Bijlage 1 (rij per € 1.000, twaalf rentekolommen); er wordt niet geïnterpoleerd.');
+  if (cm.portedParts && cm.portedParts.some((p) => p.box3 && p.balance > 0) && d.takeOverMortgage) {
+    notes.push('Niet-aftrekbare (box 3) meegenomen leningdelen tellen mee met de bruteringsfactor Tabel 1 ÷ Tabel 3 op hun toetslast. Standaard geldt een aflossingsvrij deel van na 2013 als box 3; zet het per deel op box 1 als er overgangsrecht is.');
+  }
   notes.push(`Opslagfactor studieschuld: tabel uit de opdracht (STUDY_DEBT_CONFIG ${Object.keys(STUDY_DEBT_CONFIG_BY_YEAR).join('/')}); niet afzonderlijk tegen de Staatscourant gecontroleerd, bronnen verschillen.`);
   notes.push('Overige schulden tellen mee met 2% van het schuldbedrag per maand (een lagere vaste maandlast uit het contract mag een geldverstrekker accepteren).');
   notes.push(`Verkoopwaarde voor financiering = ${pct(d.saleDiscountPercentage, 0)} van de marktwaarde; verkoopkosten van de bestaande woning zijn niet apart meegenomen.`);

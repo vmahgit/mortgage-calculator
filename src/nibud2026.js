@@ -1,122 +1,78 @@
-// Nibud-financieringslastsystematiek 2026 (echte tabel).
+// Financieringslastpercentages ("woonquotes") 2026: exacte opzoeking in de officiële tabellen.
 //
-// Bron: Wijzigingsregeling hypothecair krediet 2026, Staatscourant 2025, 36471
-// (Tabel 1 — financieringslastpercentages voor personen jonger dan de AOW-leeftijd).
+// Bron: Wijzigingsregeling hypothecair krediet 2026, Stcrt. 2025, 36471, Bijlage 1 bij de
+// Tijdelijke regeling hypothecair krediet (de tabellen zelf staan in nibudTables2026.js).
 // https://zoek.officielebekendmakingen.nl/stcrt-2025-36471.html
 //
-// Dit vervangt de eerdere, handmatig getunede leenfactor door de daadwerkelijke
-// methodiek die geldverstrekkers en adviseurs gebruiken:
-//   1. Zoek de woonquote (financieringslastpercentage) op bij (toetsinkomen, toetsrente).
-//   2. Maximale bruto woonlast per maand = woonquote × toetsinkomen / 12.
-//   3. Trek de maandlast van bestaande verplichtingen (schulden) af.
-//   4. Kapitaliseer de resterende maandlast met de annuïteitenfactor bij de toetsrente
-//      over 360 maanden → maximale hypotheek.
+// Zo zoekt een geldverstrekker het percentage op:
+//   - rij: het toetsinkomen, naar beneden afgerond op € 1.000. Onder de eerste rij (€ 30.000;
+//     AOW-tabellen € 29.000) geldt de eerste rij, boven de laatste rij (€ 125.000; AOW-tabellen
+//     € 110.000) de laatste rij;
+//   - kolom: de toetsrente in banden van 0,5%-punt (≤ 1,500% | 1,501–2,000% | … | 6,001–6,500% |
+//     ≥ 6,501%), op drie decimalen afgerond.
+// Er wordt niet geïnterpoleerd, niet tussen rijen en niet tussen kolommen.
 //
-// De inkomens-ankerpunten en vijf toetsrente-kolommen hieronder zijn letterlijk uit de
-// officiële tabel overgenomen; tussenliggende inkomens en rentes worden bilineair
-// geïnterpoleerd. De officiële tabel loopt per €1.000 en per 0,5%-band; deze ankerset is
-// een getrouwe, controleerbare weergave daarvan (geen benadering van de systematiek zelf).
+// Tabel 1: jonger dan de AOW-leeftijd. Tabel 2: AOW-leeftijd bereikt. Tabel 3 en 4: dezelfde, voor
+// leningdelen waarvan de rente niet aftrekbaar is (box 3). Bij een gemengde hypotheek telt de
+// toetslast van een box 3-deel zwaarder mee met de bruteringsfactor Tabel 1 ÷ Tabel 3 (zie
+// getBox3GrossUp en calcEngine.js).
+
+import { TABEL_1, TABEL_2, TABEL_3, TABEL_4 } from './nibudTables2026';
 
 const TERM_MONTHS = 360;
-
-// Inkomens-ankerpunten (bruto toetsinkomen in euro).
-const INCOME_ANCHORS = [30000, 35000, 40000, 45000, 50000, 60000, 70000, 80000, 90000, 100000, 110000, 125000];
-
-// Toetsrente-ankerpunten (%). Elk representeert de bijbehorende 0,5%-band uit de tabel:
-// 1,5 = ≤1,500%; 3,0 = 2,501–3,000%; 4,0 = 3,501–4,000%; 5,0 = 4,501–5,000%;
-// 6,0 = 5,501–6,000%.
-const RATE_ANCHORS = [1.5, 3.0, 4.0, 5.0, 6.0];
-
-// Woonquotes (%) per toetsrente-anker × inkomens-anker, exact uit Tabel 1 (2026).
-const WOONQUOTE_TABLE = {
-  1.5: [15.5, 17.4, 17.4, 17.4, 17.4, 17.7, 18.6, 19.9, 20.5, 21.1, 21.6, 22.2],
-  3.0: [18.4, 20.6, 20.6, 20.6, 20.6, 20.7, 21.7, 23.2, 23.7, 24.2, 24.8, 25.5],
-  4.0: [20.1, 22.6, 22.6, 22.6, 22.6, 22.6, 23.6, 25.3, 25.7, 26.1, 26.7, 27.4],
-  5.0: [21.6, 24.6, 24.6, 24.6, 24.6, 24.6, 25.3, 27.2, 28.5, 28.5, 28.5, 29.2],
-  6.0: [22.7, 26.4, 26.4, 26.4, 26.4, 26.4, 27.0, 28.9, 29.3, 29.7, 30.0, 30.8],
-};
-
-// Tabel 2 — financieringslastpercentages voor consumenten die de AOW-leeftijd al
-// hebben bereikt (zelfde Stcrt. 2025, 36471). Gebruikt voor het pensioenscenario van
-// de AOW-toets: wie binnen 10 jaar de AOW-leeftijd bereikt, wordt óók getoetst op het
-// verwachte pensioeninkomen, en die toekomstige situatie valt onder deze tabel.
-// De tabel start bij €29.000 (verwachte bruto AOW-uitkering per januari 2026) en
-// loopt tot €110.000; daarbuiten geldt de dichtstbijzijnde rand (clamp), zoals ook
-// bij Tabel 1. De AOW-quotes liggen hoger dan die van Tabel 1 omdat gepensioneerden
-// lagere belasting- en premiedruk hebben.
-const AOW_INCOME_ANCHORS = [29000, 30000, 35000, 40000, 45000, 50000, 60000, 70000, 80000, 90000, 100000, 110000];
-
-const AOW_WOONQUOTE_TABLE = {
-  1.5: [18.5, 19.2, 21.6, 22.2, 22.8, 23.4, 25.5, 26.2, 27.1, 27.7, 28.0, 28.4],
-  3.0: [19.7, 20.8, 23.9, 25.2, 25.9, 26.7, 29.9, 31.3, 31.7, 32.1, 32.3, 32.5],
-  4.0: [20.4, 21.5, 25.1, 26.9, 27.7, 28.6, 32.1, 34.3, 34.8, 34.8, 34.9, 35.1],
-  5.0: [20.9, 22.1, 26.1, 28.2, 29.4, 30.2, 34.1, 36.9, 37.3, 37.3, 37.3, 37.5],
-  6.0: [21.3, 22.5, 26.9, 29.3, 30.8, 31.7, 35.7, 38.9, 39.5, 39.5, 39.5, 39.6],
-};
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
-// Lineaire interpolatie tussen twee ankerreeksen op een gegeven positie.
-function interpolate(anchors, values, x) {
-  const xc = clamp(x, anchors[0], anchors[anchors.length - 1]);
-  for (let i = 0; i < anchors.length - 1; i++) {
-    const a = anchors[i];
-    const b = anchors[i + 1];
-    if (xc >= a && xc <= b) {
-      const t = b === a ? 0 : (xc - a) / (b - a);
-      return values[i] + t * (values[i + 1] - values[i]);
-    }
-  }
-  return values[values.length - 1];
-}
-
-// De officiële tabel kent geen tussenwaarden: een toetsrente valt in een kolom van 0,5%
-// (≤ 1,500%, 1,501–2,000%, …, 5,501–6,000%), en een toetsinkomen in een rij per € 1.000. Een
-// gewogen toetsrente van 3,6% hoort dus volledig in de kolom 3,501–4,000%, niet "een beetje"
-// tussen 3% en 4%. Van de kolommen 2,0 / 2,5 / 3,5 / 4,5 / 5,5 staan de waarden niet in de
-// ankerset hierboven; die worden lineair geschat tussen de twee bekende buurkolommen (exact: false).
-// Kolommen boven 6,000% vallen terug op de kolom 5,501–6,000% (aboveTable: true).
 const BAND_WIDTH = 0.5;
+const FIRST_UPPER = 1.5;
+const LAST_UPPER = 6.5; // de laatste kolom loopt vanaf 6,501% door (≥ 6,501%)
 
+export const TABLE_NAMES = { box1: 'Tabel 1', box1Aow: 'Tabel 2', box3: 'Tabel 3', box3Aow: 'Tabel 4' };
+
+function pickTable({ aow = false, box3 = false } = {}) {
+  if (box3) return aow ? TABEL_4 : TABEL_3;
+  return aow ? TABEL_2 : TABEL_1;
+}
+
+export function getTableName({ aow = false, box3 = false } = {}) {
+  return TABLE_NAMES[`${box3 ? 'box3' : 'box1'}${aow ? 'Aow' : ''}`];
+}
+
+// Kolom van de toetsrente. upper = bovengrens van de band (1,5 … 6,5; de laatste kolom ≥ 6,501%
+// heeft upper Infinity), lower = ondergrens (null voor de eerste kolom), index = 0 … 11.
+// Alle kolommen staan in de officiële tabel (exact: true).
 export function getToetsrenteBand(toetsrente) {
   // De tabel rekent met drie decimalen (3,501%); afronden voorkomt dat 3,5000000001 in de
   // volgende kolom valt.
   const r = Math.round(Math.max(0, toetsrente) * 1000) / 1000;
-  const rawUpper = Math.max(RATE_ANCHORS[0], Math.ceil(r / BAND_WIDTH - 1e-9) * BAND_WIDTH);
-  const maxUpper = RATE_ANCHORS[RATE_ANCHORS.length - 1];
-  const upper = Math.min(rawUpper, maxUpper);
-  return {
-    upper,
-    lower: upper === RATE_ANCHORS[0] ? null : upper - BAND_WIDTH + 0.001,
-    exact: RATE_ANCHORS.includes(upper),
-    aboveTable: rawUpper > maxUpper,
-  };
+  const index = r <= FIRST_UPPER ? 0 : Math.min(11, Math.ceil((r - FIRST_UPPER) / BAND_WIDTH - 1e-9));
+  const upper = index === 11 ? Infinity : FIRST_UPPER + index * BAND_WIDTH;
+  const lower = index === 0 ? null : FIRST_UPPER + (index - 1) * BAND_WIDTH + 0.001;
+  return { index, upper, lower, exact: true, aboveTable: false };
 }
 
-// Rij van de tabel: het toetsinkomen naar beneden afgerond op € 1.000.
-export function getIncomeRow(toetsinkomen) {
-  return Math.floor(Math.max(0, toetsinkomen) / 1000) * 1000;
+// Kolomgrenzen (bovengrenzen) waarboven de volgende kolom geldt, voor de solver.
+export const BAND_UPPERS = Array.from({ length: 11 }, (_, i) => FIRST_UPPER + i * BAND_WIDTH);
+export { LAST_UPPER };
+
+// Rij van de tabel: het toetsinkomen naar beneden afgerond op € 1.000, begrensd op de tabel.
+export function getIncomeRow(toetsinkomen, { aow = false, box3 = false } = {}) {
+  const table = pickTable({ aow, box3 });
+  const floored = Math.floor(Math.max(0, toetsinkomen) / 1000) * 1000;
+  return Math.min(table.lastIncome, Math.max(table.firstIncome, floored));
 }
 
-// Woonquote (als fractie, bijv. 0,274) bij een gegeven toetsinkomen en toetsrente: de kolom
-// van de toetsrente (getToetsrenteBand) en de rij van het inkomen (getIncomeRow). Tussen de
-// inkomens-ankers wordt lineair geïnterpoleerd; inkomen boven de hoogste schijf gebruikt de
-// hoogste woonquote. Met { aow: true } wordt Tabel 2 (vanaf AOW-leeftijd) gebruikt.
-export function getWoonquote(toetsinkomen, toetsrente, { aow = false } = {}) {
-  const anchors = aow ? AOW_INCOME_ANCHORS : INCOME_ANCHORS;
-  const table = aow ? AOW_WOONQUOTE_TABLE : WOONQUOTE_TABLE;
-  const income = getIncomeRow(toetsinkomen);
-  const { upper } = getToetsrenteBand(toetsrente);
+// Woonquote (als fractie, bijv. 0,274) bij een gegeven toetsinkomen en toetsrente.
+// { aow } kiest Tabel 2 i.p.v. 1, { box3 } de tabel voor niet-aftrekbare leningdelen.
+export function getWoonquote(toetsinkomen, toetsrente, { aow = false, box3 = false } = {}) {
+  const table = pickTable({ aow, box3 });
+  const row = getIncomeRow(toetsinkomen, { aow, box3 });
+  const { index } = getToetsrenteBand(toetsrente);
+  return table.rows[(row - table.firstIncome) / 1000][index] / 100;
+}
 
-  const column = (r) => interpolate(anchors, table[r], income);
-  if (table[upper]) return column(upper) / 100;
-  // Geschatte kolom: lineair tussen de twee bekende buurkolommen.
-  const below = [...RATE_ANCHORS].reverse().find((r) => r < upper);
-  const above = RATE_ANCHORS.find((r) => r > upper);
-  const pct = interpolate([below, above], [column(below), column(above)], upper);
-  return pct / 100;
+// Bruteringsfactor voor een box 3-leningdeel: percentage Tabel 1 (of 2) ÷ Tabel 3 (of 4) in
+// dezelfde rij en kolom. De toetslast van zo'n deel telt met deze factor mee, zodat het deel
+// effectief tegen het lagere box 3-percentage wordt getoetst.
+export function getBox3GrossUp(toetsinkomen, toetsrente, { aow = false } = {}) {
+  return getWoonquote(toetsinkomen, toetsrente, { aow }) / getWoonquote(toetsinkomen, toetsrente, { aow, box3: true });
 }
 
 // Annuïteitenfactor bij een gegeven (toets)rente over 360 maanden: het bedrag aan
@@ -127,7 +83,7 @@ export function getAnnuityFactor(ratePct) {
   return (1 - Math.pow(1 + r, -TERM_MONTHS)) / r;
 }
 
-// Kern: maximale hypotheek op basis van inkomen volgens de Nibud-woonquote-systematiek.
+// Kern: maximale hypotheek op basis van inkomen voor één nieuw annuïtair leningdeel.
 // - combinedIncome: totaal bruto toetsinkomen.
 // - toetsrente: de te toetsen rente (AFM-toetsrente bij rentevast < 10 jaar, anders de
 //   werkelijke rente).

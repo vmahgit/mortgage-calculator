@@ -100,40 +100,34 @@ def set_widths(ws, widths):
 
 
 # ================================================================ Tabellen
-def parse_table(name):
-    s = (SRC / "nibud2026.js").read_text()
-    m = re.search(rf"const {name} = \{{(.*?)\}};", s, re.S)
-    out = {}
-    for line in m.group(1).splitlines():
-        mm = re.match(r"\s*([\d.]+):\s*\[(.*?)\]", line)
-        if mm:
-            out[float(mm.group(1))] = [float(x) for x in mm.group(2).split(",")]
-    return out
+def parse_official(name):
+    """Officiële tabel uit nibudTables2026.js: (inkomensrijen, rijen met 12 percentages)."""
+    s = (SRC / "nibudTables2026.js").read_text(encoding="utf-8")
+    m = re.search(rf"export const {name} = \{{\s*firstIncome: (\d+),\s*lastIncome: (\d+),\s*rows: \[(.*?)\n  \],", s, re.S)
+    first, last = int(m.group(1)), int(m.group(2))
+    rows = [[float(x) for x in r.split(",")] for r in re.findall(r"\[([\d.,\s]+)\]", m.group(3))]
+    assert len(rows) == (last - first) // 1000 + 1 and all(len(r) == 12 for r in rows), name
+    return list(range(first, last + 1, 1000)), rows
 
 
-def parse_anchors(name):
-    s = (SRC / "nibud2026.js").read_text()
-    m = re.search(rf"const {name} = \[(.*?)\];", s, re.S)
-    return [int(x) for x in m.group(1).split(",")]
-
-
-T1 = parse_table("WOONQUOTE_TABLE")
-T2 = parse_table("AOW_WOONQUOTE_TABLE")
-A1 = parse_anchors("INCOME_ANCHORS")
-A2 = parse_anchors("AOW_INCOME_ANCHORS")
+A1, T1 = parse_official("TABEL_1")
+A2, T2 = parse_official("TABEL_2")
+A3, T3 = parse_official("TABEL_3")
+A4, T4 = parse_official("TABEL_4")
 STUDY = [
     (float(a), float(b))
     for a, b in re.findall(
         r"\{ upTo: ([\d.]+|Infinity), factor: ([\d.]+) \}",
-        (SRC / "studieschuld.js").read_text().replace("Infinity", "999"),
+        (SRC / "studieschuld.js").read_text(encoding="utf-8").replace("Infinity", "999"),
     )
 ]
-RATES = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0]  # bovengrens kolom, in %
-KNOWN = [1.5, 3.0, 4.0, 5.0, 6.0]
+# Bovengrens per kolom in %; de laatste kolom (≥ 6,501%) heeft geen bovengrens (99 als hulpwaarde).
+RATES = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 99.0]
+NCOL = len(RATES)
 
 ws = ws_tab
 put(ws, "A1", "Tabellen en parameters", f_title)
-put(ws, "A2", "Blauwe cellen op gele achtergrond zijn invoer die u mag aanpassen; oranje cellen zijn geschatte tabelkolommen (formule) die u kunt overschrijven met de officiële waarde.", f_sub)
+put(ws, "A2", "Blauwe cellen op gele achtergrond zijn invoer die u mag aanpassen. De woonquote-tabellen zijn de volledige officiële tabellen (Stcrt. 2025, 36471, Bijlage 1).", f_sub)
 
 # --- parameters
 put(ws, "A4", "A. Parameters (2026)", f_bold, fill=fill_sec)
@@ -201,41 +195,39 @@ wb.defined_names["Studie_factor"] = DefinedName("Studie_factor", attr_text=f"Tab
 
 def woonquote_table(top, title, anchors, tab, prefix, note):
     """Schrijft een woonquote-tabel; geeft (eerste datarij) terug."""
+    last_col = CL(1 + NCOL)
     put(ws, f"A{top}", title, f_bold, fill=fill_sec)
-    for c in "BCDEFGHIJK":
-        ws[f"{c}{top}"].fill = fill_sec
+    for j in range(NCOL):
+        ws[f"{CL(2 + j)}{top}"].fill = fill_sec
     put(ws, f"A{top+1}", "Toetsrente tot en met →", f_bold)
-    put(ws, f"A{top+2}", "Kolomstatus", f_note)
+    put(ws, f"A{top+2}", "Kolom", f_note)
     for j, rt in enumerate(RATES):
         col = CL(2 + j)
-        put(ws, f"{col}{top+1}", rt / 100, f_input if rt in KNOWN else f_bold, PCT1, fill_input if rt in KNOWN else fill_est, Alignment(horizontal="center"), b_all)
-        put(ws, f"{col}{top+2}", "officieel" if rt in KNOWN else "geschat", f_note, align=Alignment(horizontal="center"))
+        put(ws, f"{col}{top+1}", rt / 100, f_input, PCT1, fill_input, Alignment(horizontal="center"), b_all)
+        put(ws, f"{col}{top+2}", "≥ 6,501%" if j == NCOL - 1 else "officieel", f_note, align=Alignment(horizontal="center"))
     first = top + 3
     put(ws, f"A{first-1}", "Toetsinkomen vanaf ↓", f_bold)
     for i, inc in enumerate(anchors):
         rr = first + i
         put(ws, f"A{rr}", inc, f_input, EUR, fill_input, border=b_all)
-        for j, rt in enumerate(RATES):
-            col = CL(2 + j)
-            if rt in KNOWN:
-                put(ws, f"{col}{rr}", tab[rt][i] / 100, f_input, PCT1, fill_input, border=b_all)
-            else:
-                lo = max(k for k in KNOWN if k < rt)
-                hi = min(k for k in KNOWN if k > rt)
-                lc, hc = CL(2 + RATES.index(lo)), CL(2 + RATES.index(hi))
-                put(ws, f"{col}{rr}", f"={lc}{rr}+({col}${top+1}-{lc}${top+1})/({hc}${top+1}-{lc}${top+1})*({hc}{rr}-{lc}{rr})", f_norm, PCT1, fill_est, border=b_all)
+        for j in range(NCOL):
+            put(ws, f"{CL(2 + j)}{rr}", tab[i][j] / 100, f_input, PCT1, fill_input, border=b_all)
     put(ws, f"A{first+len(anchors)}", note, f_note)
     wb.defined_names[f"{prefix}_Inkomen"] = DefinedName(f"{prefix}_Inkomen", attr_text=f"Tabellen!$A${first}:$A${first+len(anchors)-1}")
-    wb.defined_names[f"{prefix}_Tabel"] = DefinedName(f"{prefix}_Tabel", attr_text=f"Tabellen!$B${first}:$K${first+len(anchors)-1}")
-    wb.defined_names[f"{prefix}_Rente"] = DefinedName(f"{prefix}_Rente", attr_text=f"Tabellen!$B${top+1}:$K${top+1}")
+    wb.defined_names[f"{prefix}_Tabel"] = DefinedName(f"{prefix}_Tabel", attr_text=f"Tabellen!$B${first}:${last_col}${first+len(anchors)-1}")
+    wb.defined_names[f"{prefix}_Rente"] = DefinedName(f"{prefix}_Rente", attr_text=f"Tabellen!$B${top+1}:${last_col}${top+1}")
     return first + len(anchors) + 2
 
 
 nxt = woonquote_table(r1 + len(STUDY) + 4, "D. Tabel 1: woonquote (financieringslastpercentage), tot AOW-leeftijd", A1, T1, "T1",
-                      "Officiële kolommen uit de app-code (Stcrt. 2025, 36471). Geschatte kolommen: lineair tussen de buurkolommen; controleer in Bijlage 1 en overschrijf.")
+                      "Officiële tabel (Stcrt. 2025, 36471, Bijlage 1): rij = toetsinkomen naar beneden op € 1.000, kolom = toetsrente per 0,5%-punt.")
 nxt = woonquote_table(nxt, "E. Tabel 2: woonquote vanaf AOW-leeftijd (pensioenscenario)", A2, T2, "T2",
                       "Zelfde opzet; wordt gebruikt voor het verwachte pensioeninkomen.")
-set_widths(ws, {"A": 52, "B": 14, "C": 14, "D": 14, "E": 14, "F": 14, "G": 14, "H": 14, "I": 14, "J": 14, "K": 14})
+nxt = woonquote_table(nxt, "F. Tabel 3: niet-aftrekbare leningdelen (box 3), tot AOW-leeftijd", A3, T3, "T3",
+                      "Voor box 3-delen: hun toetslast telt mee met de bruteringsfactor Tabel 1 ÷ Tabel 3.")
+nxt = woonquote_table(nxt, "G. Tabel 4: niet-aftrekbare leningdelen (box 3), vanaf AOW-leeftijd", A4, T4, "T4",
+                      "Pensioenscenario: bruteringsfactor Tabel 2 ÷ Tabel 4.")
+set_widths(ws, {"A": 52, **{CL(2 + j): 12 for j in range(NCOL)}})
 ws.freeze_panes = "A4"
 
 # ================================================================ Invoer
@@ -364,9 +356,8 @@ def capfac(rate):
 
 
 def interp(inc_v, inc_i, prefix, idx):
-    anc, tab = f"{prefix}_Inkomen", f"{prefix}_Tabel"
-    return (f"INDEX({tab},{inc_i},{idx})+({inc_v}-INDEX({anc},{inc_i}))/(INDEX({anc},{inc_i}+1)-INDEX({anc},{inc_i}))"
-            f"*(INDEX({tab},{inc_i}+1,{idx})-INDEX({tab},{inc_i},{idx}))")
+    # Exacte opzoeking (geen interpolatie): rij inc_i, kolom idx.
+    return f"INDEX({prefix}_Tabel,{inc_i},{idx})"
 
 
 BER = []   # (key, label, unit, fmt, fn) of ("§", titel)
@@ -408,9 +399,12 @@ for k in range(4):
     B(f"test{k}", f"Deel {n}: toetsrente", "%", PCT3, (lambda k: lambda c, r, i, s: f'=IF({r(f"bal{k}")}>0,IF({r(f"fixrem{k}")}<120,MAX(AFM_Toetsrente,{i(f"p{k}_rate")}),{i(f"p{k}_rate")}),0)')(k))
     B(f"n{k}", f"Deel {n}: toetslooptijd", "maanden", INT, (lambda k: lambda c, r, i, s: f'=IF(OR({i(f"p{k}_type")}="Aflossingsvrij",{i("termBasis")}="30 jaar"),360,{r("term_rest")})')(k))
     B(f"tl{k}", f"Deel {n}: toetslast (annuïteit)", "€ p/m", EUR2, (lambda k: lambda c, r, i, s: f'={annuity(r(f"bal{k}"), r(f"test{k}"), r(f"n{k}"))}')(k))
+    B(f"b3{k}", f"Deel {n}: rente niet aftrekbaar, box 3 (1 = ja; aflossingsvrij na 2013)", "", INT, (lambda k: lambda c, r, i, s: f'=IF(AND({i(f"p{k}_type")}="Aflossingsvrij",YEAR({i("start")})>2013),1,0)')(k))
 B("cur_debt", "Totale restschuld bestaande hypotheek", "€", EUR2, lambda c, r, i, s: "=" + "+".join(r(f"bal{k}") for k in range(4)), True)
 B("ported", "Meegenomen hypotheek", "€", EUR2, lambda c, r, i, s: f'={r("take")}*{r("cur_debt")}')
-B("ptl", "Toetslast meegenomen delen samen", "€ p/m", EUR2, lambda c, r, i, s: f'={r("take")}*(' + "+".join(r(f"tl{k}") for k in range(4)) + ")")
+B("ptl", "Toetslast meegenomen delen samen (ongebruteerd)", "€ p/m", EUR2, lambda c, r, i, s: f'={r("take")}*(' + "+".join(r(f"tl{k}") for k in range(4)) + ")")
+B("ptl3", "Waarvan box 3-delen", "€ p/m", EUR2, lambda c, r, i, s: f'={r("take")}*(' + "+".join(f'{r(f"tl{k}")}*{r(f"b3{k}")}' for k in range(4)) + ")")
+B("ptl1", "Waarvan box 1-delen", "€ p/m", EUR2, lambda c, r, i, s: f'={r("ptl")}-{r("ptl3")}')
 B("wA", "Σ saldo × looptijd × toetsrente (teller gewogen rente)", "", '#,##0', lambda c, r, i, s: f'={r("take")}*(' + "+".join(f'{r(f"bal{k}")}*{r(f"n{k}")}*{r(f"test{k}")}' for k in range(4)) + ")")
 B("wB", "Σ saldo × looptijd (noemer gewogen rente)", "", '#,##0', lambda c, r, i, s: f'={r("take")}*(' + "+".join(f'{r(f"bal{k}")}*{r(f"n{k}")}' for k in range(4)) + ")")
 B("f_comp", "Samengestelde toets actief (1 = ja)", "", INT, lambda c, r, i, s: f'=IF(AND({r("take")}=1,{r("cur_debt")}>0),1,0)')
@@ -453,15 +447,15 @@ B("afslag", "Afslag studieschuld op de hypotheek", "€", EUR, lambda c, r, i, s
 
 BER.append(("§", "6. Leencapaciteit op inkomen (alles als nieuw geld tegen de toetsrente)"))
 B("incrow", "Inkomensrij (naar beneden op € 1.000)", "€", EUR, lambda c, r, i, s: f'=INT({r("inc_total")}/1000)*1000')
-B("idx", "Rentekolom (1 = ≤ 1,5% … 10 = 6,0%)", "", INT, lambda c, r, i, s: f'=MIN(10,MAX(1,ROUNDUP(ROUND({r("testRate")}*100,3)/0.5-0.000000001,0)-2))')
-B("vinc", "Inkomen binnen tabelbereik", "€", EUR, lambda c, r, i, s: f'=MIN(MAX({r("incrow")},INDEX(T1_Inkomen,1)),INDEX(T1_Inkomen,12))')
-B("iinc", "Tabelrij (interpolatie)", "", INT, lambda c, r, i, s: f'=MIN(MATCH({r("vinc")},T1_Inkomen,1),11)')
+B("idx", "Rentekolom (1 = ≤ 1,5% … 12 = ≥ 6,501%)", "", INT, lambda c, r, i, s: f'=MIN(12,MAX(1,ROUNDUP(ROUND({r("testRate")}*100,3)/0.5-0.000000001,0)-2))')
+B("vinc", "Inkomen binnen tabelbereik", "€", EUR, lambda c, r, i, s: f'=MIN(MAX({r("incrow")},INDEX(T1_Inkomen,1)),INDEX(T1_Inkomen,ROWS(T1_Inkomen)))')
+B("iinc", "Tabelrij", "", INT, lambda c, r, i, s: f'=({r("vinc")}-INDEX(T1_Inkomen,1))/1000+1')
 B("wq", "Woonquote (tabel 1)", "%", PCT2, lambda c, r, i, s: f'={interp(r("vinc"), r("iinc"), "T1", r("idx"))}')
 B("woonlast", "Maximale woonlast per maand", "€ p/m", EUR2, lambda c, r, i, s: f'={r("wq")}*{r("inc_total")}/12')
 B("gross", "Leencapaciteit voor schulden", "€", EUR, lambda c, r, i, s: f'={r("woonlast")}*{r("fcap")}', True)
 B("after_debts", "Na schulden en tweede woning", "€", EUR, lambda c, r, i, s: f'=MAX(0,{r("woonlast")}-{r("debt_month")})*{r("fcap")}')
 B("after_study", "Na studieschuld", "€", EUR, lambda c, r, i, s: f'=MAX(0,{r("after_debts")}-{r("afslag")})')
-B("sb", "Alleenstaandenbedrag", "€", EUR, lambda c, r, i, s: f'=IF({r("two")}=0,IF({r("inc_total")}>=Alleenstaand_min,Alleenstaand_bedrag,0),0)')
+B("sb", "Alleenstaandenbedrag", "€", EUR, lambda c, r, i, s: f'=IF({r("two")}=0,IF({r("inc_total")}>Alleenstaand_min,Alleenstaand_bedrag,0),0)')
 B("energy", "Energielabelbonus", "€", EUR, lambda c, r, i, s: f'=INDEX(Energie_bonus,MATCH({i("label")},Energie_label,0))')
 
 BER.append(("§", "7. AOW-toets (pensioeninkomen, tabel 2)"))
@@ -470,11 +464,11 @@ B("pa2", "Aanvrager 2 binnen 10 jaar van AOW (1 = ja)", "", INT, lambda c, r, i,
 B("pmiss", "Pensioeninkomen ontbreekt (1 = ja)", "", INT, lambda c, r, i, s: f'=IF(OR(AND({r("pa1")}=1,{i("pen1")}<=0),AND({r("pa2")}=1,{i("pen2")}<=0)),1,0)')
 B("pactive", "AOW-toets actief (1 = ja)", "", INT, lambda c, r, i, s: f'=IF({r("pa1")}+{r("pa2")}>0,1,0)*(1-{r("pmiss")})')
 B("pinc", "Toetsinkomen in het pensioenscenario", "€", EUR, lambda c, r, i, s: f'=IF({r("pa1")}=1,{i("pen1")},{i("inc1")})+{r("two")}*IF({r("pa2")}=1,{i("pen2")},{i("inc2")})')
-B("vpen", "Pensioeninkomen binnen tabelbereik", "€", EUR, lambda c, r, i, s: f'=MIN(MAX(INT({r("pinc")}/1000)*1000,INDEX(T2_Inkomen,1)),INDEX(T2_Inkomen,12))')
-B("ipen", "Tabelrij (interpolatie)", "", INT, lambda c, r, i, s: f'=MIN(MATCH({r("vpen")},T2_Inkomen,1),11)')
+B("vpen", "Pensioeninkomen binnen tabelbereik", "€", EUR, lambda c, r, i, s: f'=MIN(MAX(INT({r("pinc")}/1000)*1000,INDEX(T2_Inkomen,1)),INDEX(T2_Inkomen,ROWS(T2_Inkomen)))')
+B("ipen", "Tabelrij", "", INT, lambda c, r, i, s: f'=({r("vpen")}-INDEX(T2_Inkomen,1))/1000+1')
 B("wq_pen", "Woonquote (tabel 2)", "%", PCT2, lambda c, r, i, s: f'={interp(r("vpen"), r("ipen"), "T2", r("idx"))}')
 B("ploan", "Leencapaciteit op pensioeninkomen na schulden en studieschuld", "€", EUR, lambda c, r, i, s: f'=MAX(0,MAX(0,{r("wq_pen")}*{r("pinc")}/12-{r("debt_month")})*{r("fcap")}-{r("afslag")})')
-B("psb", "Alleenstaandenbedrag in het pensioenscenario", "€", EUR, lambda c, r, i, s: f'=IF({r("two")}=0,IF({r("pinc")}>=Alleenstaand_min_AOW,Alleenstaand_bedrag,0),0)')
+B("psb", "Alleenstaandenbedrag in het pensioenscenario", "€", EUR, lambda c, r, i, s: f'=IF({r("two")}=0,IF({r("pinc")}>Alleenstaand_min_AOW,Alleenstaand_bedrag,0),0)')
 B("pbind", "Pensioenscenario bindend (1 = ja)", "", INT, lambda c, r, i, s: f'=IF(AND({r("pactive")}=1,{r("ploan")}+{r("psb")}<{r("after_study")}+{r("sb")}),1,0)')
 B("bound", "Leencapaciteit na AOW-toets", "€", EUR, lambda c, r, i, s: f'=IF({r("pbind")}=1,{r("ploan")}+{r("psb")}-{r("sb")},{r("after_study")})')
 B("inc_max", "Maximale hypotheek o.b.v. inkomen (alles tegen toetsrente)", "€", EUR, lambda c, r, i, s: f'=MAX(0,{r("bound")}+{r("energy")}+{r("sb")})', True)
@@ -485,6 +479,9 @@ B("comp_pen", "Max. nieuw geld, pensioenscenario", "€", EUR, lambda c, r, i, s
 B("extra", "Ruimte voor nieuw geld (inkomen)", "€", EUR, lambda c, r, i, s: f'=IF({r("f_comp")}=1,MIN({r("comp_inc")},IF({r("pactive")}=1,{r("comp_pen")},1E+15)),{r("inc_max")})', True)
 B("eff_max", "Totale hypotheek die het inkomen toelaat (meegenomen + nieuw)", "€", EUR, lambda c, r, i, s: f'={r("ported")}+{r("extra")}')
 B("wavg", "Gewogen toetsrente van de nieuwe hypotheek bij dit maximum", "%", PCT3, lambda c, r, i, s: f'=IF({r("f_comp")}=1,({r("wA")}+{r("extra")}*360*{r("testRate")})/({r("wB")}+{r("extra")}*360),{r("testRate")})')
+B("idx_w", "Rentekolom bij dit maximum", "", INT, lambda c, r, i, s: f'=MIN(12,MAX(1,ROUNDUP(ROUND({r("wavg")}*100,3)/0.5-0.000000001,0)-2))')
+B("g_w", "Bruteringsfactor box 3 in die kolom", "", FAC, lambda c, r, i, s: f'=IF({r("ptl3")}>0,IF(AND({r("pactive")}=1,{r("comp_pen")}<{r("comp_inc")}),INDEX(T2_Tabel,{r("ipen")},{r("idx_w")})/INDEX(T4_Tabel,{r("ipen")},{r("idx_w")}),INDEX(T1_Tabel,{r("iinc")},{r("idx_w")})/INDEX(T3_Tabel,{r("iinc")},{r("idx_w")})),1)')
+B("ptl_eff", "Toetslast meegenomen delen zoals getoetst (box 3 gebruteerd)", "€ p/m", EUR2, lambda c, r, i, s: f'={r("ptl1")}+{r("ptl3")}*{r("g_w")}')
 
 BER.append(("§", "9. Haalbaarheid"))
 B("lroom", "Ruimte onder plafond geldverstrekker", "€", EUR, lambda c, r, i, s: f'=MAX(0,{i("cap")}-{r("ported")})')
@@ -504,27 +501,32 @@ B("out_feasible", "UITKOMST: haalbaar (1 = ja)", "", INT, lambda c, r, i, s: f'=
 B("budget_rest", "Overgebleven budget na woning en kosten koper (doorstromer)", "€", EUR, lambda c, r, i, s: f'=IF({r("door")}=1,{i("own")}+{r("overw")}+{r("ported")}+{r("cap_door")}-{r("tekort")}-{i("price")}-{r("kk_cash")},"n.v.t.")')
 
 # ---- Solver (per kolom: twee blokken, tien rentekolommen)
-for blk, ttl, prefix, v_key, i_key, inc_key, bonus in [
-    ("inc", "Blok A: inkomensscenario (tabel 1)", "T1", "vinc", "iinc", "inc_total", lambda r: f'{r("energy")}+{r("sb")}'),
-    ("pen", "Blok B: pensioenscenario (tabel 2)", "T2", "vpen", "ipen", "pinc", lambda r: f'{r("energy")}+{r("psb")}'),
+for blk, ttl, prefix, prefix3, v_key, i_key, inc_key, bonus in [
+    ("inc", "Blok A: inkomensscenario (tabel 1)", "T1", "T3", "vinc", "iinc", "inc_total", lambda r: f'{r("energy")}+{r("sb")}'),
+    ("pen", "Blok B: pensioenscenario (tabel 2)", "T2", "T4", "vpen", "ipen", "pinc", lambda r: f'{r("energy")}+{r("psb")}'),
 ]:
     SOL.append(("§", ttl))
     S(f"{blk}_inc", "Toetsinkomen", "€", EUR, (lambda inc_key: lambda c, r, b: f'={b(inc_key)}')(inc_key))
     S(f"{blk}_bonus", "Bonussen buiten de woonlast (energie + alleenstaand)", "€", EUR, (lambda bonus: lambda c, r, b: f'={bonus(b)}')(bonus))
-    for k in range(1, 11):
+    for k in range(1, NCOL + 1):
         def wq_f(c, r, b, k=k, prefix=prefix, v_key=v_key, i_key=i_key):
             return "=" + interp(b(v_key), b(i_key), prefix, k)
 
+        def wq3_f(c, r, b, k=k, prefix3=prefix3, i_key=i_key):
+            return "=" + interp(None, b(i_key), prefix3, k)
+
+        # Box 3-delen tellen mee met de bruteringsfactor woonquote ÷ box 3-woonquote van deze kolom.
         def xs_f(c, r, b, k=k, blk=blk):
-            return (f'=MAX(0,({r(f"{blk}_wq{k}")}*{r(f"{blk}_inc")}/12-{b("debt_month")}-{b("ptl")})*{b("fcap")}'
+            wq, wq3 = r(f"{blk}_wq{k}"), r(f"{blk}_wq3{k}")
+            return (f'=MAX(0,({wq}*{r(f"{blk}_inc")}/12-{b("debt_month")}-{b("ptl1")}-{b("ptl3")}*{wq}/{wq3})*{b("fcap")}'
                     f'-{b("afslag")}+{r(f"{blk}_bonus")})')
 
         def lo_f(c, r, b, k=k, prefix=prefix):
             R, A, Bb = b("testRate"), b("wA"), b("wB")
             U = f"(INDEX({prefix}_Rente,{k})+0.000005)"
-            L = f"(INDEX({prefix}_Rente,{k})-0.005+0.000005)"
+            L = f"(INDEX({prefix}_Rente,{max(1, k - 1)})+0.000005)"
             parts = ["0"]
-            if k < 10:
+            if k < NCOL:
                 parts.append(f"IF({U}>{R},({A}-{U}*{Bb})/(360*({U}-{R})),IF({U}={R},IF({A}-{U}*{Bb}<=0,-1E+12,1E+12),-1E+12))")
             if k > 1:
                 parts.append(f"IF({L}<{R},({A}-{L}*{Bb})/(360*({L}-{R})),IF({L}={R},IF({A}-{L}*{Bb}>0,-1E+12,1E+12),-1E+12))")
@@ -533,9 +535,9 @@ for blk, ttl, prefix, v_key, i_key, inc_key, bonus in [
         def hi_f(c, r, b, k=k, prefix=prefix):
             R, A, Bb = b("testRate"), b("wA"), b("wB")
             U = f"(INDEX({prefix}_Rente,{k})+0.000005)"
-            L = f"(INDEX({prefix}_Rente,{k})-0.005+0.000005)"
+            L = f"(INDEX({prefix}_Rente,{max(1, k - 1)})+0.000005)"
             parts = ["1E+12"]
-            if k < 10:
+            if k < NCOL:
                 parts.append(f"IF({U}<{R},({A}-{U}*{Bb})/(360*({U}-{R})),1E+12)")
             if k > 1:
                 parts.append(f"IF({L}>{R},({A}-{L}*{Bb})/(360*({L}-{R})),1E+12)")
@@ -546,12 +548,13 @@ for blk, ttl, prefix, v_key, i_key, inc_key, bonus in [
             return f"=IF({lo}>{hi},-1,IF({xs}<{lo}-0.000000001,-1,IF({xs}>{hi},MAX({lo},{hi}-1),{xs})))"
 
         S(f"{blk}_wq{k}", f"Kolom {k}: woonquote", "%", PCT2, wq_f)
+        S(f"{blk}_wq3{k}", f"Kolom {k}: woonquote box 3 (voor de bruteringsfactor)", "%", PCT2, wq3_f)
         S(f"{blk}_xs{k}", f"Kolom {k}: bedrag als de woonquote van deze kolom geldt", "€", EUR, xs_f)
         S(f"{blk}_lo{k}", f"Kolom {k}: laagste bedrag waarbij de gewogen rente in deze kolom valt", "€", EUR, lo_f)
         S(f"{blk}_hi{k}", f"Kolom {k}: hoogste bedrag waarbij de gewogen rente in deze kolom valt", "€", EUR, hi_f)
         S(f"{blk}_amt{k}", f"Kolom {k}: haalbaar bedrag (−1 = onmogelijk)", "€", EUR, amt_f)
     S(f"{blk}_comp", f"Resultaat blok: hoogste haalbare bedrag nieuw geld", "€", EUR,
-      (lambda blk: lambda c, r, b: "=MAX(0," + ",".join(r(f"{blk}_amt{k}") for k in range(1, 11)) + ")")(blk), True)
+      (lambda blk: lambda c, r, b: "=MAX(0," + ",".join(r(f"{blk}_amt{k}") for k in range(1, NCOL + 1)) + ")")(blk), True)
 # sleutels met prefix 'inc_comp' / 'pen_comp' (zie Berekening rijen 'comp_inc'/'comp_pen')
 SOL_KEYMAP = {"inc_comp": "inc_comp", "pen_comp": "pen_comp"}
 
@@ -739,7 +742,7 @@ formulas = {
     "d_energy": f"={sel('energy')}",
     "d_single": f"={sel('sb')}",
     "inc_max": f"={sel('inc_max')}",
-    "d_ported": f"=-IF({sel('f_comp')}=1,{sel('ptl')}*{sel('fcap')},0)",
+    "d_ported": f"=-IF({sel('f_comp')}=1,{sel('ptl_eff')}*{sel('fcap')},0)",
     "d_mix": None,  # restpost, later
     "extra": f"={sel('extra')}",
     "d_lender": None,

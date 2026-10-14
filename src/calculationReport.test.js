@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   computeCore,
   computeStarterGap,
+  evaluateAffordability,
   fillDossierDefaults,
   splitAdditionalMortgage,
   ADDITIONAL_SPLIT_MODES,
@@ -58,10 +59,17 @@ describe('nieuwe standaardwaarden', () => {
     expect(d.additionalLoanParts).toHaveLength(1);
     expect(d.additionalLoanParts[0]).toMatchObject({ type: 'Annuïteit', rate: 4.69 });
   });
-  it('de standaardwaarden geven een haalbare woning met de toetsrente-kolom 3,501–4,000%', () => {
+  it('eigen geld € 60.000 + € 16.000 en geen tweede woning', () => {
+    expect(d.ownCapital1).toBe(60000);
+    expect(d.ownCapital2).toBe(16000);
+    expect(d.hasSecondHome).toBe(false);
+  });
+  it('de standaardwaarden: kolom 3,501–4,000% (officieel), deel 2 in box 3, en € 1.330.000 past niet', () => {
     const core = computeCore(d);
-    expect(core.combinedGap.withinCapacity).toBe(true);
+    expect(core.currentMortgage.composite.band.upper).toBe(4.0);
     expect(core.currentMortgage.composite.band.exact).toBe(true);
+    expect(core.currentMortgage.portedParts[1].box3).toBe(true);
+    expect(core.combinedGap.withinCapacity).toBe(false);
   });
 });
 
@@ -102,10 +110,9 @@ describe('rekenverantwoording: inhoud klopt met de rekenkern', () => {
 
   it('toont uitkomst, ruimte en bindende grens', () => {
     expect(report.result.maxTotalMortgage).toBeCloseTo(breakdown.maxTotalMortgage, 6);
-    expect(report.result.feasible).toBe(true);
+    expect(report.result.feasible).toBe(false);
     expect(text).toContain(`€ ${nl0(breakdown.maxTotalMortgage)}`);
     expect(text).toContain('Haalbaar?');
-    expect(text).toContain('Ja, deze woning past');
   });
 
   it('de afslagentabel heeft elke regel van de opbouw en de sluitingscontrole', () => {
@@ -132,35 +139,41 @@ describe('rekenverantwoording: inhoud klopt met de rekenkern', () => {
     expect(text).toContain('Lening 2: DUO-maandbedrag € 190,00');
   });
 
-  it('gebruikt voor deze invoer alleen officiële woonquote-kolommen', () => {
-    expect(text).toContain('zijn voor deze berekening niet gebruikt');
+  it('noemt de officiële tabellen en de box 3-brutering van deel 2', () => {
+    expect(text).toContain('volledig en letterlijk overgenomen uit Stcrt. 2025, 36471');
+    expect(text).toContain('bruteringsfactor Tabel 1 ÷ Tabel 3');
     expect(report.warnings).toEqual([]);
   });
 
   it('de afslagentotalen komen overeen met de opbouw', () => {
     expect(report.result.afslagen.total).toBeCloseTo(breakdown.afslagen.total, 8);
-    expect(report.result.maxAffordablePrice).toBe(1334000);
+    // De hoogste haalbare prijs (op € 1.000) past wel, € 1.000 meer niet.
+    const max = report.result.maxAffordablePrice;
+    expect(evaluateAffordability({ ...d, purchasePrice: max }).affordable).toBe(true);
+    expect(evaluateAffordability({ ...d, purchasePrice: max + 1000 }).affordable).toBe(false);
   });
 
   it('toont de gekozen nieuwe leningdelen: volledig annuïtair, met maandlast en toets van deze verdeling', () => {
     // De automatische verdeling is in de app al toegepast; hier het dossier zoals de app het bewaart.
-    const full = reportFor({ additionalLoanParts: [{ id: 2, type: 'Annuïteit', principal: '323980', rate: 4.69, originalFixedYears: 10 }] });
+    const need = String(Math.round(core.combinedGap.additionalMortgage));
+    const full = reportFor({ additionalLoanParts: [{ id: 2, type: 'Annuïteit', principal: need, rate: 4.69, originalFixedYears: 10 }] });
     const uit = full.report.sections.find((s) => s.id === 'uitkomst');
     const tbl = uit.blocks.find((b) => b.type === 'table');
     expect(tbl.rows).toHaveLength(1);
     expect(tbl.rows[0][0]).toBe('Annuïteit');
-    expect(tbl.rows[0][1]).toBe('€ 323.980');
+    expect(tbl.rows[0][1]).toBe(`€ ${nl0(Number(need))}`);
     expect(tbl.rows[0][2]).toBe('4,69%');
-    // Eerste maand: annuïteit € 323.980 tegen 4,69% over 360 maanden.
+    // Eerste maand: annuïteit van het benodigde bedrag tegen 4,69% over 360 maanden.
     const r = 0.0469 / 12;
-    const pmt = (323980 * r) / (1 - Math.pow(1 + r, -360));
+    const pmt = (Number(need) * r) / (1 - Math.pow(1 + r, -360));
     expect(tbl.rows[0][6]).toBe(`€ ${pmt.toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`);
     const t = reportToText(full.report);
     expect(t).toContain('Toets van deze verdeling: ruimte (+) of tekort (-)');
     // Deze verdeling past precies als de capaciteit minus het benodigde bedrag positief is.
     const marginRow = uit.blocks.find((b) => b.type === 'kv' && b.rows.some((x) => x[0].startsWith('Toets van deze verdeling: ruimte')));
     const shown = marginRow.rows.find((x) => x[0].startsWith('Toets van deze verdeling: ruimte'))[1];
-    expect(shown).toBe(`€ ${new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 0 }).format(Math.round(full.core.combinedGap.capacityMargin))}`);
+    const m = Math.round(full.core.combinedGap.capacityMargin);
+    expect(shown).toBe(m < 0 ? `- € ${nl0(-m)}` : `€ ${nl0(m)}`);
   });
 
   it('de reproductiesectie heeft alle invoer voor Excel, met de labels van het Excel-model', () => {
@@ -211,11 +224,10 @@ describe('ronde-reis: dossier -> Excel-invoer -> dossier geeft dezelfde uitkomst
 });
 
 describe('beperkingen worden gemeld', () => {
-  it('geschatte woonquote-kolom geeft een waarschuwing in de verantwoording', () => {
-    // Rente nieuw geld 3,2% en lang vast: gewogen toetsrente valt in de geschatte kolom 3,5%.
+  it('geen schattingen meer: ook de kolom 3,001–3,500% is officieel (geen waarschuwing)', () => {
     const { report } = reportFor({ rate: 3.2, takeOverMortgage: false });
-    expect(report.warnings.join(' ')).toContain('Geschatte woonquote-kolom');
-    expect(reportToText(report)).toContain('LET OP: voor deze berekening is een woonquote-kolom gebruikt');
+    expect(report.warnings.join(' ')).not.toContain('Geschatte');
+    expect(reportToText(report)).toContain('kolom 3,001');
   });
   it('ontbrekend pensioeninkomen: de AOW-toets is niet uitgevoerd en dat staat erbij', () => {
     const { report } = reportFor({ age1: '60' });

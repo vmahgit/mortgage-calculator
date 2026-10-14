@@ -45,10 +45,17 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
     expect(row(b, 'income').amount).toBeCloseTo(woonlast * capFactor(RATE), 4);
   });
 
-  it('afslag tweede woning = annuïteit € 42.000 @ 1% over 20 jaar × kapitalisatiefactor', () => {
+  it('standaard: geen tweede woning en eigen geld € 60.000 + € 16.000', () => {
+    expect(d.hasSecondHome).toBe(false);
+    expect(row(b, 'secondHome')).toBeUndefined();
+    expect(core.calc.totalOwnCapital).toBe(76000);
+  });
+
+  it('afslag tweede woning (indien aangehouden) = annuïteit € 42.000 @ 1% over 20 jaar × kapitalisatiefactor', () => {
     const monthly = payment(42000, 1.0, 240);
     expect(monthly).toBeCloseTo(193.16, 2);
-    expect(-row(b, 'secondHome').amount).toBeCloseTo(monthly * capFactor(RATE), 4);
+    const alt = run({ hasSecondHome: true }).b;
+    expect(-row(alt, 'secondHome').amount).toBeCloseTo(monthly * capFactor(RATE), 4);
   });
 
   it('afslag studieschuld: beide leningen, DUO-maandbedragen € 142 + € 190 × opslagfactor 1,25', () => {
@@ -80,7 +87,6 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
     expect(row(b, 'energy').amount).toBe(10000);
     const expected =
       row(b, 'income').amount +
-      row(b, 'secondHome').amount +
       row(b, 'study').amount +
       row(b, 'energy').amount;
     expect(row(b, 'incomeMax').amount).toBeCloseTo(expected, 4);
@@ -88,19 +94,18 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
   });
 
   // Toets van de samenstelling: elk meegenomen deel annuïtair tegen zijn eigen toetsrente, de
-  // woonquote uit de gewogen toetsrente (gewicht hoofdsom × looptijd).
+  // woonquote uit de gewogen toetsrente (gewicht hoofdsom × looptijd). Deel 2 is aflossingsvrij en
+  // aangegaan in 2021: box 3, dus zijn toetslast telt mee met de bruteringsfactor Tabel 1 ÷ Tabel 3.
   const K1 = 269480.64; // annuïteit 1,25%, nog 52 mnd rentevast → AFM-toetsrente 5%, 292 mnd
   const K2 = 354269.27; // aflossingsvrij 1,85%, nog 172 mnd rentevast → 1,85%, altijd 360 mnd
   const T1 = payment(K1, 5.0, 292);
   const T2 = payment(K2, 1.85, 360);
   const weightedAt = (x) => (K1 * 292 * 5 + K2 * 360 * 1.85 + x * 360 * RATE) / (K1 * 292 + K2 * 360 + x * 360);
-  // Gewogen toetsrente ≈ 3,65% → kolom 3,501–4,000% (officiële kolom, 27,4% bij het hoogste inkomen).
+  // Gewogen toetsrente ≈ 3,6% → kolom 3,501–4,000%, rij € 125.000: Tabel 1 27,4%, Tabel 3 22,6%.
   const wq = 0.274;
+  const grossUp = 0.274 / 0.226;
   const studyMonthly = 332 * 1.25;
-  const X =
-    ((wq * INC) / 12 - payment(42000, 1.0, 240) - T1 - T2) * capFactor(RATE) -
-    studyMonthly * capFactor(RATE) +
-    10000;
+  const X = ((wq * INC) / 12 - T1 - T2 * grossUp) * capFactor(RATE) - studyMonthly * capFactor(RATE) + 10000;
 
   it('meegenomen delen: elk deel neemt zijn eigen toetslast uit de woonlast', () => {
     const ported = row(b, 'ported');
@@ -112,9 +117,10 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
     expect(p2.testRate).toBe(1.85);
     expect(p2.termMonths).toBe(360);
     expect(p2.toetslast).toBeCloseTo(T2, 6);
-    expect(-ported.amount).toBeCloseTo((T1 + T2) * capFactor(RATE), 4);
-    // Deel 2 kost minder leenruimte dan zijn saldo (lange lage rente), deel 1 meer.
-    expect(p2.capacityUsed).toBeLessThan(K2);
+    expect(p1.box3).toBe(false);
+    expect(p2.box3).toBe(true);
+    expect(p2.grossUp).toBeCloseTo(grossUp, 10);
+    expect(-ported.amount).toBeCloseTo((T1 + T2 * grossUp) * capFactor(RATE), 4);
     expect(p1.capacityUsed).toBeGreaterThan(K1);
   });
 
@@ -134,12 +140,12 @@ describe('standaardscenario, onafhankelijk nagerekend', () => {
   it('restschuld per vandaag is € 623.749,91; totaal = meegenomen + nieuw', () => {
     expect(b.portedDebt).toBeCloseTo(623749.91, 2);
     expect(core.currentMortgage.effectiveMaxMortgage).toBeCloseTo(623749.91 + X, 4);
-    // T.o.v. "alles tegen 4,69%" levert de samenstelling hier per saldo ruimte op: deel 2 tegen
-    // 1,85% wint het van deel 1 tegen 5% en de lagere woonquote-kolom.
-    const diff = 623749.91 + X - row(b, 'incomeMax').amount;
+    // T.o.v. "alles tegen 4,69%" kost de samenstelling hier per saldo ruimte: deel 1 telt tegen 5%,
+    // deel 2 als box 3-deel gebruteerd, en de gewogen rente valt in een lagere kolom.
+    const diff = row(b, 'incomeMax').amount - (623749.91 + X);
     expect(diff).toBeGreaterThan(0);
-    expect(b.afslagen.compositeBenefit).toBeCloseTo(diff, 4);
-    expect(b.afslagen.composite).toBe(0);
+    expect(b.afslagen.composite).toBeCloseTo(diff, 4);
+    expect(b.afslagen.compositeBenefit).toBe(0);
   });
 
   it('geldverstrekkersmaximum (€ 1.000.000) is hier niet beperkend', () => {

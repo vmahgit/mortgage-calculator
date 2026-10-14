@@ -28,18 +28,20 @@ describe('woonquote-tabel: kolom per 0,5% toetsrente, rij per € 1.000 inkomen'
     [4.0, 4.0, true],
     [3.501, 4.0, true],
     [3.6, 4.0, true],
-    [3.5, 3.5, false],
-    [3.5000000001, 3.5, false],
+    [3.5, 3.5, true],
+    [3.5000000001, 3.5, true],
     [1.2, 1.5, true],
-    [5.01, 5.5, false],
+    [5.01, 5.5, true],
   ])('toetsrente %s%% valt in de kolom tot %s%%', (rate, upper, exact) => {
     const band = getToetsrenteBand(rate);
     expect(band.upper).toBe(upper);
     expect(band.exact).toBe(exact);
   });
 
-  it('boven 6% valt de toets terug op de hoogste bekende kolom', () => {
-    expect(getToetsrenteBand(6.7)).toMatchObject({ upper: 6.0, aboveTable: true });
+  it('boven 6,5% geldt de officiële kolom ≥ 6,501% (Tabel 1, € 125.000: 32,2%)', () => {
+    expect(getToetsrenteBand(6.7)).toMatchObject({ index: 11, upper: Infinity, aboveTable: false });
+    expect(getWoonquote(233000, 6.7)).toBeCloseTo(0.322, 10);
+    expect(getWoonquote(233000, 6.2)).toBeCloseTo(0.315, 10);
   });
 
   it('binnen één kolom geen interpolatie: 3,6% en 4,0% geven dezelfde woonquote', () => {
@@ -157,8 +159,8 @@ describe('feitencontrole 2026: tarieven en toetsregels', () => {
   });
 
   it('tweede woning: toetslast tegen de AFM-toetsrente bij minder dan 10 jaar rentevast', () => {
-    const lang = run({ secondHomeFixedYears: 10 }).core.calc;
-    const kort = run({ secondHomeFixedYears: 5 }).core.calc;
+    const lang = run({ hasSecondHome: true, secondHomeFixedYears: 10 }).core.calc;
+    const kort = run({ hasSecondHome: true, secondHomeFixedYears: 5 }).core.calc;
     const pmt = (p, r, n) => ((p * r) / 1200) / (1 - Math.pow(1 + r / 1200, -n));
     expect(lang.secondHomeTestRate).toBe(1.0);
     expect(lang.secondHomeMonthly).toBeCloseTo(pmt(42000, 1.0, 240), 8);
@@ -170,7 +172,7 @@ describe('feitencontrole 2026: tarieven en toetsregels', () => {
   });
 
   it('tweede woning aflossingsvrij: toetslast is een annuïteit over 30 jaar, niet alleen rente', () => {
-    const { calc } = run({ secondHomeRepaymentType: 'Aflossingsvrij', secondHomeFixedYears: 10 }).core;
+    const { calc } = run({ hasSecondHome: true, secondHomeRepaymentType: 'Aflossingsvrij', secondHomeFixedYears: 10 }).core;
     const r = 1.0 / 1200;
     expect(calc.secondHomeMonthly).toBeCloseTo((42000 * r) / (1 - Math.pow(1 + r, -360)), 8);
     expect(calc.secondHomeMonthly).toBeGreaterThan(42000 * r);

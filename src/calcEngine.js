@@ -1,7 +1,7 @@
 // Rekenkern van de hypotheekcalculator: zuivere functies op een dossier-object, zonder React of
 // DOM. Het component (MortgageCalculator.jsx) en de unit tests gebruiken dezelfde code.
 
-import { getIncomeBasedMortgage, getToetsrenteBand, getWoonquote } from './nibud2026';
+import { getBox3GrossUp, getIncomeBasedMortgage, getToetsrenteBand, getWoonquote } from './nibud2026';
 import { getToetsinkomen } from './toetsinkomen';
 import { getTransferTaxRate, getKostenKoperBreakdown, KOSTEN_KOPER_DEFAULTS } from './kostenKoper';
 import { STUDY_LOAN_PRESETS, computeStudyDebt, getStudyDebtConfig, getWeightedDebetrente } from './studieschuld';
@@ -145,6 +145,31 @@ export function getAnnuityPayment(balance, ratePct, months) {
   return (P * r) / (1 - Math.pow(1 + r, -n));
 }
 
+// Valt de rente van een leningdeel in box 3 (niet aftrekbaar)? Instelbaar per deel via `fiscal`
+// ('box1' | 'box3'); standaard ('auto') is alleen een aflossingsvrij deel dat na 2013 is aangegaan
+// niet aftrekbaar (zonder overgangsrecht). Bepaalt de renteaftrek én de toets (Tabel 3/4).
+export function isBox3Part(part, startDate) {
+  if (part.fiscal === 'box1') return false;
+  if (part.fiscal === 'box3') return true;
+  return part.type === 'Aflossingsvrij' && getYearFromDate(startDate) > 2013;
+}
+
+// Toetslast van een set leningdelen bij een gegeven rij/kolom: box 3-delen tellen mee met de
+// bruteringsfactor Tabel 1 ÷ Tabel 3 (bij AOW Tabel 2 ÷ Tabel 4), zodat ze effectief tegen het lagere
+// box 3-percentage worden getoetst (o.a. acceptatiegids Lloyds Bank).
+export function getGrossedToetslast(parts, income, rate, { aow = false } = {}) {
+  let box1 = 0;
+  let box3 = 0;
+  for (const p of parts) {
+    if (!(p.balance > 0)) continue;
+    const t = p.toetslast ?? getAnnuityPayment(p.balance, p.testRate, p.termMonths);
+    if (p.box3) box3 += t;
+    else box1 += t;
+  }
+  const grossUp = box3 > 0 ? getBox3GrossUp(income, rate, { aow }) : 1;
+  return { box1, box3, grossUp, total: box1 + box3 * grossUp };
+}
+
 // Alleenstaanden mogen € 17.000 extra lenen, buiten de financieringslast om, mits het
 // toetsinkomen minstens het (verwachte) minimumloon is; vanaf de AOW-leeftijd geldt de bruto
 // AOW-uitkering als grens (bedragen 2026).
@@ -155,7 +180,8 @@ export const SINGLE_HOUSEHOLD_MIN_INCOME_AOW = 29000;
 export function getSingleHouseholdBonus(hasPartner2, toetsinkomen, { aow = false } = {}) {
   if (hasPartner2) return 0;
   const min = aow ? SINGLE_HOUSEHOLD_MIN_INCOME_AOW : SINGLE_HOUSEHOLD_MIN_INCOME;
-  return toetsinkomen >= min ? SINGLE_HOUSEHOLD_BONUS : 0;
+  // Art. 3 lid 8: een toetsinkomen dat "hoger is dan" de grens.
+  return toetsinkomen > min ? SINGLE_HOUSEHOLD_BONUS : 0;
 }
 
 // Toets per meegenomen leningdeel, zoals een geldverstrekker de samenstelling toetst:
@@ -185,6 +211,7 @@ export function getPortedPartTests(d, refDate = new Date()) {
       remainingFixedMonths: fixed.remainingMonths,
       remainingFixedYears: fixed.fractionalYears,
       termMonths,
+      box3: isBox3Part(part, d.startDate),
       toetslast: getAnnuityPayment(balance, testRate, termMonths),
     };
   });
@@ -221,15 +248,21 @@ export function computeCompositeCapacity({
 }) {
   const f = getCapitalizationFactor(newRate);
   const parts = ported.filter((p) => p.balance > 0);
-  const portedToetslast = parts.reduce((s, p) => s + p.toetslast, 0);
   const A = parts.reduce((s, p) => s + p.balance * p.termMonths * p.testRate, 0);
   const B = parts.reduce((s, p) => s + p.balance * p.termMonths, 0);
   const weightedAt = (x) => getWeightedTestRate(
     [...parts, { balance: x, termMonths: TERM_MONTHS, testRate: newRate }],
     newRate
   );
-  const solve = (wq) =>
-    Math.max(0, ((wq * income) / 12 - monthlyDebt - portedToetslast) * f - studyAfslag + bonus);
+  // Box 3-delen tellen per kolom mee met de bruteringsfactor van die kolom.
+  const portedToetslastAt = (rate) => getGrossedToetslast(parts, income, rate, { aow }).total;
+  const solveAt = (rate) => {
+    const wq = getWoonquote(income, rate, { aow });
+    return {
+      wq,
+      x: Math.max(0, ((wq * income) / 12 - monthlyDebt - portedToetslastAt(rate)) * f - studyAfslag + bonus),
+    };
+  };
 
   // Bedragen waarbij de gewogen toetsrente een kolomgrens passeert.
   const breaks = [0];
@@ -253,18 +286,19 @@ export function computeCompositeCapacity({
     const b = j + 1 < breaks.length ? breaks[j + 1] : Infinity;
     const probe = Number.isFinite(b) ? (a + b) / 2 : a * 2 + 1000000;
     const rate = weightedAt(probe);
-    const wq = getWoonquote(income, rate, { aow });
-    const x = solve(wq);
+    const { wq, x } = solveAt(rate);
     if (x < a - 1e-9) continue;
     // Op de grens zelf geldt al de volgende kolom; één euro eronder blijft in deze kolom.
     const amount = x > b ? Math.max(a, b - 1) : x;
     if (!best || amount > best.amount) {
-      best = { amount, woonquote: wq, band: getToetsrenteBand(rate), cappedAtBand: x > b };
+      best = { amount, woonquote: wq, rate, band: getToetsrenteBand(rate), cappedAtBand: x > b };
     }
   }
 
   const amount = best ? best.amount : 0;
   const woonquote = best ? best.woonquote : getWoonquote(income, newRate, { aow });
+  const bandRate = best ? best.rate : weightedAt(0);
+  const grossed = getGrossedToetslast(parts, income, bandRate, { aow });
   return {
     amount,
     woonquote,
@@ -272,9 +306,16 @@ export function computeCompositeCapacity({
     cappedAtBand: best ? best.cappedAtBand : false,
     weightedRate: weightedAt(amount),
     maxWoonlast: (woonquote * income) / 12,
-    portedToetslast,
+    // Toetslast van de meegenomen delen zoals die in de toets telt (box 3-delen gebruteerd).
+    portedToetslast: grossed.total,
+    box3GrossUp: grossed.grossUp,
+    box3Toetslast: grossed.box3,
     capitalizationFactor: f,
-    parts: parts.map((p) => ({ ...p, capacityUsed: p.toetslast * f })),
+    parts: parts.map((p) => ({
+      ...p,
+      grossUp: p.box3 ? grossed.grossUp : 1,
+      capacityUsed: p.toetslast * (p.box3 ? grossed.grossUp : 1) * f,
+    })),
   };
 }
 
@@ -294,10 +335,8 @@ export function testLoanComposition({
   const weightedRate = getWeightedTestRate(all, refRate);
   const woonquote = getWoonquote(income, weightedRate, { aow });
   const maxWoonlast = (woonquote * income) / 12;
-  const toetslast = all.reduce(
-    (s, p) => s + (p.toetslast ?? getAnnuityPayment(p.balance, p.testRate, p.termMonths)),
-    0
-  );
+  // Box 3-delen (meegenomen of nieuw aflossingsvrij) tellen gebruteerd mee.
+  const toetslast = getGrossedToetslast(all, income, weightedRate, { aow }).total;
   const f = getCapitalizationFactor(refRate);
   const margin = (maxWoonlast - monthlyDebt - toetslast) * f - studyAfslag + bonus;
   return { weightedRate, woonquote, maxWoonlast, toetslast, margin };
@@ -430,7 +469,7 @@ export function calculateLoanPart(part, elapsedMonths, startDate) {
     }
   }
 
-  const eligibleForHRA = part.type !== 'Aflossingsvrij' || getYearFromDate(startDate) <= 2013;
+  const eligibleForHRA = !isBox3Part(part, startDate);
   const fixedPeriod = getRemainingFixedPeriod(part.originalFixedYears, elapsedMonths);
   const fixedPeriodExpiringSoon = fixedPeriod.remainingMonths > 0 && fixedPeriod.fractionalYears <= 2;
 
@@ -473,8 +512,8 @@ export const DOSSIER_DEFAULTS = {
   income2: 107000,
   age1: '36',
   age2: '36',
-  ownCapital1: 125000,
-  ownCapital2: 25000,
+  ownCapital1: 60000,
+  ownCapital2: 16000,
   ownCapital1Liquid: true,
   ownCapital2Liquid: true,
   rate: 4.69,
@@ -541,7 +580,7 @@ export const DOSSIER_DEFAULTS = {
   avgBonus1: '0',
   avgBonus2: '0',
   hasExistingHome: true,
-  hasSecondHome: true,
+  hasSecondHome: false,
   secondHomeWillSell: false,
   useSecondHomeProceeds: true,
   secondHomeValue: '300000',
@@ -586,6 +625,7 @@ export const DOSSIER_DEFAULTS = {
       balanceAsOf: '2026-10-08',
       rate: 1.25,
       originalFixedYears: 10,
+      fiscal: 'auto',
     },
     {
       id: 2,
@@ -595,6 +635,7 @@ export const DOSSIER_DEFAULTS = {
       balanceAsOf: '2026-10-08',
       rate: 1.85,
       originalFixedYears: 20,
+      fiscal: 'auto',
     },
   ],
   loanPartsBasis: 'aanvang',
@@ -1364,11 +1405,14 @@ export function computeNewMoneyNeeded({
 // woonquote bij de gewogen toetsrente. margin: ruimte (+) of tekort (-) in euro's van dit bedrag aan
 // leningdelen; bij het pensioenscenario (AOW) telt het laagste van beide.
 export function testAdditionalParts(d, calc, currentMortgage, parts) {
+  const todayIso = new Date().toISOString().slice(0, 10);
   const newPartTests = parts.map((part) => ({
     balance: safeNum(part.principal),
     rate: safeNum(part.rate),
     testRate: getTestRate(part.rate, part.originalFixedYears),
     termMonths: TERM_MONTHS,
+    // Een nieuw aflossingsvrij deel valt in box 3 (Tabel 3), tenzij anders ingesteld.
+    box3: isBox3Part(part, todayIso),
   }));
   const ratePartsAtAfm = newPartTests.filter((p) => p.balance > 0 && p.testRate !== p.rate);
   const common = {
