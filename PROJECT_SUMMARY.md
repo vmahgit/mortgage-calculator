@@ -19,6 +19,8 @@
   AOW-toets niet kon worden uitgevoerd en welke opties Excel niet kent (NHG-provisie, eigen-inleg-limiet, familielening als bedrag,
   overbruggingskrediet). `toScenarioSpec` zet een dossier om naar het Excel-invoerformaat (ronde-reis getest); een test bewaakt dat de
   Excel-labels in het rapport bestaan in `build_toetsmodel.py`.
+- **Deploy**: Vercel is op 14 okt. 2026 aan GitHub (`vmahgit/mortgage-calculator`, branch `main`) gekoppeld; elke push naar `main` bouwt
+  nu automatisch. Een preview staat ook als privé claude.ai-pagina. De cloudomgeving kan Vercel zelf niet bereiken (geen token/netwerk).
 - **Tests**: 570 (was 539): `src/calculationReport.test.js` (31), `src/toetsmodelBridge.js` is de gedeelde scenario-brug. Excel-model en
   scenario's bijgewerkt op de nieuwe standaard; kruiscontrole 10 + 120 willekeurige scenario's: 0 afwijkingen.
 
