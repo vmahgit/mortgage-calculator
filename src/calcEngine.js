@@ -16,7 +16,17 @@ export const ADDITIONAL_SPLIT_MODES = {
   aflossingsvrijEerst: 'Eerst aflossingsvrij tot de bancaire grens, rest annuïtair',
 };
 
-export function splitAdditionalMortgage({ needed, mode, aflossingsvrijRoom = 0, rate, fixedYears }) {
+// Woonnu (productkaart 17-03-2026): renteopslag op een aflossingsvrij leningdeel.
+export const AFLOSSINGSVRIJ_RATE_SURCHARGE = 0.4;
+
+export function splitAdditionalMortgage({
+  needed,
+  mode,
+  aflossingsvrijRoom = 0,
+  rate,
+  fixedYears,
+  aflossingsvrijSurcharge = AFLOSSINGSVRIJ_RATE_SURCHARGE,
+}) {
   const total = Math.max(0, Math.round(safeNum(needed)));
   const interestOnly = mode === 'aflossingsvrijEerst' ? Math.min(Math.max(0, aflossingsvrijRoom), total) : 0;
   const interestOnlyRounded = Math.round(interestOnly);
@@ -24,7 +34,13 @@ export function splitAdditionalMortgage({ needed, mode, aflossingsvrijRoom = 0, 
   const base = { rate: safeNum(rate), originalFixedYears: safeNum(fixedYears) };
   const parts = [];
   if (interestOnlyRounded > 0) {
-    parts.push({ id: 1, type: 'Aflossingsvrij', principal: String(interestOnlyRounded), ...base });
+    parts.push({
+      id: 1,
+      type: 'Aflossingsvrij',
+      principal: String(interestOnlyRounded),
+      ...base,
+      rate: Math.round((base.rate + safeNum(aflossingsvrijSurcharge)) * 100) / 100,
+    });
   }
   if (rest > 0 || parts.length === 0) {
     parts.push({ id: 2, type: 'Annuïteit', principal: String(rest), ...base });
@@ -89,6 +105,28 @@ export const TOETSRENTE = getStudyDebtConfig(REGULATION_YEAR).afmToetsrente;
 // een redelijke default; gebruikers met een afwijkend maximum bij hun eigen
 // geldverstrekker kunnen dit zelf aanpassen (zie lenderCapThreshold state).
 export const LENDER_CAP_THRESHOLD_DEFAULT = 1000000;
+// Woonnu: overbrugging bij een verkochte woning tot 98% van de verkoopprijs.
+export const SOLD_FINANCING_PCT = 98;
+// Woonnu (acceptatiegids 4.4): leningen van derden, zoals familie, tellen in de toets als last van 2% per
+// maand over de hoofdsom (of de werkelijke last als die hoger is).
+export const THIRD_PARTY_LOAN_MONTHLY_PCT = 2;
+
+// Regels die per geldverstrekker verschillen. Met woonnuRules (standaard aan) gelden de regels van Woonnu
+// (productkaart 17-03-2026, acceptatiegids maart 2026); uit = algemene uitgangspunten.
+export function getLenderRules(d) {
+  const woonnu = d.woonnuRules !== false;
+  return {
+    woonnu,
+    // Overwaarde van een verkochte woning: % van de verkoopprijs (en nooit meer dan de netto opbrengst).
+    soldFinancingPct: woonnu ? SOLD_FINANCING_PCT : 100,
+    // Gemiddelde bonus/variabel inkomen in het toetsinkomen.
+    bonusWeight: woonnu ? 0.5 : 1,
+    // Renteopslag op een aflossingsvrij leningdeel.
+    aflossingsvrijSurcharge: woonnu ? AFLOSSINGSVRIJ_RATE_SURCHARGE : 0,
+    // Lening van familie/derden in de toets (% van de hoofdsom per maand); null = geen vaste regel.
+    thirdPartyLoanPct: woonnu ? THIRD_PARTY_LOAN_MONTHLY_PCT : null,
+  };
+}
 
 // Het veld is optioneel: leeg betekent de standaardgrens, niet een plafond van €0.
 export function getLenderCap(value) {
@@ -670,6 +708,10 @@ export const DOSSIER_DEFAULTS = {
   // Looptijd waarover de toetslast van meegenomen annuïtaire/lineaire delen wordt berekend:
   // 'resterend' (art. 3, standaard) of '30jaar' (als de geldverstrekker dat toestaat).
   portedTermBasis: 'resterend',
+  // Regels van Woonnu toepassen (zie getLenderRules); de familielening is afgedekt (extra onderpand of
+  // aantoonbaar ander vermogen), zodat Woonnu haar niet als last van 2% per maand toetst.
+  woonnuRules: true,
+  cfFamilyLoanCovered: true,
   additionalLoanParts: [
     { id: 1, type: 'Annuïteit', principal: '0', rate: 4.69, originalFixedYears: 10 },
   ],
@@ -851,6 +893,7 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
     history: incomeHistory1,
     thirteenthMonth: thirteenthMonth1,
     avgBonus: avgBonus1,
+    bonusWeight: getLenderRules(d).bonusWeight,
     alimonyMonthly: partnerAlimony1,
   });
   // Bij één aanvrager telt Partner 2 nergens mee, ongeacht wat er nog in die velden
@@ -863,6 +906,7 @@ export function computeCalc(d, { extraLiquidCapital = 0, newMoney = 0 } = {}) {
         history: incomeHistory2,
         thirteenthMonth: thirteenthMonth2,
         avgBonus: avgBonus2,
+        bonusWeight: getLenderRules(d).bonusWeight,
         alimonyMonthly: partnerAlimony2,
       })
     : getToetsinkomen({ incomeType: 'vast', income: 0 });
@@ -1350,12 +1394,13 @@ export function computeCurrentMortgage(d, calc) {
   // tellen de nog niet (onvoorwaardelijk) verkochte woning echter niet voor 100% mee als
   // onderpand voor de financiering, maar hanteren een verkoopafslag (bijvoorbeeld 95%). De
   // "bruikbare" overwaarde voor financieringsdoeleinden houdt hier rekening mee.
-  // Is de woning al (onvoorwaardelijk) verkocht, dan staat de opbrengst vast: de verkoopprijs min de
-  // verkoopkosten telt dan voor 100% mee, zonder verkoopafslag.
+  // Is de woning al (onvoorwaardelijk) verkocht, dan staat de opbrengst vast. Woonnu financiert de
+  // overwaarde dan tot 98% van de verkoopprijs (productkaart/acceptatiegids 1.10.1), en nooit meer dan de
+  // netto opbrengst na verkoopkosten. Nog niet verkocht: de verkoopafslag op de marktwaarde (95%).
   const sold = !!d.currentHomeSold && safeNum(d.salePrice) > 0;
   const netSaleProceeds = safeNum(d.salePrice) - safeNum(d.saleCosts);
   const saleValueForFinancing = sold
-    ? netSaleProceeds
+    ? Math.min(safeNum(d.salePrice) * (getLenderRules(d).soldFinancingPct / 100), netSaleProceeds)
     : safeNum(marketValue) * (saleDiscountPercentage / 100);
   const overwaarde = (sold ? netSaleProceeds : safeNum(marketValue)) - currentDebtBalance;
   const usableOverwaarde = Math.max(0, saleValueForFinancing - currentDebtBalance);

@@ -39,6 +39,8 @@ export function getToetsinkomen({
   history = { y1: '', y2: '', y3: '' },
   thirteenthMonth = 0,
   avgBonus = 0,
+  // Deel van de gemiddelde bonus dat meetelt (Woonnu zonder NHG: 50%, zie getLenderRules).
+  bonusWeight = 1,
   alimonyMonthly = 0,
 }) {
   const usesHistory = incomeType === 'flexZonder' || incomeType === 'zzp';
@@ -68,7 +70,9 @@ export function getToetsinkomen({
     base = num(income);
   }
 
-  const structural = Math.max(0, num(thirteenthMonth)) + Math.max(0, num(avgBonus));
+  // Vaste 13e maand telt volledig; een gemiddelde bonus is variabel inkomen en telt voor bonusWeight mee
+  // (Woonnu zonder NHG: 50%, acceptatiegids 3.2).
+  const structural = Math.max(0, num(thirteenthMonth)) + num(bonusWeight) * Math.max(0, num(avgBonus));
   const alimonyDeduction = 12 * Math.max(0, num(alimonyMonthly));
   const toetsinkomen = Math.max(0, base + structural - alimonyDeduction);
 

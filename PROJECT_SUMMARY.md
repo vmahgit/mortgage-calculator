@@ -1,5 +1,42 @@
 # Hypotheekcalculator 2026 — projectsamenvatting
 
+## Sessie okt. 2026 (12): schakelaar "Regels van Woonnu toepassen" (standaard aan)
+- **Waarom**: de regels uit sessie 11 zijn specifiek voor Woonnu. `getLenderRules(d)` (calcEngine) bundelt ze achter
+  dossierveld `woonnuRules` (standaard `true`; uit = algemene uitgangspunten):
+  verkochte woning 98% van de verkoopprijs (uit: 100%, max. netto opbrengst), bonus telt 50% (uit: 100%, via
+  `getToetsinkomen({ bonusWeight })`; `BONUS_WEIGHT` is weg), aflossingsvrij +0,40% (uit: 0, parameter
+  `aflossingsvrijSurcharge` van `splitAdditionalMortgage`), familielening 2% p/m in de toets (uit: geen vaste regel) en de
+  tekst over het 1-jaarstarief tijdens de overbrugging.
+- **Familielening afgedekt** (`cfFamilyLoanCovered`, standaard `true`): de gebruiker brengt waarschijnlijk een extra
+  onderpand in of toont ander vermogen aan (spaargeld/beleggingen) voor de ca. 2 maanden tussen levering en verkoop.
+  Dan geen waarschuwing `familyToets` maar een neutrale notitie (`cf.notes`, key `familyCovered`) met het advies dit
+  door de adviseur bij Woonnu te laten bevestigen. Het vinkje staat in de kasstromen zodra er een familielening is.
+- **UI**: Aan/Uit-knop in "Uw situatie" onder het maximum van de geldverstrekker (`data-woonnu-toggle`); beide velden
+  zitten in `CASHFLOW_FIELDS`. Teksten bij "verkocht", het bonuslabel en de overbruggingsrente volgen de schakelaar.
+  Rapport: % en "(Woonnu)" via `getLenderRules`.
+- **Gecontroleerd in de browser** (verkocht): aan € 933.178 telt mee / overwaarde € 309.428; uit € 941.748 / € 317.998.
+- **Tests**: 635 (toggle-tests in `kasstromen.test.js`, `toetsinkomen.test.js` met en zonder bonusWeight).
+
+## Sessie okt. 2026 (11): Woonnu-productkaart en -acceptatiegids verwerkt, verschil met adviseur verklaard
+- **Bronnen** (adviseurs.woonnu.nl/downloads): productkaart 17-03-2026 (pagina 2 heeft de tekst; pagina 1 is een
+  voorblad) en acceptatiegids maart 2026. Lezen kon alleen via pdf.js in de browser (lokaal geen pypdf/poppler; tijdelijke
+  viewer in `public/tmp-woonnu/` is weer verwijderd). Rentetarieven staan er niet in (medio 2026: 1 jaar vast ±3,8%).
+- **Doorgevoerd**: verkochte woning telt tot 98% van de verkoopprijs (`SOLD_FINANCING_PCT`, max. netto opbrengst);
+  familielening telt bij Woonnu als last van 2% p/m van de hoofdsom (acceptatiegids 4.4) → waarschuwing met
+  capaciteitseffect in de kasstromen (`familyTestMonthly`, `familyCapacityImpact`); aflossingsvrij +0,40% rente bij
+  automatisch verdelen (`AFLOSSINGSVRIJ_RATE_SURCHARGE`); gemiddelde bonus telt voor 50% (`BONUS_WEIGHT`, 3.2); uitleg
+  dat Woonnu de oude lening tijdens de overbrugging omzet naar het 1-jaarstarief (1.12).
+- **Al in orde**: maximaal € 1 mln (excl. overbrugging), 100% van de getaxeerde marktwaarde (106% verduurzaming), 50%
+  aflossingsvrij, 95% van de marktwaarde bij onverkocht, TRHK-percentages en studieschuld volgens de TRHK-tabel (4.3).
+- **Verschil met de adviseur (€ 907.889), sluitend nagerekend** vanaf zijn reconstructie (€ 909.567; € 1.678 = zijn
+  resterende € 9 p/m): factor 1,20 i.p.v. 1,25 +€ 3.092; nieuw geld tegen 4,69% i.p.v. 5% +€ 10.476; box 3 als in onze
+  tool (27,4% en deel 2 × 27,4/22,6) i.p.v. zijn gemengde 24,934% +€ 35.858; verruiming als € 10.000 +€ 1.121 →
+  € 960.116 (= tool met 30 jaar); deel 1 over 292 i.p.v. 360 maanden −€ 29.052 → € 931.064 (= tool standaard).
+- **Plan zonder familielening** (verkocht, bankgarantie, Woonnu-overbrugging € 309.428, € 76.000 eigen geld): bij de max.
+  van de adviseur nog € 70.263 nodig bij levering (netto € 60.112 extra eigen geld), tool standaard € 47.088 / € 36.937,
+  tool 30 jaar € 18.037 / € 7.886.
+- **Tests**: 632 (+ `toetsinkomen.test.js`).
+
 ## Sessie okt. 2026 (10): factcheck, logischere flow en geïntegreerde kasstromen
 - **Taxatiewaarde** (`appraisalValue`, `getLtvBasis`): de 100%-grens (art. 5) gaat over de waarde van de woning, niet
   per se de koopsom. Boven de taxatie wordt niets geleend (`ltvCashShortfall`, telt mee in `remainingShortfall` /

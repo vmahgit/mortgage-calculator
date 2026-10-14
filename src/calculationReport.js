@@ -9,6 +9,7 @@
 import {
   ADDITIONAL_SPLIT_MODES,
   REGULATION_YEAR,
+  getLenderRules,
   TERM_MONTHS,
   TOETSRENTE,
   buildDebetrenteParts,
@@ -166,7 +167,10 @@ export function toScenarioSpec(d, core, refDate = new Date()) {
     parts,
     price: safeNum(d.purchasePrice),
     // Al verkocht: de verkoopprijs min verkoopkosten telt voor 100% (zelfde uitkomst als in de app).
-    mv: d.currentHomeSold && safeNum(d.salePrice) > 0 ? safeNum(d.salePrice) - safeNum(d.saleCosts) : safeNum(d.marketValue),
+    mv:
+      d.currentHomeSold && safeNum(d.salePrice) > 0
+        ? Math.min(safeNum(d.salePrice) * (getLenderRules(d).soldFinancingPct / 100), safeNum(d.salePrice) - safeNum(d.saleCosts))
+        : safeNum(d.marketValue),
     discount: d.currentHomeSold && safeNum(d.salePrice) > 0 ? 1 : safeNum(d.saleDiscountPercentage) / 100,
     own: Math.round(calc.totalOwnCapital),
     tax: calc.transferTaxInfo.rate,
@@ -708,7 +712,7 @@ notes.push('De woonquote-tabellen (Tabel 1-4) zijn volledig en letterlijk overge
   notes.push('Overige schulden tellen mee met 2% van het schuldbedrag per maand (een lagere vaste maandlast uit het contract mag een geldverstrekker accepteren).');
   notes.push(
     cm.sold
-      ? `De huidige woning is verkocht: verkoopprijs ${eur(safeNum(d.salePrice))} min verkoopkosten ${eur(safeNum(d.saleCosts))} telt voor 100% mee.`
+      ? `De huidige woning is verkocht: de overwaarde telt tot ${getLenderRules(d).soldFinancingPct}% van de verkoopprijs ${eur(safeNum(d.salePrice))}${getLenderRules(d).woonnu ? ' (Woonnu)' : ''}, en niet meer dan de netto opbrengst na ${eur(safeNum(d.saleCosts))} verkoopkosten.`
       : `Verkoopwaarde voor financiering = ${pct(d.saleDiscountPercentage, 0)} van de marktwaarde (nog niet verkocht).`
   );
   notes.push('Kosten koper gaan (indien meegeteld) eerst van het eigen geld af; wat het eigen geld niet dekt wordt meegefinancierd zolang de totale hypotheek onder 100% van de waarde van de woning blijft (taxatiewaarde, anders de koopsom; art. 5), daarboven is het een tekort aan eigen geld. NHG, erfpacht en verduurzaming boven 100% LTV zijn niet in deze toets opgenomen.');

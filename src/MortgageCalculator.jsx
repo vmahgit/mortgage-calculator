@@ -96,6 +96,7 @@ import {
   computeNewMoneyNeeded,
   splitAdditionalMortgage,
   ADDITIONAL_SPLIT_MODES,
+  AFLOSSINGSVRIJ_RATE_SURCHARGE,
 } from './calcEngine';
 
 function formatDateNL(dateStr) {
@@ -429,6 +430,8 @@ function SelectField({ id, label, icon, value, onChange, options }) {
 // Velden die als één object in de component-state staan (verkoop huidige woning, kasstromen en de
 // taxatiewaarde van de nieuwe woning).
 const CASHFLOW_FIELDS = [
+  'woonnuRules',
+  'cfFamilyLoanCovered',
   'appraisalValue',
   'currentHomeSold',
   'salePrice',
@@ -2549,6 +2552,32 @@ function CashflowSection({ cf, fields, setField, hasPartner2, links }) {
         )}
       </div>
 
+      {fields.woonnuRules && cf.familyTotal > 0 && (
+        <label className="mt-4 flex items-start gap-2 rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={!!fields.cfFamilyLoanCovered}
+            onChange={(e) => setField('cfFamilyLoanCovered', e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            De familielening is afgedekt (bijvoorbeeld met een extra onderpand of aantoonbaar ander vermogen zoals
+            spaargeld of beleggingen). Uit = Woonnu toetst haar als last van 2% per maand van de hoofdsom.
+          </span>
+        </label>
+      )}
+
+      {cf.notes.length > 0 && (
+        <ul className="mt-3 space-y-1 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+          {cf.notes.map((n) => (
+            <li key={n.key} className="flex items-start gap-1.5">
+              <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+              <span>{n.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
       {cf.warnings.length > 0 && (
         <ul className="mt-4 space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
           {cf.warnings.map((w) => (
@@ -2680,7 +2709,9 @@ function CashflowSection({ cf, fields, setField, hasPartner2, links }) {
             <CashflowLine label="Totale eigen inbreng inclusief deze lasten" value={cf.totalOwnInclCosts} />
             <p className="mt-2 text-[11px] text-slate-500">
               {sale.bridgeRateIsContract
-                ? 'Zonder ingevulde overbruggingsrente is de huidige (gewogen) contractrente gebruikt; vraag de rente van de overbrugging na bij uw geldverstrekker.'
+                ? fields.woonnuRules
+                  ? 'Zonder ingevulde rente is de huidige (gewogen) contractrente gebruikt. Let op: Woonnu zet bij meenemen vóór verkoop de lening op de oude woning om naar het tarief voor 1 jaar vast (acceptatiegids 1.12; medio 2026 ca. 3,8%). Vul dat tarief hierboven in.'
+                  : 'Zonder ingevulde rente is de huidige (gewogen) contractrente gebruikt; vraag de rente tijdens de overbrugging na bij uw geldverstrekker.'
                 : 'Met de ingevulde rente op de overbrugging.'}{' '}
               De maandlasten van de nieuwe hypotheek komen hier nog bij (zie de dubbele-lastentoets).
             </p>
@@ -3434,6 +3465,7 @@ function MortgageCalculatorForm({ onReset }) {
       aflossingsvrijRoom: priceNum * (aflossingsvrijMaxPct / 100) - portedAflossingsvrij,
       rate: safeNum(rate),
       fixedYears: fixedRatePeriod,
+      aflossingsvrijSurcharge: cashflowFields.woonnuRules ? AFLOSSINGSVRIJ_RATE_SURCHARGE : 0,
     });
     setAdditionalLoanParts((prev) => {
       const same =
@@ -3458,6 +3490,7 @@ function MortgageCalculatorForm({ onReset }) {
     additionalSplitMode,
     fixedRatePeriod,
     rate,
+    cashflowFields.woonnuRules,
   ]);
 
   // Scenario-analyse: wat betekent een hogere of lagere bieding t.o.v. de aanschafprijs
@@ -3713,6 +3746,7 @@ function MortgageCalculatorForm({ onReset }) {
       aflossingsvrijRoom: additionalLoanCalc.aflossingsvrijRoomRemaining,
       rate: safeNum(rate),
       fixedYears: fixedRatePeriod,
+      aflossingsvrijSurcharge: cashflowFields.woonnuRules ? AFLOSSINGSVRIJ_RATE_SURCHARGE : 0,
     });
     setAdditionalLoanParts(parts);
     // Hervat automatisch volgen: na "Automatisch verdelen" werken latere wijzigingen in
@@ -3789,6 +3823,7 @@ function MortgageCalculatorForm({ onReset }) {
       aflossingsvrijRoom: safeNum(purchasePrice) * (aflossingsvrijMaxPct / 100),
       rate: safeNum(rate),
       fixedYears: fixedRatePeriod,
+      aflossingsvrijSurcharge: cashflowFields.woonnuRules ? AFLOSSINGSVRIJ_RATE_SURCHARGE : 0,
     });
     setStarterLoanParts(parts);
   };
@@ -4857,6 +4892,37 @@ function MortgageCalculatorForm({ onReset }) {
                 placeholder={String(LENDER_CAP_THRESHOLD_DEFAULT)}
                 hint={`Standaard ${formatEuro(LENDER_CAP_THRESHOLD_DEFAULT)} — pas aan als uw eigen geldverstrekker een ander maximum hanteert. Werkt als een harde grens naast de Nibud-inkomenstoets.`}
               />
+              <div className="mt-3 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-3" data-woonnu-toggle>
+                <div className="max-w-xl">
+                  <span className="text-sm font-medium text-slate-700">Regels van Woonnu toepassen</span>
+                  <p className="text-xs text-slate-400">
+                    Productkaart 17-03-2026 en acceptatiegids maart 2026: overwaarde van een verkochte woning tot 98% van
+                    de verkoopprijs, bonus telt voor 50%, aflossingsvrij +0,40% rente, familielening in de toets als 2% per
+                    maand (tenzij afgedekt) en de oude lening tijdens de overbrugging tegen het 1-jaarstarief. Uit = algemene
+                    uitgangspunten.
+                  </p>
+                </div>
+                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                  {[
+                    [true, 'Aan'],
+                    [false, 'Uit'],
+                  ].map(([value, label]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => setCashflowField('woonnuRules', value)}
+                      aria-pressed={cashflowFields.woonnuRules === value}
+                      className={`rounded-md px-3 py-2 sm:py-1.5 text-xs font-semibold transition-all duration-200 ${
+                        cashflowFields.woonnuRules === value
+                          ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-sm'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -5386,7 +5452,7 @@ function MortgageCalculatorForm({ onReset }) {
                     />
                     <CurrencyField
                       id="avgBonus1"
-                      label="Gem. bonus/overwerk laatste 3 jaar p/j"
+                      label={`Gem. bonus/overwerk laatste 3 jaar p/j${cashflowFields.woonnuRules ? ' (telt 50%)' : ''}`}
                       icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
                       value={avgBonus1}
                       onChange={setAvgBonus1}
@@ -5476,7 +5542,7 @@ function MortgageCalculatorForm({ onReset }) {
                     />
                     <CurrencyField
                       id="avgBonus2"
-                      label="Gem. bonus/overwerk laatste 3 jaar p/j"
+                      label={`Gem. bonus/overwerk laatste 3 jaar p/j${cashflowFields.woonnuRules ? ' (telt 50%)' : ''}`}
                       icon={<Euro className="h-3.5 w-3.5 text-slate-400" />}
                       value={avgBonus2}
                       onChange={setAvgBonus2}
@@ -6941,8 +7007,9 @@ function MortgageCalculatorForm({ onReset }) {
                           Is de huidige woning al (onvoorwaardelijk) verkocht?
                         </span>
                         <p className="text-xs text-slate-400">
-                          Dan staat de opbrengst vast: de verkoopprijs min de verkoopkosten telt voor 100%
-                          mee, zonder verkoopafslag op de marktwaarde.
+                          {cashflowFields.woonnuRules
+                            ? 'Dan staat de opbrengst vast. Woonnu rekent de overwaarde tot 98% van de verkoopprijs (en niet meer dan de netto opbrengst); nog niet verkocht: 95% van de marktwaarde.'
+                            : 'Dan staat de opbrengst vast: de verkoopprijs min de verkoopkosten telt voor 100%; nog niet verkocht: de verkoopafslag op de marktwaarde.'}
                         </p>
                       </div>
                       <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
@@ -6993,9 +7060,10 @@ function MortgageCalculatorForm({ onReset }) {
                     </div>
                     {cashflowFields.currentHomeSold ? (
                       <p className="text-xs text-emerald-700">
-                        Netto opbrengst {formatEuro(currentMortgage.netSaleProceeds)} telt voor 100%: bruikbare
-                        overwaarde {formatEuro(currentMortgage.usableOverwaarde)}. De verkoopafslag hieronder doet
-                        dan niet mee.
+                        Telt mee: {formatEuro(currentMortgage.saleValueForFinancing)}
+                        {cashflowFields.woonnuRules ? ' (98% van de verkoopprijs' : ' (verkoopprijs min verkoopkosten'}, netto opbrengst{' '}
+                        {formatEuro(currentMortgage.netSaleProceeds)}); bruikbare overwaarde{' '}
+                        {formatEuro(currentMortgage.usableOverwaarde)}. De verkoopafslag hieronder doet dan niet mee.
                       </p>
                     ) : (
                       <p className="text-xs text-slate-400">

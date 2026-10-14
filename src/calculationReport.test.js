@@ -81,6 +81,8 @@ describe('verdeling van het nieuwe geld', () => {
   it('eerst aflossingsvrij: tot de bancaire ruimte, rest annuïtair', () => {
     const parts = splitAdditionalMortgage({ needed: 323980, mode: 'aflossingsvrijEerst', aflossingsvrijRoom: 311000, rate: 4.69, fixedYears: 10 });
     expect(parts.map((p) => [p.type, p.principal])).toEqual([['Aflossingsvrij', '311000'], ['Annuïteit', '12980']]);
+    // Woonnu: +0,40% renteopslag op het aflossingsvrije deel.
+    expect(parts.map((p) => p.rate)).toEqual([5.09, 4.69]);
     expect(parts.reduce((s, p) => s + Number(p.principal), 0)).toBe(323980);
   });
   it('geen ruimte of geen bedrag: één leeg annuïtair deel; negatieve ruimte telt als nul', () => {

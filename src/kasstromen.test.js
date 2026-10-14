@@ -119,6 +119,45 @@ describe('kasstromen: waarborgsom en overbruggingskrediet', () => {
   });
 });
 
+describe('Woonnu-regels', () => {
+  it('standaard: familielening afgedekt (extra onderpand/vermogen), alleen een notitie', () => {
+    const { cf } = run(spreadsheet);
+    expect(cf.warnings.map((w) => w.key)).not.toContain('familyToets');
+    expect(cf.notes.map((n) => n.key)).toContain('familyCovered');
+  });
+
+  it('niet afgedekt: familielening telt in de toets als 2% per maand van de hoofdsom (acceptatiegids 4.4)', () => {
+    const { cf, core } = run({ ...spreadsheet, cfFamilyLoanCovered: false });
+    expect(cf.familyTestMonthly).toBeCloseTo(376650 * 0.02, 6);
+    const capF = (1 - Math.pow(1 + core.calc.testRate / 1200, -360)) / (core.calc.testRate / 1200);
+    expect(cf.familyCapacityImpact).toBeCloseTo(376650 * 0.02 * capF, 4);
+    expect(cf.warnings.map((w) => w.key)).toContain('familyToets');
+  });
+
+  it('zonder familielening geen waarschuwing', () => {
+    const { cf } = run({ ...spreadsheet, cfMaxMortgage: '1330000', cfDepositFromFamily: false, cfOwnFundsAtDelivery: '76000' });
+    expect(cf.familyTotal).toBe(0);
+    expect(cf.warnings.map((w) => w.key)).not.toContain('familyToets');
+  });
+});
+
+describe('schakelaar Woonnu-regels', () => {
+  it('uit: verkochte woning telt voor 100% van de netto opbrengst, geen 2%-toets, geen opslag aflossingsvrij', () => {
+    const off = run({ woonnuRules: false, currentHomeSold: true, cfFamilyLoanCovered: false, ...{} });
+    expect(off.core.currentMortgage.saleValueForFinancing).toBeCloseTo(952222 - 10474.44, 6);
+    expect(off.cf.warnings.map((w) => w.key)).not.toContain('familyToets');
+    expect(off.cf.notes).toHaveLength(0);
+    const on = run({ woonnuRules: true, currentHomeSold: true });
+    expect(on.core.currentMortgage.saleValueForFinancing).toBeCloseTo(952222 * 0.98, 6);
+  });
+
+  it('uit: bonus telt volledig mee in het toetsinkomen', () => {
+    const on = run({ avgBonus2: '4050' }).core.calc.combinedIncome;
+    const off = run({ avgBonus2: '4050', woonnuRules: false }).core.calc.combinedIncome;
+    expect(off - on).toBeCloseTo(2025, 6);
+  });
+});
+
 describe('kasstromen: starter', () => {
   it('leent alleen wat bij levering nodig is (geen overschot), zonder verkoopmoment', () => {
     const { cf } = run({
@@ -155,18 +194,21 @@ describe('kasstromen: zonder overschreven maximum', () => {
 });
 
 describe('huidige woning al verkocht', () => {
-  it('de verkoopprijs min verkoopkosten telt voor 100% (geen verkoopafslag van 95%)', () => {
+  it('Woonnu: tot 98% van de verkoopprijs (nooit meer dan de netto opbrengst), geen 95% van de marktwaarde', () => {
     const open = run({}).core.currentMortgage;
     const sold = run({ currentHomeSold: true }).core.currentMortgage;
     expect(open.saleValueForFinancing).toBeCloseTo(935000 * 0.95, 6);
-    expect(sold.saleValueForFinancing).toBeCloseTo(952222 - 10474.44, 6);
-    expect(sold.usableOverwaarde).toBeCloseTo(941747.56 - sold.currentDebtBalance, 6);
+    expect(sold.saleValueForFinancing).toBeCloseTo(952222 * 0.98, 6); // 933.177,56 < netto 941.747,56
+    expect(sold.usableOverwaarde).toBeCloseTo(952222 * 0.98 - sold.currentDebtBalance, 6);
     expect(sold.usableOverwaarde).toBeGreaterThan(open.usableOverwaarde);
+    // Hoge verkoopkosten: dan begrenst de netto opbrengst.
+    const costly = run({ currentHomeSold: true, saleCosts: '30000' }).core.currentMortgage;
+    expect(costly.saleValueForFinancing).toBeCloseTo(952222 - 30000, 6);
   });
 
   it('meer overwaarde betekent minder nieuw geld nodig', () => {
     const open = run({}).core.combinedGap;
     const sold = run({ currentHomeSold: true }).core.combinedGap;
-    expect(open.additionalMortgage - sold.additionalMortgage).toBeCloseTo(941747.56 - 935000 * 0.95, 4);
+    expect(open.additionalMortgage - sold.additionalMortgage).toBeCloseTo(952222 * 0.98 - 935000 * 0.95, 4);
   });
 });

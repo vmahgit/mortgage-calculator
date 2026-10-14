@@ -13,7 +13,14 @@
 // De maximale hypotheek is standaard de uitkomst van de toets, maar kan worden overschreven (bijv. met
 // het bedrag uit de berekening van de adviseur).
 
-import { computeStarterGap, getLtvBasis, safeNum, toCurrentLoanParts } from './calcEngine';
+import {
+  computeStarterGap,
+  getLenderRules,
+  getCapitalizationFactor,
+  getLtvBasis,
+  safeNum,
+  toCurrentLoanParts,
+} from './calcEngine';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -153,6 +160,30 @@ export function computeCashflow(d, core) {
   if (ownAtDelivery > ownAvailable + 0.5) {
     warnings.push({ key: 'own', text: 'U zet bij levering meer eigen middelen in dan als liquide eigen vermogen is ingevuld.' });
   }
+  // Woonnu toetst een lening van familie als last van 2% per maand over de hoofdsom (acceptatiegids 4.4).
+  // Zolang die lening bij de aanvraag bestaat, gaat dat van de leencapaciteit af.
+  const rules = getLenderRules(d);
+  const familyTestMonthly = rules.thirdPartyLoanPct != null ? (familyTotal * rules.thirdPartyLoanPct) / 100 : 0;
+  const familyCapacityImpact = familyTestMonthly * getCapitalizationFactor(calc.testRate);
+  const notes = [];
+  if (familyTotal > 0 && rules.woonnu && d.cfFamilyLoanCovered) {
+    notes.push({
+      key: 'familyCovered',
+      text: 'De familielening is volgens uw opgave afgedekt (extra onderpand of aantoonbaar ander vermogen) en telt daarom niet mee in de toets. Laat dit door uw adviseur bij Woonnu bevestigen; zonder die afspraak toetst Woonnu haar op 2% per maand van de hoofdsom.',
+    });
+  }
+  if (familyTotal > 0 && rules.woonnu && !d.cfFamilyLoanCovered) {
+    warnings.push({
+      key: 'familyToets',
+      amount: familyCapacityImpact,
+      monthly: familyTestMonthly,
+      text: `Woonnu rekent een lening van familie mee als last van 2% per maand van de hoofdsom (acceptatiegids 4.4): ${Math.round(
+        familyTestMonthly
+      ).toLocaleString('nl-NL')} euro per maand. Bestaat de lening al bij de aanvraag, dan daalt de leencapaciteit met ca. ${Math.round(
+        familyCapacityImpact
+      ).toLocaleString('nl-NL')} euro. Het overbruggingskrediet van Woonnu telt niet mee in de toets (tot 95% van de marktwaarde, of 98% van de verkoopprijs als de woning verkocht is).`,
+    });
+  }
   if (deliveryDate && saleDate && saleDate < deliveryDate) {
     warnings.push({ key: 'dates', text: 'De verkoop is vóór de levering: dan is er geen overbrugging nodig.' });
   }
@@ -185,6 +216,9 @@ export function computeCashflow(d, core) {
     ownExKostenKoper: totalOwn - kostenKoper,
     partner2Share,
     partner1Share: totalOwn - partner2Share,
+    familyTestMonthly,
+    familyCapacityImpact,
     warnings,
+    notes,
   };
 }
